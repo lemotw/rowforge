@@ -1,0 +1,18 @@
+name: golang-uppercase
+version: 0.1.0
+description: "Uppercase the 'name' field. Uses the rowforge-handler Go SDK."
+language: go
+
+entry:
+  cmd: ["./handler"]
+  build: ["go", "build", "-o", "handler", "handler.go"]
+  startup_timeout_ms: 10000
+
+runtime:
+  mode: row
+  idempotent: true
+
+required_input: [name]
+
+output:
+  include_meta: false

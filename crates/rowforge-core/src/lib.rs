@@ -1,0 +1,20 @@
+//! rowforge core: handler orchestration, CSV I/O, run lifecycle.
+pub mod accumulator;
+pub mod cancel;
+pub mod csv_io;
+pub mod input_stream;
+pub mod reader;
+pub mod error;
+pub mod execution_store;
+pub mod jsonl_writer;
+pub mod manifest;
+pub mod meta;
+pub mod pool;
+pub mod pool_streaming;
+pub mod protocol;
+pub mod rerun;
+pub mod run;
+pub mod runtime;
+pub mod row_resolution;
+pub mod worker;
+pub mod worker_loop;

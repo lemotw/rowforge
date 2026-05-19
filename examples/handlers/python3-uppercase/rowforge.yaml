@@ -1,0 +1,19 @@
+name: python3-uppercase
+version: 0.1.0
+description: "Uppercase the 'name' field. Uses rowforge-handler Python SDK."
+language: python
+
+entry:
+  cmd: ["python3", "handler.py"]
+  env:
+    PYTHONUNBUFFERED: "1"
+  startup_timeout_ms: 10000
+
+runtime:
+  mode: row
+  idempotent: true
+
+required_input: [name]
+
+output:
+  include_meta: false

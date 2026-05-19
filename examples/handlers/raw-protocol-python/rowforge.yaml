@@ -1,0 +1,19 @@
+name: raw-protocol-python
+version: 0.1.0
+description: "Reference: hand-rolled Python handler, no SDK. See SDK example for the modern way."
+language: python
+
+entry:
+  cmd: ["python3", "handler.py"]
+  env:
+    PYTHONUNBUFFERED: "1"
+  startup_timeout_ms: 10000
+
+runtime:
+  mode: row
+  idempotent: true
+
+required_input: [name]
+
+output:
+  include_meta: false

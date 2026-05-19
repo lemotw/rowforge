@@ -1,0 +1,39 @@
+.superpowers/
+.claude/settings.local.json
+target/
+examples/out/
+examples/handlers/golang-domain/handler
+
+# Python build artefacts (SDKs, examples)
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Frontend / Tauri
+node_modules/
+apps/rowforge-studio/dist/
+apps/rowforge-studio/src-tauri/gen/
+
+# Go vendor + macOS noise + ad-hoc run outputs from refund work
+**/vendor/
+**/.DS_Store
+output_refund*/
+merged.csv
+jira_*.csv
+refunded_list_*.csv
+examples/handlers/golang-domain/go.sum
+
+# Personal scratch data — local-only experiments, not part of the project
+/alipay_failed.csv
+/failed_code_merge.csv
+/night_ai_flow.csv
+/outside_flow.csv
+/outside_flow_parsed.csv
+/windows_flow.csv
+/windows_flow_parsed.csv
+/test.csv
+/test.jsonl
+/other_conversations.jsonl
+/scan_attrs.py
+examples/handlers/golang-domain/golang-domain
+
