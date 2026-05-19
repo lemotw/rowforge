@@ -124,7 +124,7 @@ Working examples:
 
 ## Spec
 
-The formal specification lives under [`docs/spec/2026-05-18-rowforge/`](docs/spec/2026-05-18-rowforge/) — six parts covering overview, execution model, runtime pipeline, data layout, CLI surface, and base conformance.
+The formal specification lives under [`docs/spec/cli/`](docs/spec/cli/) — six parts covering overview, execution model, runtime pipeline, data layout, CLI surface, and base conformance.
 
 ## License
 
