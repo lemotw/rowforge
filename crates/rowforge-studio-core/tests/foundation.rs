@@ -930,6 +930,168 @@ fn create_execution_with_csv(tmp: &tempfile::TempDir) -> String {
         .id
 }
 
+// ---------------------------------------------------------------------------
+// T7: orphan recovery tests (spec §3.7)
+// ---------------------------------------------------------------------------
+
+/// An attempt stuck in `running` with outcomes.jsonl mtime > 5 min should be
+/// marked `aborted` when the workspace is opened.
+#[test]
+fn open_marks_orphan_attempts_as_aborted() {
+    use filetime::{set_file_mtime, FileTime};
+    use rowforge_core::execution_store::{NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source};
+
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "x\n1\n").unwrap();
+
+    let (exec_id, attempt_id) = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("orphan-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        let hi = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "test".into(),
+                manifest_hash: "deadbeef".into(),
+                source_snapshot_dir: tmp.path().to_path_buf(),
+                binary_hash: None,
+            })
+            .unwrap();
+
+        let attempt = store
+            .create_attempt(NewAttempt {
+                execution_id: exec.id.clone(),
+                handler_instance_id: hi.id,
+                parent_attempt_id: None,
+                run_type: RunType {
+                    source: Source::Full,
+                    simulation: Simulation::Real,
+                },
+            })
+            .unwrap();
+
+        // Write a dummy outcomes.jsonl and back-date its mtime to 10 min ago.
+        let outcomes = tmp
+            .path()
+            .join("executions")
+            .join(&exec.id)
+            .join("attempts")
+            .join(&attempt.id)
+            .join("outcomes.jsonl");
+        std::fs::create_dir_all(outcomes.parent().unwrap()).unwrap();
+        std::fs::write(&outcomes, "").unwrap();
+        let ten_min_ago =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 60);
+        set_file_mtime(&outcomes, FileTime::from_system_time(ten_min_ago)).unwrap();
+
+        (exec.id, attempt.id)
+    };
+
+    // Opening should trigger orphan recovery and mark the attempt aborted.
+    let _core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+
+    // Verify the attempt is now aborted.
+    let store = ExecutionStore::open(tmp.path()).unwrap();
+    let attempts = store.list_attempts_for_execution(&exec_id).unwrap();
+    assert_eq!(attempts.len(), 1);
+    let state_str = serde_json::to_value(&attempts[0].state)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+    assert_eq!(
+        state_str, "aborted",
+        "orphan should be marked aborted; got attempt_id={attempt_id} state={state_str}"
+    );
+    assert_eq!(
+        attempts[0].aborted_reason.as_deref(),
+        Some("orphaned_on_restart"),
+        "aborted_reason should be orphaned_on_restart"
+    );
+}
+
+/// A running attempt whose outcomes.jsonl was written < 5 min ago must NOT be
+/// touched by orphan recovery — a live CLI run may still be active externally.
+#[test]
+fn open_leaves_recent_running_attempts_alone() {
+    use rowforge_core::execution_store::{NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source};
+
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "x\n1\n").unwrap();
+
+    let (exec_id, attempt_id) = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("recent-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        let hi = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "test".into(),
+                manifest_hash: "deadbeef".into(),
+                source_snapshot_dir: tmp.path().to_path_buf(),
+                binary_hash: None,
+            })
+            .unwrap();
+
+        let attempt = store
+            .create_attempt(NewAttempt {
+                execution_id: exec.id.clone(),
+                handler_instance_id: hi.id,
+                parent_attempt_id: None,
+                run_type: RunType {
+                    source: Source::Full,
+                    simulation: Simulation::Real,
+                },
+            })
+            .unwrap();
+
+        // Write outcomes.jsonl with a current mtime (just now — well within 5 min).
+        let outcomes = tmp
+            .path()
+            .join("executions")
+            .join(&exec.id)
+            .join("attempts")
+            .join(&attempt.id)
+            .join("outcomes.jsonl");
+        std::fs::create_dir_all(outcomes.parent().unwrap()).unwrap();
+        std::fs::write(&outcomes, "").unwrap();
+        // mtime left at filesystem default (now) — no back-dating.
+
+        (exec.id, attempt.id)
+    };
+
+    // Opening should NOT mark the recent attempt as orphaned.
+    let _core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+
+    // The attempt must still be running.
+    let store = ExecutionStore::open(tmp.path()).unwrap();
+    let attempts = store.list_attempts_for_execution(&exec_id).unwrap();
+    assert_eq!(attempts.len(), 1);
+    let state_str = serde_json::to_value(&attempts[0].state)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default();
+    assert_eq!(
+        state_str, "running",
+        "recent attempt should remain running; got attempt_id={attempt_id} state={state_str}"
+    );
+}
+
 /// Test 1: start_run plumbing — a valid manifest with a nonexistent binary
 /// should spawn, register the session, and eventually emit an Aborted event
 /// once all workers fail to start.
