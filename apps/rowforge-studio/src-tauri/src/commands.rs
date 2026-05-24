@@ -8,8 +8,9 @@ use std::path::PathBuf;
 
 use rowforge_studio_core::{
     AttemptDetail, AttemptId, CancelMode, ExecDetail, ExecRollup, ExecSummary, ExecutionId,
-    FailedPageQuery, FailedRowPage, ListFilter, OpenOpts, RowHistory, RunHandle, RunOpts,
-    RunStartedHandle, RunStatus, Settings, StudioCore, UiError, Workspace,
+    ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, ListFilter, ManifestReport,
+    ManifestSource, OpenOpts, RowHistory, RunHandle, RunOpts, RunStartedHandle, RunStatus,
+    Settings, StartExecArgs, StudioCore, UiError, Workspace,
 };
 use tauri::State;
 
@@ -202,5 +203,46 @@ pub fn run_active(
     let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
     Ok(core.active_runs())
+}
+
+#[tauri::command]
+pub fn exec_start(
+    state: State<'_, AppState>,
+    args: StartExecArgs,
+) -> Result<ExecutionId, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.start_exec(args)
+}
+
+#[tauri::command]
+pub async fn exec_export(
+    state: State<'_, AppState>,
+    id: ExecutionId,
+    opts: ExportOpts,
+) -> Result<ExportReport, UiError> {
+    // Scope the guard tightly — no .await happens inside. We make this
+    // command async so Tauri schedules it on a worker thread, since
+    // export_execution does meaningful sync IO that would otherwise block
+    // the IPC main thread for seconds-to-minutes on large execs.
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.export(&id, opts)
+}
+
+#[tauri::command]
+pub fn manifest_validate(
+    state: State<'_, AppState>,
+    source: ManifestSource,
+) -> Result<ManifestReport, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.validate_manifest(source)
 }
 

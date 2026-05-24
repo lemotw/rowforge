@@ -4,7 +4,9 @@
 //! depend on these keys. Any rename here without updating TS is a UI
 //! breakage; this test forces them to move together.
 
-use rowforge_studio_core::{ExecSummary, UiError};
+use rowforge_studio_core::{
+    ExecSummary, ExecutionId, ExportFormat, ExportOpts, ManifestReport, ManifestSource, UiError,
+};
 
 #[test]
 fn workspace_json_keys() {
@@ -74,4 +76,58 @@ fn ui_error_internal_shape() {
         Some("boom"),
         "UiError content field must be 'message' (adjacent tagging): {v:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// T9 — Plan 5 new command boundary types
+// ---------------------------------------------------------------------------
+
+/// exec_start: ExecutionId crosses IPC boundary as a string scalar.
+#[test]
+fn plan5_execution_id_json_shape() {
+    let id = ExecutionId::from("exec-abc123");
+    let v = serde_json::to_value(&id).unwrap();
+    assert_eq!(v.as_str(), Some("exec-abc123"), "ExecutionId must serialise as a bare string: {v:?}");
+
+    let roundtrip: ExecutionId = serde_json::from_value(v).unwrap();
+    assert_eq!(roundtrip.as_str(), "exec-abc123");
+}
+
+/// exec_export: ExportOpts is the arg type — must round-trip through JSON.
+#[test]
+fn plan5_export_opts_json_roundtrip() {
+    let json = r#"{"format":"csv","require_complete":false,"output_dir":null}"#;
+    let opts: ExportOpts = serde_json::from_str(json).expect("deserialize ExportOpts");
+    assert_eq!(opts.format, ExportFormat::Csv);
+    assert!(!opts.require_complete);
+
+    let re = serde_json::to_string(&opts).unwrap();
+    // round-trip: can deserialise what we serialised
+    let _back: ExportOpts = serde_json::from_str(&re).unwrap();
+}
+
+/// manifest_validate: ManifestSource is the arg type — must deserialise from
+/// the tagged JSON shape the React layer will send.
+#[test]
+fn plan5_manifest_source_json_shape() {
+    let json = r#"{"type":"path","path":"/some/handler"}"#;
+    let src: ManifestSource = serde_json::from_str(json).expect("deserialize ManifestSource");
+    match &src {
+        ManifestSource::Path { path } => {
+            assert_eq!(path.to_str().unwrap(), "/some/handler");
+        }
+        _ => panic!("unexpected variant"),
+    }
+}
+
+/// manifest_validate: ManifestReport (the return type) has the expected keys.
+#[test]
+fn plan5_manifest_report_json_keys() {
+    // ManifestReport is #[non_exhaustive] — construct via round-trip from JSON.
+    let json = r#"{"manifest":null,"errors":[],"warnings":[]}"#;
+    let report: ManifestReport = serde_json::from_str(json).expect("deserialize ManifestReport");
+    let v = serde_json::to_value(&report).unwrap();
+    assert!(v.get("manifest").is_some(), "manifest key missing: {v:?}");
+    assert!(v.get("errors").is_some(), "errors key missing: {v:?}");
+    assert!(v.get("warnings").is_some(), "warnings key missing: {v:?}");
 }
