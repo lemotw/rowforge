@@ -11,8 +11,14 @@
 
 use rowforge_studio_core::StudioCore;
 use std::sync::Mutex;
+use tauri::async_runtime::JoinHandle;
 
 #[derive(Default)]
 pub struct AppState {
     pub core: Mutex<Option<StudioCore>>,
+    /// Handle to the per-workspace `runs:active` forwarder task spawned
+    /// by `workspace_open`. Stored so re-opening a workspace (switching)
+    /// can abort the prior forwarder before starting a new one, instead
+    /// of leaving stale forwarders alive emitting from old registries.
+    pub active_runs_task: Mutex<Option<JoinHandle<()>>>,
 }

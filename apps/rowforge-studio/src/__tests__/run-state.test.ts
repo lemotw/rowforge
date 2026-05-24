@@ -48,26 +48,55 @@ describe("reduceRun", () => {
     expect(s.recentSamples[0].row_index).toBe(249);
   });
 
-  it("done sets status and finalReport", () => {
+  it("done sets status, finalReport, and syncs visible counters", () => {
+    // Pre-populate stale counters that a final tick might have left behind.
+    const stale = reduceRun(initialRunState, {
+      type: "tick",
+      seq: 99, at_ms: 24750,
+      processed: 80, total: 100, success: 70, failed: 10, crashed: 0,
+      in_flight: 4, queue_depth: 16, rate_1s: 320, rate_10s: 300, eta_ms: 6250,
+    });
+    expect(stale.processed).toBe(80);
+
     const evt: ProgressEvent = {
       type: "done",
       processed: 100, success: 95, failed: 5, crashed: 0, dur_ms: 1000,
     };
-    const after = reduceRun(initialRunState, evt);
+    const after = reduceRun(stale, evt);
     expect(after.status).toBe("done");
     expect(after.finalReport?.success).toBe(95);
+    // Visible counters must reflect the authoritative final report — backend
+    // stops the tick loop on terminal, so without sync the display would
+    // freeze at the stale tick (80 / 70 / 10).
+    expect(after.processed).toBe(100);
+    expect(after.success).toBe(95);
+    expect(after.failed).toBe(5);
+    expect(after.in_flight).toBe(0);
+    expect(after.queue_depth).toBe(0);
+    expect(after.eta_ms).toBe(0);
   });
 
-  it("aborted with crashed reason maps to crashed status", () => {
+  it("aborted maps crashed reason to crashed status and syncs counters from partial_report", () => {
+    const stale = reduceRun(initialRunState, {
+      type: "tick",
+      seq: 5, at_ms: 1250,
+      processed: 30, total: 100, success: 25, failed: 5, crashed: 0,
+      in_flight: 8, queue_depth: 60, rate_1s: 24, rate_10s: 20, eta_ms: 3500,
+    });
+
     const evt: ProgressEvent = {
       type: "aborted",
       reason: { kind: "crashed", panic_message: "boom" },
       at_phase: "running",
       partial_report: { processed: 50, success: 40, failed: 10, crashed: 0, dur_ms: 500 },
     };
-    const after = reduceRun(initialRunState, evt);
+    const after = reduceRun(stale, evt);
     expect(after.status).toBe("crashed");
     expect(after.abortReason?.kind).toBe("crashed");
+    expect(after.processed).toBe(50);
+    expect(after.success).toBe(40);
+    expect(after.failed).toBe(10);
+    expect(after.in_flight).toBe(0);
   });
 
   it("worker_crashed adds a banner", () => {

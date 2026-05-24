@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { AppShell } from "@/layout/AppShell";
-import { useAttemptDetail, useWorkspace } from "@/ipc/queries";
+import { useAttemptDetail, useExecDetail, useWorkspace } from "@/ipc/queries";
 import { uiErrorMessage } from "@/ipc/types";
 import { ErrorsByCodeList } from "@/components/ErrorsByCodeList";
 import { FailedRowsTable } from "@/components/FailedRowsTable";
@@ -21,6 +21,10 @@ export function AttemptDetailPage() {
   const runHandle = searchParams.get("run");
   const ws = useWorkspace();
   const detail = useAttemptDetail(id ?? null, aid ?? null);
+  // Fetch ExecDetail so the CancelDialog destructive-confirm token can be
+  // derived from the human-readable exec name (spec §7.2 #6), not the
+  // attempt ulid. Already cached if Exec page was visited.
+  const exec = useExecDetail(id ?? null);
   const liveState = useRun(runHandle);
 
   if (ws.data === null && !ws.isLoading) return <Navigate to="/" replace />;
@@ -53,7 +57,7 @@ export function AttemptDetailPage() {
                 <CancelDialog
                   handle={runHandle}
                   status={liveState.status}
-                  execName={detail.data.id ?? id ?? ""}
+                  execName={exec.data?.summary.name ?? id ?? ""}
                 />
               </div>
             )}

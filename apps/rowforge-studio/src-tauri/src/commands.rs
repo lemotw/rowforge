@@ -11,7 +11,7 @@ use rowforge_studio_core::{
     FailedPageQuery, FailedRowPage, ListFilter, OpenOpts, RowHistory, RunHandle, RunOpts,
     RunStatus, Settings, StudioCore, UiError, Workspace,
 };
-use tauri::{Emitter as _, State};
+use tauri::State;
 
 use crate::settings as settings_io;
 use crate::state::AppState;
@@ -38,10 +38,19 @@ pub fn workspace_open(
     *state.core.lock().unwrap_or_else(|p| p.into_inner()) = Some(core);
 
     // Spawn the 1 Hz workspace rollup forwarder for this workspace session.
+    // If a prior forwarder is alive (user switched workspaces), abort it
+    // first so we don't leak forwarders emitting from stale registries.
     let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
+    let new_task = tauri::async_runtime::spawn(async move {
         crate::events::forward_active_runs(app_clone, sessions).await;
     });
+    let mut task_slot = state
+        .active_runs_task
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(prior) = task_slot.replace(new_task) {
+        prior.abort();
+    }
 
     Ok(workspace)
 }

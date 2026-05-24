@@ -23,6 +23,7 @@ const ERROR_BUDGET_RATIO: f32 = 0.9;
 const BROADCAST_CAPACITY: usize = 256;
 
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ProgressSnapshot {
     pub processed: u64,
     pub total: Option<u64>,
