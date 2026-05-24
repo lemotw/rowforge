@@ -216,13 +216,35 @@ attempt_show(execution_id, attempt_id)            -> AttemptDetail
 attempt_failed_page(query)                        -> FailedRowPage
 attempt_row_history(execution_id, seq)            -> RowHistory
 
-run_start(execution_id, opts)         -> RunHandle
+run_start(execution_id, handler_dir,
+          row_limit?, workers?,
+          dry_run?, skip_attempted?)   -> RunStartedHandle
 run_cancel(handle, mode)              -> ()
 run_status(handle)                    -> RunStatus
 run_active()                          -> Vec<RunHandle>
+run_snapshot(handle)                  -> ProgressSnapshot
+attempt_active_handle(attempt_id)     -> Option<RunHandle>
 
 manifest_validate(source)             -> ManifestReport
 ```
+
+Run 生命週期指令說明（Plan 5）：
+
+- `run_start` 回傳 `RunStartedHandle { handle, attempt_id }`，UI
+  可以單次往返就組出 `/exec/:id/attempt/:aid?run=<handle>` URL。
+- `row_limit` (`Option<u64>`) 上限,限制本次派發 row 數。配合
+  `skip_attempted` 可以跨多次 run 累進採樣不重複的 row。
+- `skip_attempted` (`Option<bool>`) — true 時計算這個 exec 的
+  `RowResolution`，把已 attempt 過的 seq（任何非 `NeverAttempted`
+  狀態）當作 `skip_seqs` 傳給 pipeline。UI「sample fresh rows」用。
+- `run_snapshot` 回傳該 handle 當前的 `ProgressSnapshot`。React 的
+  `useRun` hook 在 `listen()` 掛載後立刻呼叫，補回 listen 起作用前
+  已 emit 的 tick（Tauri 事件 fire-and-forget，沒裝 listener 就丟）。
+  若 run 已結束 → 回 `UnknownHandle`，React 端視為 fallback 到
+  attempt_show 靜態資料。
+- `attempt_active_handle` 把 `AttemptId` 解析回對應的活動
+  `RunHandle`（若有）。用於使用者不帶 `?run=` URL 進入 in-flight
+  attempt 時提供「Watch live」按鈕。
 
 事件（單向,core → UI）：
 

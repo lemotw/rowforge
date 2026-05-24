@@ -88,8 +88,17 @@ different lib is not a breaking spec change.
     Part 2 §2.3.
 - **Row History drawer** — opened from Failed rows. Entity: `RowHistory`.
   Call: `attempt_row_history`. Strictly on-demand (Part 2 §2.2.7).
-- **Run launcher** (modal on Execution Detail) — constructs `RunOpts`,
-  calls `run_start`.
+- **Run launcher** (Execution Detail header) — primary "Run" button
+  for quick-start with defaults, plus a settings-icon button that
+  opens an inline options panel for `RunOpts`. The panel exposes:
+  handler directory (persisted across sessions via localStorage),
+  "Sample first N rows" (`row_limit`), "Workers" override,
+  "Skip rows already attempted" checkbox (drives `skip_attempted`,
+  uses `RowResolution.attempted_seqs` to deduplicate sampling
+  across runs), and "Dry run". The panel header also shows
+  `total / attempted / fresh` row counts from `exec_rollup`, plus
+  a live preview "Will dispatch N rows" computed from the current
+  state. Calls `run_start`.
 - **Export dialog** — constructs `ExportOpts`, calls `exec_export`.
 - **Settings** `/settings` — entity: `Settings`. Calls:
   `workspace_settings_load`, `workspace_settings_save`.
