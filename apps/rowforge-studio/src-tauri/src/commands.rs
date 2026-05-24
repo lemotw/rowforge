@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use rowforge_studio_core::{
     AttemptDetail, AttemptId, CancelMode, ExecDetail, ExecRollup, ExecSummary, ExecutionId,
     ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, ListFilter, ManifestReport,
-    ManifestSource, OpenOpts, RowHistory, RunHandle, RunOpts, RunStartedHandle, RunStatus,
-    Settings, StartExecArgs, StudioCore, UiError, Workspace,
+    ManifestSource, OpenOpts, ProgressSnapshot, RowHistory, RunHandle, RunOpts,
+    RunStartedHandle, RunStatus, Settings, StartExecArgs, StudioCore, UiError, Workspace,
 };
 use tauri::State;
 
@@ -203,6 +203,22 @@ pub fn run_active(
     let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
     Ok(core.active_runs())
+}
+
+/// Snapshot of an active run's counters. Used by the UI to bootstrap
+/// state when subscribing to a run that's already in flight — Tauri
+/// events don't queue, so events emitted before `listen()` attaches
+/// are lost; this command fills them back in.
+#[tauri::command]
+pub fn run_snapshot(
+    state: State<'_, AppState>,
+    handle: RunHandle,
+) -> Result<ProgressSnapshot, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.snapshot(&handle)
 }
 
 #[tauri::command]

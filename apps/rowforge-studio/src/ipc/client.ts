@@ -13,6 +13,7 @@ import type {
   FailedRowPage,
   ManifestReport,
   ManifestSource,
+  ProgressSnapshot,
   RowHistory,
   RunHandle,
   RunStartedHandle,
@@ -46,6 +47,8 @@ export const ipc = {
     invoke<RunStatus>("run_status", args),
   run_active: () =>
     invoke<RunHandle[]>("run_active"),
+  run_snapshot: (args: { handle: RunHandle }) =>
+    invoke<ProgressSnapshot>("run_snapshot", args),
 
   exec_start: (args: StartExecArgs) =>
     invoke<ExecutionId>("exec_start", { args }),

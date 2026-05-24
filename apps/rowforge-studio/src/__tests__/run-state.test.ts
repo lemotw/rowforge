@@ -99,6 +99,49 @@ describe("reduceRun", () => {
     expect(after.in_flight).toBe(0);
   });
 
+  it("_bootstrap fills counter + phase fields from snapshot", () => {
+    const after = reduceRun(initialRunState, {
+      type: "_bootstrap",
+      snapshot: {
+        processed: 50,
+        total: 100,
+        success: 45,
+        failed: 5,
+        crashed: 0,
+        in_flight: 4,
+        queue_depth: 16,
+        phase: "running",
+      },
+    });
+    expect(after.processed).toBe(50);
+    expect(after.total).toBe(100);
+    expect(after.success).toBe(45);
+    expect(after.failed).toBe(5);
+    expect(after.in_flight).toBe(4);
+    expect(after.queue_depth).toBe(16);
+    expect(after.phase).toBe("running");
+    // Status derived from phase per the phase_changed logic.
+    expect(after.status).toBe("running");
+  });
+
+  it("_bootstrap does not touch event-only accumulators", () => {
+    let s = initialRunState;
+    s = reduceRun(s, {
+      type: "outcome_sample",
+      row_index: 7, kind: "error", code: "X", message: null, dur_ms: 1,
+    });
+    s = reduceRun(s, {
+      type: "_bootstrap",
+      snapshot: {
+        processed: 100, total: 100, success: 95, failed: 5, crashed: 0,
+        in_flight: 0, queue_depth: 0, phase: null,
+      },
+    });
+    // recentSamples survives the bootstrap.
+    expect(s.recentSamples.length).toBe(1);
+    expect(s.recentSamples[0].row_index).toBe(7);
+  });
+
   it("worker_crashed adds a banner", () => {
     const evt: ProgressEvent = {
       type: "worker_crashed",

@@ -1,6 +1,18 @@
 import type {
-  AbortReason, Phase, ProgressEvent, RunReport, RunStatus,
+  AbortReason, Phase, ProgressEvent, ProgressSnapshot, RunReport, RunStatus,
 } from "./types";
+
+/**
+ * Synthetic action dispatched once on subscribe to fill in state for ticks
+ * the listener missed before it attached. Tauri events are fire-and-forget
+ * — events emitted before `listen()` lands are lost. The reducer accepts
+ * this in addition to ProgressEvent.
+ *
+ * Underscore prefix signals "not on the wire" — backend never emits this.
+ */
+export type RunBootstrapAction = { type: "_bootstrap"; snapshot: ProgressSnapshot };
+
+export type RunReducerAction = ProgressEvent | RunBootstrapAction;
 
 const RECENT_BUFFER_SIZE = 200;
 
@@ -65,8 +77,33 @@ export const initialRunState: RunState = {
 
 let bannerIdCounter = 0;
 
-export function reduceRun(state: RunState, event: ProgressEvent): RunState {
+export function reduceRun(state: RunState, event: RunReducerAction): RunState {
   switch (event.type) {
+    case "_bootstrap": {
+      // Apply the backend snapshot wholesale. Only overrides counter fields
+      // (processed/total/success/failed/crashed/in_flight/queue_depth/phase);
+      // does NOT touch recentSamples, banners, finalReport — those are
+      // event-only accumulators that the snapshot doesn't carry.
+      const s = event.snapshot;
+      // Derive status from phase, matching the phase_changed logic below.
+      const status: RunStatus =
+        s.phase === "running" ? "running"
+        : s.phase === "cancelling" ? "cancelling"
+        : s.phase === "persisting" ? "running"
+        : "starting";
+      return {
+        ...state,
+        processed: s.processed,
+        total: s.total,
+        success: s.success,
+        failed: s.failed,
+        crashed: s.crashed,
+        in_flight: s.in_flight,
+        queue_depth: s.queue_depth,
+        phase: s.phase,
+        status,
+      };
+    }
     case "phase_changed": {
       const phase = event.phase;
       // Update status based on phase. Spec §3.3:
