@@ -1,11 +1,11 @@
-//! Plan 1 integration coverage.
+//! Plan 1-4 integration coverage.
 //!
 //! Each test bootstraps a temp workspace, runs CLI-equivalent setup via
 //! rowforge_core::execution_store, then exercises the studio-core
 //! surface. No CLI binary is invoked.
 
 use rowforge_core::execution_store::ExecutionStore;
-use rowforge_studio_core::{ExecRollup, OpenOpts, StudioCore, UiError};
+use rowforge_studio_core::{ExecRollup, OpenOpts, ProgressEvent, RunHandle, RunOpts, StudioCore, UiError};
 use std::path::PathBuf;
 
 /// Helper: produces a temp workspace dir with an initialized SQLite
@@ -892,5 +892,139 @@ fn failed_page_exactly_at_limit_with_eof_returns_no_next_offset() {
         None,
         "exact limit + EOF should NOT advertise more pages: got {:?}",
         page.next_offset
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 4 — start_run / subscribe / cancel integration tests
+// ---------------------------------------------------------------------------
+
+/// Minimal valid `rowforge.yaml` whose `cmd` points to a nonexistent binary.
+/// The manifest loads cleanly; workers fail to start → run eventually aborts.
+fn minimal_handler_dir(tmp: &tempfile::TempDir) -> PathBuf {
+    let handler = tmp.path().join("handler");
+    std::fs::create_dir_all(&handler).unwrap();
+    std::fs::write(
+        handler.join("rowforge.yaml"),
+        "name: test-handler\nversion: 0.1.0\nentry:\n  cmd: [\"/nonexistent-binary\"]\n",
+    )
+    .unwrap();
+    handler
+}
+
+/// Create an execution with a small CSV input inside `tmp`. Returns the
+/// execution id string.
+fn create_execution_with_csv(tmp: &tempfile::TempDir) -> String {
+    use rowforge_core::execution_store::NewExecution;
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "id\nr1\nr2\n").unwrap();
+    let mut store = ExecutionStore::open(tmp.path()).unwrap();
+    store
+        .create_execution(NewExecution {
+            name: Some("plan4-test".into()),
+            input_csv_id: "csv1".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        })
+        .unwrap()
+        .id
+}
+
+/// Test 1: start_run plumbing — a valid manifest with a nonexistent binary
+/// should spawn, register the session, and eventually emit an Aborted event
+/// once all workers fail to start.
+///
+/// Marked #[ignore] because the pipeline startup timeout (30 s default) makes
+/// this test too slow for the regular CI matrix. Run with
+/// `cargo test -- --ignored start_run_returns_handle_and_subscriber_gets_event`
+/// to exercise the full async plumbing.
+#[ignore = "startup-timeout makes this 30 s; run manually to verify plumbing"]
+#[tokio::test]
+async fn start_run_returns_handle_and_subscriber_gets_event() {
+    use tokio::time::{timeout, Duration};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let exec_id = create_execution_with_csv(&tmp);
+    let handler = minimal_handler_dir(&tmp);
+
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let opts = RunOpts::new(handler);
+    let handle = core
+        .start_run(&ExecutionId::new(exec_id), opts)
+        .expect("start_run should succeed with valid manifest");
+
+    let mut stream = core.subscribe(&handle).expect("subscribe should succeed");
+
+    // Wait up to 35 s for any terminal event.
+    let received = timeout(Duration::from_secs(35), async move {
+        loop {
+            match stream.rx.recv().await {
+                Ok(ProgressEvent::Aborted { .. }) | Ok(ProgressEvent::Done(_)) => return true,
+                Ok(_) => continue,
+                Err(_) => return false,
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        matches!(received, Ok(true)),
+        "expected Aborted or Done event within 35 s; got: {:?}",
+        received
+    );
+}
+
+/// Test 2: start_run enforces the per-execution concurrency limit of 1.
+/// A second start_run for the same exec_id must return UiError::RunBusy.
+///
+/// Must run inside a tokio runtime because start_run spawns async tasks.
+#[tokio::test]
+async fn start_run_enforces_per_exec_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let exec_id = create_execution_with_csv(&tmp);
+    let handler = minimal_handler_dir(&tmp);
+
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let opts = RunOpts::new(handler.clone());
+
+    // First start_run should succeed.
+    let _handle = core
+        .start_run(&ExecutionId::new(exec_id.clone()), opts)
+        .expect("first start_run should succeed");
+
+    // Second start_run for the same exec should be rejected.
+    let opts2 = RunOpts::new(handler);
+    let err = core
+        .start_run(&ExecutionId::new(exec_id), opts2)
+        .expect_err("second start_run must return RunBusy");
+
+    assert!(
+        matches!(err, UiError::RunBusy(_)),
+        "expected RunBusy, got: {:?}",
+        err
+    );
+}
+
+/// Test 3: cancel called with an unknown / expired RunHandle returns
+/// UiError::UnknownHandle.
+///
+/// Must run inside a tokio runtime because cancel looks up the SessionRegistry
+/// which may interact with async state.
+#[tokio::test]
+async fn cancel_unknown_handle_returns_unknown_handle_error() {
+    use rowforge_studio_core::CancelMode;
+
+    let tmp = empty_workspace();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+
+    let bogus = RunHandle::from("run-BOGUS0000000000000000000".to_string());
+    let err = core
+        .cancel(&bogus, CancelMode::Soft)
+        .expect_err("cancel on unknown handle must error");
+
+    assert!(
+        matches!(err, UiError::UnknownHandle(_)),
+        "expected UnknownHandle, got: {:?}",
+        err
     );
 }
