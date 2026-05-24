@@ -57,3 +57,13 @@ pub fn workspace_settings_save(
 ) -> Result<(), UiError> {
     settings_io::save(&app, &settings)
 }
+
+/// Returns the currently-open workspace, if any. None means no workspace
+/// is open yet (BootGate hasn't completed autoload or user hasn't picked).
+#[tauri::command]
+pub fn workspace_current(
+    state: State<'_, AppState>,
+) -> Result<Option<Workspace>, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    Ok(guard.as_ref().map(|c| c.workspace().clone()))
+}

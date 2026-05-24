@@ -1,27 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
-import { useExecList } from "@/ipc/queries";
-import { ipc } from "@/ipc/client";
+import { useWorkspace, useExecList } from "@/ipc/queries";
 import { AppShell } from "@/layout/AppShell";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
 import { uiErrorMessage } from "@/ipc/types";
 
-function useWorkspaceRoot() {
-  // workspace_open also returns Workspace; for simplicity we query
-  // settings.workspace_root and trust BootGate's autoload result.
-  return useQuery({
-    queryKey: ["settings_workspace_root"],
-    queryFn: async () => (await ipc.workspace_settings_load()).workspace_root,
-  });
-}
-
 export function ExecListPage() {
-  const wsRoot = useWorkspaceRoot();
-  const list = useExecList(true);
+  const ws = useWorkspace();
+  const list = useExecList(!!ws.data);
 
-  const workspace = wsRoot.data
-    ? { root: wsRoot.data, schema_version: 1 }
-    : null;
+  const workspace = ws.data ?? null;
 
   return (
     <AppShell workspace={workspace}>

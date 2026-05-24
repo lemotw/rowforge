@@ -16,6 +16,7 @@ pub fn run() {
         .manage(state::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::workspace_open,
+            commands::workspace_current,
             commands::exec_list,
             commands::workspace_settings_load,
             commands::workspace_settings_save,

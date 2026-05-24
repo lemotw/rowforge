@@ -8,6 +8,12 @@ export const useSettings = () =>
     queryFn: ipc.workspace_settings_load,
   });
 
+export const useWorkspace = () =>
+  useQuery({
+    queryKey: ["workspace"],
+    queryFn: ipc.workspace_current,
+  });
+
 export const useExecList = (enabled: boolean) =>
   useQuery({
     queryKey: ["exec_list"],
@@ -22,6 +28,7 @@ export const useOpenWorkspace = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["exec_list"] });
       qc.invalidateQueries({ queryKey: ["settings"] });
+      qc.invalidateQueries({ queryKey: ["workspace"] });
     },
   });
 };
