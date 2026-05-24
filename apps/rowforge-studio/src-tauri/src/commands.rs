@@ -7,7 +7,8 @@
 use std::path::PathBuf;
 
 use rowforge_studio_core::{
-    ExecSummary, ListFilter, OpenOpts, Settings, StudioCore, UiError, Workspace,
+    AttemptDetail, AttemptId, ExecDetail, ExecRollup, ExecSummary, ExecutionId, FailedPageQuery,
+    FailedRowPage, ListFilter, OpenOpts, RowHistory, Settings, StudioCore, UiError, Workspace,
 };
 use tauri::State;
 
@@ -66,4 +67,56 @@ pub fn workspace_current(
 ) -> Result<Option<Workspace>, UiError> {
     let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     Ok(guard.as_ref().map(|c| c.workspace().clone()))
+}
+
+#[tauri::command]
+pub fn exec_show(
+    state: State<'_, AppState>,
+    id: ExecutionId,
+) -> Result<ExecDetail, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.show(&id)
+}
+
+#[tauri::command]
+pub fn attempt_show(
+    state: State<'_, AppState>,
+    execution_id: ExecutionId,
+    attempt_id: AttemptId,
+) -> Result<AttemptDetail, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.attempt(&execution_id, &attempt_id)
+}
+
+#[tauri::command]
+pub fn exec_rollup(
+    state: State<'_, AppState>,
+    id: ExecutionId,
+) -> Result<ExecRollup, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.rollup(&id)
+}
+
+#[tauri::command]
+pub fn attempt_failed_page(
+    state: State<'_, AppState>,
+    query: FailedPageQuery,
+) -> Result<FailedRowPage, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.failed_page(query)
+}
+
+#[tauri::command]
+pub fn attempt_row_history(
+    state: State<'_, AppState>,
+    execution_id: ExecutionId,
+    seq: u64,
+) -> Result<RowHistory, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.row_history(&execution_id, seq)
 }
