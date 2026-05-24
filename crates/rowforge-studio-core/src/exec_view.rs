@@ -34,7 +34,7 @@ pub struct ExecSummary {
 
 /// Placeholder for Plan 3's full `AttemptCounts`. Kept as its own type
 /// so the public field above does not change shape later.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AttemptCountsStub {
     pub success: u64,
