@@ -1163,9 +1163,10 @@ async fn start_run_returns_handle_and_subscriber_gets_event() {
 
     let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
     let opts = RunOpts::new(handler);
-    let handle = core
+    let started = core
         .start_run(&ExecutionId::new(exec_id), opts)
         .expect("start_run should succeed with valid manifest");
+    let handle = started.handle;
 
     let mut stream = core.subscribe(&handle).expect("subscribe should succeed");
 
@@ -1340,7 +1341,7 @@ async fn active_runs_stream_reflects_started_runs() {
 
     // Start a run (will fail quickly with bad handler — but the session
     // will exist briefly before being removed).
-    let _h = core.start_run(
+    let _started = core.start_run(
         &rowforge_studio_core::ExecutionId::new(exec_id),
         rowforge_studio_core::RunOpts::new(
             std::path::PathBuf::from("/non-existent"),

@@ -142,6 +142,13 @@ export interface RowHistory {
 
 export type RunHandle = string;
 
+/// Returned by `run_start`. Carries both the run handle and the attempt id
+/// created synchronously, enabling direct navigation to the attempt's Live tab.
+export interface RunStartedHandle {
+  handle: RunHandle;
+  attempt_id: string;
+}
+
 export type RunStatus =
   | "starting"
   | "running"

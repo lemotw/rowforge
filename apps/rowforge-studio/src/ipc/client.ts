@@ -11,6 +11,7 @@ import type {
   FailedRowPage,
   RowHistory,
   RunHandle,
+  RunStartedHandle,
   RunStatus,
   Settings,
   Workspace,
@@ -33,7 +34,7 @@ export const ipc = {
   attempt_row_history: (args: { executionId: ExecutionId; seq: number }) =>
     invoke<RowHistory>("attempt_row_history", args),
   run_start: (args: { executionId: ExecutionId; handlerDir: string }) =>
-    invoke<RunHandle>("run_start", { executionId: args.executionId, handlerDir: args.handlerDir }),
+    invoke<RunStartedHandle>("run_start", { executionId: args.executionId, handlerDir: args.handlerDir }),
   run_cancel: (args: { handle: RunHandle; mode: CancelMode }) =>
     invoke<void>("run_cancel", args),
   run_status: (args: { handle: RunHandle }) =>

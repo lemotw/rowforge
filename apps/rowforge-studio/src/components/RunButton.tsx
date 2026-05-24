@@ -58,8 +58,8 @@ export function RunButton({
     runMut.mutate(
       { executionId, handlerDir: dir },
       {
-        onSuccess: (handle) => {
-          setActiveHandle(handle);
+        onSuccess: (started) => {
+          setActiveHandle(started.handle);
         },
         onError: (e) => {
           setError(uiErrorMessage(e));

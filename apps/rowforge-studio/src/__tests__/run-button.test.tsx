@@ -35,7 +35,7 @@ describe("RunButton", () => {
   });
 
   it("clicking Run with lastHandlerDir skips picker + invokes run_start", async () => {
-    (invoke as any).mockResolvedValue("run-abc");
+    (invoke as any).mockResolvedValue({ handle: "run-abc", attempt_id: "att-1" });
     render(wrap(<RunButton executionId="e1" lastHandlerDir="/handlers/foo" />));
     fireEvent.click(screen.getByRole("button", { name: /^Run$/i }));
     await new Promise((r) => setTimeout(r, 10));

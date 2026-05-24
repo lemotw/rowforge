@@ -99,6 +99,25 @@ pub struct RunStream {
     pub snapshot: ProgressSnapshot,
 }
 
+/// Returned by `StudioCore::start_run`.
+///
+/// Carries both the `RunHandle` (for subscribing / cancelling) and the
+/// `attempt_id` created synchronously by `start_run`. The caller can use
+/// `attempt_id` to construct a direct URL to the attempt's Live tab without
+/// a follow-up `exec_show` roundtrip.
+#[non_exhaustive]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RunStartedHandle {
+    pub handle: RunHandle,
+    pub attempt_id: String,
+}
+
+impl RunStartedHandle {
+    pub(crate) fn new(handle: RunHandle, attempt_id: String) -> Self {
+        Self { handle, attempt_id }
+    }
+}
+
 impl StudioCore {
     /// Start an in-process rowforge-core pipeline for `execution_id`.
     ///
@@ -113,7 +132,7 @@ impl StudioCore {
         &self,
         execution_id: &ExecutionId,
         opts: RunOpts,
-    ) -> Result<RunHandle, UiError> {
+    ) -> Result<RunStartedHandle, UiError> {
         // 1. Concurrency check (fast path, no store I/O).
         let workspace_limit = self.sessions.workspace_limit();
         let per_exec_limit = self.sessions.per_exec_limit();
@@ -370,7 +389,7 @@ impl StudioCore {
             sessions_arc.remove(&handle_for_task);
         });
 
-        Ok(handle)
+        Ok(RunStartedHandle::new(handle, attempt_id))
     }
 
     /// Subscribe to live `ProgressEvent`s for a running pipeline.
