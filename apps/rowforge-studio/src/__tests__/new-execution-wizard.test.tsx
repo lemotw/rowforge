@@ -11,7 +11,7 @@ vi.mock("@/ipc/client", () => ({
   ipc: {
     exec_start: vi.fn().mockResolvedValue("e_01TEST"),
     manifest_validate: vi.fn().mockResolvedValue({
-      manifest: { name: "h", version: "1.0", language: "go", build: null, run: "bin/handler" },
+      manifest: { name: "h", version: "1.0", language: "go", entry_cmd: ["./bin/handler"], entry_build: null },
       errors: [],
       warnings: [],
     }),

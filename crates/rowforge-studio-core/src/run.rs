@@ -70,7 +70,7 @@ pub struct RunRollupTick {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RunOpts {
-    /// Path to the handler directory (must contain `rowforge.toml`).
+    /// Path to the handler directory (must contain `rowforge.yaml`).
     pub handler_dir: PathBuf,
     /// Number of worker processes. None → rowforge-core default (from manifest).
     pub workers: Option<u32>,

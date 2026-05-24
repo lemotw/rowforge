@@ -22,8 +22,6 @@ async-stream = "0.3"
 sha2 = { workspace = true }
 tracing = { workspace = true }
 which = "6"
-shell-words = "1"
-toml = "0.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }

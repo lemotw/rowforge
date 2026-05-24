@@ -81,13 +81,9 @@ export function ManifestReportView({ report }: { report: ManifestReport }) {
 function formatError(e: ManifestError): string {
   switch (e.kind) {
     case "manifest_missing":
-      return `manifest.toml not found at ${e.path}`;
+      return `rowforge.yaml not found at ${e.path}`;
     case "parse_failed":
-      return `TOML parse failed: ${e.message}`;
-    case "missing_required":
-      return `Required field missing: '${e.field}'`;
-    case "shell_parse_failed":
-      return `Shell parse failed for '${e.field}': ${e.message}`;
+      return `Manifest parse failed: ${e.message}`;
   }
 }
 
