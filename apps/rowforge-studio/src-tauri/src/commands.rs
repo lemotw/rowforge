@@ -11,7 +11,7 @@ use rowforge_studio_core::{
     FailedPageQuery, FailedRowPage, ListFilter, OpenOpts, RowHistory, RunHandle, RunOpts,
     RunStatus, Settings, StudioCore, UiError, Workspace,
 };
-use tauri::State;
+use tauri::{Emitter as _, State};
 
 use crate::settings as settings_io;
 use crate::state::AppState;
@@ -34,7 +34,15 @@ pub fn workspace_open(
     s.workspace_root = Some(workspace.root.clone());
     settings_io::save(&app, &s)?;
 
+    let sessions = core.sessions();
     *state.core.lock().unwrap_or_else(|p| p.into_inner()) = Some(core);
+
+    // Spawn the 1 Hz workspace rollup forwarder for this workspace session.
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        crate::events::forward_active_runs(app_clone, sessions).await;
+    });
+
     Ok(workspace)
 }
 
@@ -125,13 +133,24 @@ pub fn attempt_row_history(
 #[tauri::command]
 pub fn run_start(
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
     execution_id: ExecutionId,
     handler_dir: PathBuf,
 ) -> Result<RunHandle, UiError> {
     let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
     let opts = RunOpts::new(handler_dir);
-    core.start_run(&execution_id, opts)
+    let handle = core.start_run(&execution_id, opts)?;
+
+    // Spawn the per-run event forwarder onto run:<handle>.
+    let stream = core.subscribe(&handle).map_err(|e| UiError::Internal(e.to_string()))?;
+    let handle_for_task = handle.clone();
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        crate::events::forward_run_events(app_clone, handle_for_task, stream.rx).await;
+    });
+
+    Ok(handle)
 }
 
 #[tauri::command]
@@ -166,18 +185,46 @@ pub fn run_active(
 
 /// Replay command — returns a fresh RunHandle whose events stream from
 /// a ReplayAttemptStream instead of a live pipeline. The Tauri event
-/// forwarder (T13) bridges this onto `run:<handle>` events the same
-/// way as live runs.
+/// forwarder bridges this onto `run:<handle>` events the same way as
+/// live runs, so the React side subscribes symmetrically.
 #[tauri::command]
 pub fn attempt_replay_start(
-    _state: State<'_, AppState>,
-    _execution_id: ExecutionId,
-    _attempt_id: AttemptId,
-    _speed: f32,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    execution_id: ExecutionId,
+    attempt_id: AttemptId,
+    speed: f32,
 ) -> Result<RunHandle, UiError> {
-    // Plan 4 T23 (React replay UI) calls this; the actual bridge from
-    // the ReplayAttemptStream into the run:<handle> event channel is
-    // wired in T13's event bridge. For T12 we stub the command so the
-    // invoke_handler registration compiles. T13 fills in the body.
-    Err(UiError::Internal("replay bridge wired in T13".into()))
+    use rowforge_studio_core::{AttemptStream as _, ReplayAttemptStream};
+
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+
+    // Resolve attempt_dir from workspace root + exec_id + attempt_id.
+    let attempt_dir = core.workspace().root
+        .join("executions")
+        .join(execution_id.as_str())
+        .join("attempts")
+        .join(attempt_id.as_str());
+
+    let stream = ReplayAttemptStream::from_attempt(&attempt_dir, speed)
+        .map_err(|e| UiError::Io(e.to_string()))?;
+
+    // Allocate a fresh handle and forward the replay stream to Tauri events.
+    let handle = RunHandle::new();
+    let app_clone = app.clone();
+    let handle_for_task = handle.clone();
+    let channel = format!("run:{}", handle.as_str());
+
+    tokio::spawn(async move {
+        use futures::StreamExt as _;
+        let mut events = Box::new(stream).events();
+        while let Some(event) = events.next().await {
+            let _ = app_clone.emit(&channel, &event);
+        }
+        // Replay stream ends after Done is emitted — nothing more to do.
+        let _ = handle_for_task; // keep handle alive in closure
+    });
+
+    Ok(handle)
 }
