@@ -5,6 +5,7 @@ pub mod csv_io;
 pub mod input_stream;
 pub mod reader;
 pub mod error;
+pub mod export;
 pub mod execution_store;
 pub mod jsonl_writer;
 pub mod manifest;
