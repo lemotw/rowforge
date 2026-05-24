@@ -145,20 +145,13 @@ After a workspace is picked, runs can be started and watched live.
 1. Click an exec row → ExecDetail.
 2. Click **Run** in the header.
 3. Pick a handler directory in the file dialog.
-4. The button changes to "✓ Started". Click it (or the page header) to refresh.
-5. The Attempts table shows a new attempt row.
+4. The app automatically navigates to `/exec/:id/attempt/:aid?run=<handle>` — the
+   new attempt's Live tab opens immediately (Plan 5 T15, closes Plan 4 limitation).
 
 ### Watch live progress
 
-1. Click the new attempt row → AttemptDetail.
-2. Append `?run=<handle>` to the URL — the handle comes from the
-   `run_start` response (logged to the dev console / accessible via
-   future Plan 5 auto-navigation). For now, the URL must be constructed
-   manually.
-
-   Plan 4 limitation: full auto-routing to `?run=` is deferred to Plan 5
-   (the Run button doesn't know the new attempt's id until a follow-up
-   query).
+1. The Live tab is active as soon as the run starts (auto-navigation above).
+2. Live progress streams in; the attempt state updates in real-time.
 
 ### Cancel a live run
 
@@ -202,7 +195,7 @@ verify Studio refuses to open.)
 
 ### Known Plan 4 limitations (to be addressed later)
 
-- **Auto-navigate to ?run= after Run button**: missing; deferred to Plan 5.
+- ~~**Auto-navigate to ?run= after Run button**: missing; deferred to Plan 5.~~ Closed in Plan 5 (Task 15).
 - **Hard cancel (Force kill)**: currently behaves identically to soft
   cancel — rowforge-core doesn't expose per-worker process kill yet.
   The dialog still requires the typed confirm token; spec requires UX
