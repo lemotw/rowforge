@@ -7,8 +7,9 @@
 use std::path::PathBuf;
 
 use rowforge_studio_core::{
-    AttemptDetail, AttemptId, ExecDetail, ExecRollup, ExecSummary, ExecutionId, FailedPageQuery,
-    FailedRowPage, ListFilter, OpenOpts, RowHistory, Settings, StudioCore, UiError, Workspace,
+    AttemptDetail, AttemptId, CancelMode, ExecDetail, ExecRollup, ExecSummary, ExecutionId,
+    FailedPageQuery, FailedRowPage, ListFilter, OpenOpts, RowHistory, RunHandle, RunOpts,
+    RunStatus, Settings, StudioCore, UiError, Workspace,
 };
 use tauri::State;
 
@@ -119,4 +120,64 @@ pub fn attempt_row_history(
     let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
     core.row_history(&execution_id, seq)
+}
+
+#[tauri::command]
+pub fn run_start(
+    state: State<'_, AppState>,
+    execution_id: ExecutionId,
+    handler_dir: PathBuf,
+) -> Result<RunHandle, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let opts = RunOpts::new(handler_dir);
+    core.start_run(&execution_id, opts)
+}
+
+#[tauri::command]
+pub fn run_cancel(
+    state: State<'_, AppState>,
+    handle: RunHandle,
+    mode: CancelMode,
+) -> Result<(), UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.cancel(&handle, mode)
+}
+
+#[tauri::command]
+pub fn run_status(
+    state: State<'_, AppState>,
+    handle: RunHandle,
+) -> Result<RunStatus, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.status(&handle)
+}
+
+#[tauri::command]
+pub fn run_active(
+    state: State<'_, AppState>,
+) -> Result<Vec<RunHandle>, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    Ok(core.active_runs())
+}
+
+/// Replay command — returns a fresh RunHandle whose events stream from
+/// a ReplayAttemptStream instead of a live pipeline. The Tauri event
+/// forwarder (T13) bridges this onto `run:<handle>` events the same
+/// way as live runs.
+#[tauri::command]
+pub fn attempt_replay_start(
+    _state: State<'_, AppState>,
+    _execution_id: ExecutionId,
+    _attempt_id: AttemptId,
+    _speed: f32,
+) -> Result<RunHandle, UiError> {
+    // Plan 4 T23 (React replay UI) calls this; the actual bridge from
+    // the ReplayAttemptStream into the run:<handle> event channel is
+    // wired in T13's event bridge. For T12 we stub the command so the
+    // invoke_handler registration compiles. T13 fills in the body.
+    Err(UiError::Internal("replay bridge wired in T13".into()))
 }
