@@ -22,7 +22,27 @@ pub struct StudioCore {
 }
 
 impl StudioCore {
-    /// Stub — implementations land in Task 6 / Task 8.
+    /// Open a workspace. If `opts.workspace` is None, falls back to
+    /// `rowforge_core::workspace::default_workspace_root()`.
+    pub fn open(opts: OpenOpts) -> Result<Self, UiError> {
+        let root = match opts.workspace {
+            Some(p) => p,
+            None => rowforge_core::workspace::default_workspace_root()
+                .ok_or_else(|| {
+                    UiError::WorkspaceUnavailable(
+                        "no home directory available".into(),
+                    )
+                })?,
+        };
+        let store = rowforge_core::execution_store::ExecutionStore::open(&root)
+            .map_err(|e| UiError::WorkspaceUnavailable(e.to_string()))?;
+        let workspace = Workspace {
+            root,
+            schema_version: store.schema_version(),
+        };
+        Ok(Self { workspace, store })
+    }
+
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
     }
