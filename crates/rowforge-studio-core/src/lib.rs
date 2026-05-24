@@ -14,6 +14,7 @@ pub mod failed;
 pub mod ids;
 pub mod rollup;
 pub mod row_history;
+pub mod run;
 pub mod run_handle;
 pub mod session;
 pub mod settings;
@@ -31,6 +32,7 @@ pub use failed::{FailedPageQuery, FailedRow, FailedRowPage, RowOutcomeKind};
 pub use ids::{AttemptId, ExecutionId};
 pub use row_history::RowHistory;
 pub use rollup::ExecRollup;
+pub use run::{RunOpts, RunStream};
 pub use run_handle::{CancelMode, RunHandle, RunStatus};
 pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
@@ -43,8 +45,9 @@ pub use workspace::{OpenOpts, Workspace};
 /// handler-authoring surface (Part 8).
 pub struct StudioCore {
     workspace: Workspace,
-    store: rowforge_core::execution_store::ExecutionStore,
+    pub(crate) store: std::sync::Arc<std::sync::Mutex<rowforge_core::execution_store::ExecutionStore>>,
     exec_list_cache: Cache<ExecListKey, Vec<ExecSummary>>,
+    pub(crate) sessions: std::sync::Arc<crate::session::SessionRegistry>,
 }
 
 impl StudioCore {
@@ -66,10 +69,12 @@ impl StudioCore {
             root,
             schema_version: store.schema_version(),
         };
+        let store = std::sync::Arc::new(std::sync::Mutex::new(store));
         Ok(Self {
             workspace,
             store,
             exec_list_cache: Cache::new(DEFAULT_TTL),
+            sessions: std::sync::Arc::new(crate::session::SessionRegistry::default()),
         })
     }
 
@@ -83,17 +88,17 @@ impl StudioCore {
     pub fn show(&self, id: &ExecutionId) -> Result<ExecDetail, UiError> {
         use crate::exec_detail::{AttemptSummary, HandlerBindingView, InputFormat};
 
-        let exec = self
-            .store
+        let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+
+        let exec = store
             .get_execution(id.as_str())
             .map_err(|e| UiError::Internal(e.to_string()))?
             .ok_or_else(|| UiError::NotFound(format!("execution {} not found", id)))?;
 
-        let summary = ExecSummary::from_execution(&exec, &self.store)
+        let summary = ExecSummary::from_execution(&exec, &store)
             .map_err(|e| UiError::Internal(e.to_string()))?;
 
-        let attempts_raw = self
-            .store
+        let attempts_raw = store
             .list_attempts_for_execution(id.as_str())
             .map_err(|e| UiError::Internal(e.to_string()))?;
 
@@ -141,14 +146,14 @@ impl StudioCore {
     ) -> Result<AttemptDetail, UiError> {
         use crate::attempt_detail::{AttemptPaths, HandlerInstanceView};
 
-        let exec = self
-            .store
+        let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+
+        let exec = store
             .get_execution(e.as_str())
             .map_err(|err| UiError::Internal(err.to_string()))?
             .ok_or_else(|| UiError::NotFound(format!("execution {} not found", e)))?;
 
-        let attempts = self
-            .store
+        let attempts = store
             .list_attempts_for_execution(e.as_str())
             .map_err(|err| UiError::Internal(err.to_string()))?;
 
@@ -202,9 +207,10 @@ impl StudioCore {
     /// `by_error_code` is a sibling field on `RowResolution`, not inside
     /// `ResolutionCounts`. See task T10 context.
     pub fn rollup(&self, id: &ExecutionId) -> Result<ExecRollup, UiError> {
+        let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+
         // Validate existence first to return a clean NotFound.
-        let _exec = self
-            .store
+        let _exec = store
             .get_execution(id.as_str())
             .map_err(|e| UiError::Internal(e.to_string()))?
             .ok_or_else(|| UiError::NotFound(format!("execution {} not found", id)))?;
@@ -212,7 +218,7 @@ impl StudioCore {
         // Call the full compute_resolution because we need by_error_code (which
         // is a sibling field, not inside ResolutionCounts).
         let res = rowforge_core::row_resolution::compute_resolution(
-            &self.store,
+            &store,
             id.as_str(),
         )
         .map_err(|e| UiError::Internal(e.to_string()))?;
@@ -237,13 +243,14 @@ impl StudioCore {
     /// Returns `UiError::NotFound` when the execution or attempt does not
     /// exist, or when `outcomes.jsonl` has not been created yet.
     pub fn failed_page(&self, q: FailedPageQuery) -> Result<FailedRowPage, UiError> {
-        let exec = self
-            .store
+        let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+        let exec = store
             .get_execution(q.execution_id.as_str())
             .map_err(|e| UiError::Internal(e.to_string()))?
             .ok_or_else(|| {
                 UiError::NotFound(format!("execution {} not found", q.execution_id))
             })?;
+        drop(store);
 
         let outcomes = exec
             .dir
@@ -269,16 +276,17 @@ impl StudioCore {
     /// accumulated in `rows`; the first Success short-circuits and sets
     /// `resolved_at`.
     pub fn row_history(&self, e: &ExecutionId, seq: u64) -> Result<RowHistory, UiError> {
-        let exec = self
-            .store
+        let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+
+        let exec = store
             .get_execution(e.as_str())
             .map_err(|err| UiError::Internal(err.to_string()))?
             .ok_or_else(|| UiError::NotFound(format!("execution {} not found", e)))?;
 
-        let attempts = self
-            .store
+        let attempts = store
             .list_attempts_for_execution(e.as_str())
             .map_err(|err| UiError::Internal(err.to_string()))?;
+        drop(store);
 
         let mut rows = Vec::new();
         let mut resolved_at: Option<AttemptId> = None;
@@ -326,15 +334,16 @@ impl StudioCore {
         if let Some(cached) = self.exec_list_cache.get_if_fresh(&ExecListKey, &db_path) {
             return Ok(cached);
         }
-        let executions = self
-            .store
+        let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+        let executions = store
             .list_executions()
             .map_err(|e| UiError::Internal(e.to_string()))?;
         let summaries: Vec<ExecSummary> = executions
             .iter()
-            .map(|e| ExecSummary::from_execution(e, &self.store))
+            .map(|e| ExecSummary::from_execution(e, &store))
             .collect::<Result<_, _>>()
             .map_err(|e: rowforge_core::error::CoreError| UiError::Internal(e.to_string()))?;
+        drop(store);
         self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
         Ok(summaries)
     }
