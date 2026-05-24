@@ -32,6 +32,18 @@ pub enum UiError {
     /// Internal failure. Future plans should classify instead.
     #[error("internal: {0}")]
     Internal(String),
+
+    /// A run was aborted (e.g. by cancel request or signal).
+    #[error("run aborted: {0}")]
+    RunAborted(String),
+
+    /// A run cannot start because the execution or scope is already busy.
+    #[error("run cannot start: {0}")]
+    RunBusy(String),
+
+    /// The provided run handle is expired or unknown.
+    #[error("handle expired or unknown: {0}")]
+    UnknownHandle(String),
 }
 
 impl From<std::io::Error> for UiError {

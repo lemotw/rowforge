@@ -36,7 +36,10 @@ export type UiErrorKind =
   | "not_found"
   | "invalid_arg"
   | "io"
-  | "internal";
+  | "internal"
+  | "run_aborted"
+  | "run_busy"
+  | "unknown_handle";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shape (confirmed by ipc_contract.rs test in src-tauri/tests/):

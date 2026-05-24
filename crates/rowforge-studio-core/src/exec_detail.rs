@@ -20,6 +20,7 @@ pub struct ExecDetail {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum InputFormat {
     Csv,
