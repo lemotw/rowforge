@@ -12,7 +12,15 @@ import type {
  */
 export type RunBootstrapAction = { type: "_bootstrap"; snapshot: ProgressSnapshot };
 
-export type RunReducerAction = ProgressEvent | RunBootstrapAction;
+/**
+ * Synthetic action dispatched when run_snapshot returns UnknownHandle
+ * during bootstrap. Signals the page to switch from Live to Summary
+ * (the static attempt_show data is the authoritative source — there's
+ * nothing live to show).
+ */
+export type RunPhantomAction = { type: "_terminal_before_listen" };
+
+export type RunReducerAction = ProgressEvent | RunBootstrapAction | RunPhantomAction;
 
 const RECENT_BUFFER_SIZE = 200;
 
@@ -56,6 +64,13 @@ export interface RunState {
   /** Set when terminal — Done or Aborted. */
   finalReport?: RunReport;
   abortReason?: AbortReason;
+  /**
+   * True when the run finished BEFORE the React listener attached
+   * (detected via run_snapshot returning UnknownHandle). The page
+   * should fall back to the static attempt_show data — there are no
+   * live counters to show because the broadcast already drained.
+   */
+  phantomBootstrap: boolean;
 }
 
 export const initialRunState: RunState = {
@@ -73,12 +88,16 @@ export const initialRunState: RunState = {
   eta_ms: null,
   recentSamples: [],
   banners: [],
+  phantomBootstrap: false,
 };
 
 let bannerIdCounter = 0;
 
 export function reduceRun(state: RunState, event: RunReducerAction): RunState {
   switch (event.type) {
+    case "_terminal_before_listen": {
+      return { ...state, phantomBootstrap: true };
+    }
     case "_bootstrap": {
       // Apply the backend snapshot wholesale. Only overrides counter fields
       // (processed/total/success/failed/crashed/in_flight/queue_depth/phase);

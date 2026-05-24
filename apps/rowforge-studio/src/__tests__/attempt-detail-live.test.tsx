@@ -44,11 +44,26 @@ describe("AttemptDetail Live integration", () => {
     vi.clearAllMocks();
   });
 
-  it("renders Live tab when ?run=<handle> is present", async () => {
+  const fakeSnapshot = {
+    processed: 0, total: null, success: 0, failed: 0, crashed: 0,
+    in_flight: 0, queue_depth: 0, phase: "starting",
+  };
+  const fakeExec = {
+    summary: { id: "e1", name: "test-exec", created_at: "2026-05-24T12:00:00Z",
+      input_rows: 10, attempts_count: 1, last_attempt_state: "running",
+      last_attempt_counts: null },
+    input_path_snapshot: "/tmp/in.csv", input_format: "csv" as const,
+    handler_binding: { handler_id: null, handler_instance_id: null, version: null },
+    attempts: [], field_mapping: null, config_overrides: {},
+  };
+
+  it("renders Live tab when ?run=<handle> is present and run is in flight", async () => {
     (invoke as any).mockImplementation((cmd: string) => {
       if (cmd === "workspace_current")
         return Promise.resolve({ root: "/tmp/ws", schema_version: 2 });
       if (cmd === "attempt_show") return Promise.resolve(fakeAttempt(false));
+      if (cmd === "exec_show") return Promise.resolve(fakeExec);
+      if (cmd === "run_snapshot") return Promise.resolve(fakeSnapshot);
       throw new Error("unexpected " + cmd);
     });
 
@@ -64,6 +79,7 @@ describe("AttemptDetail Live integration", () => {
       if (cmd === "workspace_current")
         return Promise.resolve({ root: "/tmp/ws", schema_version: 2 });
       if (cmd === "attempt_show") return Promise.resolve(fakeAttempt(false));
+      if (cmd === "exec_show") return Promise.resolve(fakeExec);
       throw new Error("unexpected " + cmd);
     });
 
@@ -72,5 +88,26 @@ describe("AttemptDetail Live integration", () => {
     expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
     // Stale banner SHOULD be present (non-terminal + no live).
     expect(await screen.findByText(/may still be running/i)).toBeInTheDocument();
+  });
+
+  it("hides Live tab and shows fast-run notice when run_snapshot returns UnknownHandle", async () => {
+    (invoke as any).mockImplementation((cmd: string) => {
+      if (cmd === "workspace_current")
+        return Promise.resolve({ root: "/tmp/ws", schema_version: 2 });
+      // Mid-flight when AttemptDetail first mounts...
+      if (cmd === "attempt_show") return Promise.resolve(fakeAttempt(true));
+      if (cmd === "exec_show") return Promise.resolve(fakeExec);
+      // ...but by the time the bootstrap fires, the run is gone.
+      if (cmd === "run_snapshot")
+        return Promise.reject({ kind: "unknown_handle", message: "run-test-1" });
+      throw new Error("unexpected " + cmd);
+    });
+
+    render(wrap("/exec/e1/attempt/a1?run=run-test-1"));
+
+    // Phantom-bootstrap notice appears
+    expect(await screen.findByText(/Run completed before live updates/i)).toBeInTheDocument();
+    // Live tab is gone
+    expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
   });
 });
