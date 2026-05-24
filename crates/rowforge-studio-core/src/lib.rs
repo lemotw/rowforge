@@ -3,11 +3,14 @@
 //! See `docs/spec/studio/part-1-overview.md` for principles and
 //! `docs/spec/studio/part-5-api.md` for the public surface.
 
+pub mod cache;
 pub mod error;
 pub mod exec_view;
 pub mod ids;
 pub mod settings;
 pub mod workspace;
+
+use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use error::UiError;
 pub use exec_view::{ExecSummary, ListFilter};
@@ -23,6 +26,7 @@ pub use workspace::{OpenOpts, Workspace};
 pub struct StudioCore {
     workspace: Workspace,
     store: rowforge_core::execution_store::ExecutionStore,
+    exec_list_cache: Cache<ExecListKey, Vec<ExecSummary>>,
 }
 
 impl StudioCore {
@@ -44,7 +48,11 @@ impl StudioCore {
             root,
             schema_version: store.schema_version(),
         };
-        Ok(Self { workspace, store })
+        Ok(Self {
+            workspace,
+            store,
+            exec_list_cache: Cache::new(DEFAULT_TTL),
+        })
     }
 
     pub fn workspace(&self) -> &Workspace {
@@ -53,13 +61,19 @@ impl StudioCore {
 
     /// List all executions in this workspace, newest first.
     ///
-    /// Plan 1 emits one DB call per invocation (no caching). Plan 3
-    /// adds the warm-tier mtime probe per spec part-4 §4.3.
+    /// Uses a warm-tier mtime probe per spec part-4 §4.3: cache is valid
+    /// iff the DB file mtime is unchanged AND we are within TTL.
     pub fn list(&self, _filter: ListFilter) -> Result<Vec<ExecSummary>, UiError> {
+        let db_path = self.workspace.root.join("executions.db");
+        if let Some(cached) = self.exec_list_cache.get_if_fresh(&ExecListKey, &db_path) {
+            return Ok(cached);
+        }
         let executions = self
             .store
             .list_executions()
             .map_err(|e| UiError::Internal(e.to_string()))?;
-        Ok(executions.iter().map(ExecSummary::from).collect())
+        let summaries: Vec<ExecSummary> = executions.iter().map(ExecSummary::from).collect();
+        self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
+        Ok(summaries)
     }
 }
