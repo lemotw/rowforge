@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ipc } from "./client";
-import type { AttemptId, CancelMode, ExecutionId, FailedPageQuery, RunHandle, Settings } from "./types";
+import type { AttemptId, CancelMode, ExecutionId, FailedPageQuery, RunHandle, RunStartedHandle, Settings } from "./types";
 
 export const useSettings = () =>
   useQuery({
@@ -82,9 +82,8 @@ export const useRowHistory = (e: ExecutionId | null, seq: number | null) =>
 
 export const useRunStart = () => {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (args: { executionId: ExecutionId; handlerDir: string }) =>
-      ipc.run_start(args),
+  return useMutation<RunStartedHandle, Error, { executionId: ExecutionId; handlerDir: string }>({
+    mutationFn: (args) => ipc.run_start(args),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["exec_list"] });
       qc.invalidateQueries({ queryKey: ["exec_show"] });

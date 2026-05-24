@@ -34,7 +34,7 @@ pub use ids::{AttemptId, ExecutionId};
 pub use manifest::{Manifest, ManifestError, ManifestReport, ManifestSource, ManifestWarning, validate_manifest};
 pub use row_history::RowHistory;
 pub use rollup::ExecRollup;
-pub use run::{RunOpts, RunRollupTick, RunStream};
+pub use run::{RunOpts, RunRollupTick, RunStartedHandle, RunStream};
 pub use run_handle::{CancelMode, RunHandle, RunStatus};
 pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
@@ -767,9 +767,10 @@ mod drop_tests {
             .unwrap();
 
             let opts = RunOpts::new(handler);
-            let handle = core
+            let started = core
                 .start_run(&ExecutionId::new(exec_id), opts)
                 .unwrap();
+            let handle = started.handle;
 
             // Grab the token reference via pub(crate) sessions so we can check
             // after drop.
