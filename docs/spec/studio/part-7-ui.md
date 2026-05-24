@@ -138,8 +138,8 @@ Each step lists the Tauri command (Part 5 §5.5) it invokes.
 | 7 | Click "Run" → configure `RunOpts`, submit | `run_start` |
 | 8 | Auto-route to Attempt Detail (Live); subscribe | event `run:<handle>` |
 
-Step 7 corresponds to the `Pending → Starting → Running` transition
-(Part 3 §3.3).
+Step 7 corresponds to the `Starting → Running` transition
+(Part 3 §3.3). Sessions register directly into `Starting`.
 
 ### Flow B — Observe and cancel a live run
 
@@ -191,7 +191,6 @@ The mapping table below is normative for v1.
 
 | RunStatus | Token | Hex (dark) | Visual | Icon (lucide) |
 |---|---|---|---|---|
-| Pending | `neutral-500` | `#6B7280` | gray dot + pulse | Clock |
 | Starting | `info-500` | `#3B82F6` | blue dot + spinner | Loader2 |
 | Running | `success-500` | `#10B981` | green dot + heartbeat | Play |
 | Cancelling | `warning-500` | `#F59E0B` | amber dot + spinner | Loader2 + Slash |

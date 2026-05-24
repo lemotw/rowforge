@@ -44,12 +44,8 @@ if a user-configured override would violate it.
 ## 3.3 Run state machine
 
 ```
-        ┌─────────┐
-        │ Pending │  RunHandle allocated, tokio task not yet spawned.
-        └────┬────┘
-             ▼
         ┌──────────┐
-        │ Starting │  Workers spawning, handlers building / handshaking.
+        │ Starting │  Session registered; workers spawning, handlers building / handshaking.
         └────┬─────┘
              │  on first row dispatched
              ▼
@@ -73,9 +69,14 @@ if a user-configured override would violate it.
                          └─────────┘
 ```
 
+Sessions register directly into `Starting`. There is no `Pending` state —
+`start_run` inserts the SQLite `attempts` row and spawns the tokio task
+atomically, so the session is always at least `Starting` by the time it
+is visible.
+
 Persistence at transitions:
 
-- **Pending → Starting**: SQLite `attempts` row inserted with
+- **Starting** (on registration): SQLite `attempts` row inserted with
   `state = starting`.
 - **Starting → Running**: row updated `state = running`.
 - **Running → Done**: outcomes flush completed; `meta.json` written;

@@ -47,7 +47,7 @@ export interface RunState {
 }
 
 export const initialRunState: RunState = {
-  status: "pending",
+  status: "starting",
   phase: null,
   processed: 0,
   total: null,

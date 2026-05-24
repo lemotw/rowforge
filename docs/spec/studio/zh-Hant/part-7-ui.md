@@ -125,7 +125,7 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 | 7 | 點「Run」→ 配置 `RunOpts`，提交 | `run_start` |
 | 8 | 自動跳到 Attempt Detail (Live)；訂閱 | event `run:<handle>` |
 
-步驟 7 對應第 3 部分 §3.3 的 `Pending → Starting → Running` 轉移。
+步驟 7 對應第 3 部分 §3.3 的 `Starting → Running` 轉移。Session 直接從 `Starting` 開始注冊。
 
 ### Flow B — 觀察進行中的 run 並 cancel
 
@@ -177,7 +177,6 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 
 | RunStatus | Token | Hex (dark) | 視覺 | Icon (lucide) |
 |---|---|---|---|---|
-| Pending | `neutral-500` | `#6B7280` | 灰色 dot + pulse | Clock |
 | Starting | `info-500` | `#3B82F6` | 藍色 dot + spinner | Loader2 |
 | Running | `success-500` | `#10B981` | 綠色 dot + heartbeat | Play |
 | Cancelling | `warning-500` | `#F59E0B` | 琥珀 dot + spinner | Loader2 + Slash |
