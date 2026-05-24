@@ -9,7 +9,7 @@
 
 use chrono::{DateTime, Utc};
 use rowforge_core::execution_store::Execution;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Filter passed to `list`. Reserved for future use; Plan 1 has no
 /// filter knobs.
@@ -18,7 +18,7 @@ use serde::Serialize;
 pub struct ListFilter;
 
 /// Light-weight projection for the exec list page.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ExecSummary {
     pub id: String,
@@ -34,7 +34,7 @@ pub struct ExecSummary {
 
 /// Placeholder for Plan 3's full `AttemptCounts`. Kept as its own type
 /// so the public field above does not change shape later.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AttemptCountsStub {
     pub success: u64,
