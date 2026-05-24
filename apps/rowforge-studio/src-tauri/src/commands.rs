@@ -205,6 +205,23 @@ pub fn run_active(
     Ok(core.active_runs())
 }
 
+/// Return the live `RunHandle` for an attempt if one is currently
+/// running, or `None` otherwise. AttemptDetail uses this on mount to
+/// offer "Watch live" when the user navigates in without `?run=` in
+/// the URL (e.g. coming from the executions list rather than the Run
+/// button's auto-navigate).
+#[tauri::command]
+pub fn attempt_active_handle(
+    state: State<'_, AppState>,
+    attempt_id: AttemptId,
+) -> Result<Option<RunHandle>, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    Ok(core.active_handle_for_attempt(attempt_id.as_str()))
+}
+
 /// Snapshot of an active run's counters. Used by the UI to bootstrap
 /// state when subscribing to a run that's already in flight — Tauri
 /// events don't queue, so events emitted before `listen()` attaches
