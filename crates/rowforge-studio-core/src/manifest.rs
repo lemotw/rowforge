@@ -33,7 +33,9 @@ pub struct Manifest {
     pub version: String,
     /// Free-form language tag (e.g. "go", "python"). May be empty.
     pub language: String,
-    /// Argv of the run command. Always non-empty by core's parse rules.
+    /// Argv of the run command. `validate_manifest` rejects an empty
+    /// vector with `ManifestError::ParseFailed`; downstream worker
+    /// spawn would otherwise fail late with "entry.cmd empty".
     pub entry_cmd: Vec<String>,
     /// Argv of the optional pre-spawn build command.
     pub entry_build: Option<Vec<String>>,
@@ -92,6 +94,17 @@ fn validate_at(handler_dir: &Path) -> ManifestReport {
             return ManifestReport { manifest: None, errors, warnings };
         }
     };
+
+    // rowforge-core's serde happily accepts `entry.cmd: []` — empty vec
+    // passes type-check. The worker spawner then fails at run time with
+    // "entry.cmd empty" Protocol error. Reject up front so the Wizard /
+    // Run launcher can show a useful message before exec_start.
+    if core_manifest.entry.cmd.is_empty() {
+        errors.push(ManifestError::ParseFailed {
+            message: "entry.cmd must be non-empty (no run command defined)".into(),
+        });
+        return ManifestReport { manifest: None, errors, warnings };
+    }
 
     // PATH-probe the first token of cmd and build (if relative-but-bare).
     if let Some(first) = core_manifest.entry.cmd.first() {
@@ -166,19 +179,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_required_field_reports_parse_failure() {
-        // YAML parses but core's Manifest deserialization fails because
-        // `entry.cmd` is required.
+    fn empty_entry_cmd_reports_parse_failure() {
+        // serde happily accepts `entry.cmd: []` (Vec<String> deserialize
+        // is content-blind), but worker spawn would later fail with
+        // "entry.cmd empty". validate_manifest must reject up front.
         let dir = tmpdir("no-cmd");
         write_yaml(&dir, "name: x\nversion: 0.1.0\nentry:\n  cmd: []\n");
         let report = validate_manifest(&ManifestSource::Path { path: dir });
-        // Could be either: serde lets empty Vec through but the validator
-        // might not care. Just assert manifest is None OR cmd is empty.
-        // Real outcome depends on core. Loosened to: any error OR an
-        // empty cmd produces no path probe.
-        if report.manifest.is_some() {
-            assert!(report.manifest.unwrap().entry_cmd.is_empty());
-        }
+        assert!(report.manifest.is_none(), "empty entry.cmd should reject");
+        assert!(report.errors.iter().any(|e| matches!(
+            e,
+            ManifestError::ParseFailed { message } if message.contains("entry.cmd")
+        )));
     }
 
     #[test]
