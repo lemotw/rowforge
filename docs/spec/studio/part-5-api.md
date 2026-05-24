@@ -224,13 +224,40 @@ attempt_show(execution_id, attempt_id)            -> AttemptDetail
 attempt_failed_page(query)                        -> FailedRowPage
 attempt_row_history(execution_id, seq)            -> RowHistory
 
-run_start(execution_id, opts)         -> RunHandle
+run_start(execution_id, handler_dir,
+          row_limit?, workers?,
+          dry_run?, skip_attempted?)   -> RunStartedHandle
 run_cancel(handle, mode)              -> ()
 run_status(handle)                    -> RunStatus
 run_active()                          -> Vec<RunHandle>
+run_snapshot(handle)                  -> ProgressSnapshot
+attempt_active_handle(attempt_id)     -> Option<RunHandle>
 
 manifest_validate(source)             -> ManifestReport
 ```
+
+Notes on the run lifecycle commands (Plan 5):
+
+- `run_start` returns a `RunStartedHandle { handle, attempt_id }`
+  so the UI can build the `/exec/:id/attempt/:aid?run=<handle>` URL
+  in one round-trip.
+- `row_limit` (`Option<u64>`) caps how many rows are dispatched.
+  Combined with `skip_attempted` it enables successive sampling of
+  fresh rows across runs.
+- `skip_attempted` (`Option<bool>`) — when true, `RowResolution` for
+  the execution is computed and every already-attempted seq
+  (anything not `NeverAttempted`) is passed as `skip_seqs` to the
+  pipeline. Used by the UI's "sample fresh rows across runs" path.
+- `run_snapshot` returns the live `ProgressSnapshot` for a handle in
+  the registry. Used by the React `useRun` hook to bootstrap state
+  after `listen()` attaches — Tauri events are fire-and-forget, so
+  events emitted before subscription would otherwise be lost.
+  Returns `UnknownHandle` if the run already terminated (the React
+  side treats that as "fall back to attempt_show static data").
+- `attempt_active_handle` resolves an `AttemptId` to its live
+  `RunHandle` if a session exists in the registry. Used so a user
+  who navigates into an in-flight attempt without `?run=` in the URL
+  can see a "Watch live" affordance.
 
 Events (one-way, core → UI):
 

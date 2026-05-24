@@ -78,8 +78,14 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
     （第 2 部分 §2.3）。
 - **Row History drawer** — 從 Failed rows 點開。實體：`RowHistory`。
   呼叫：`attempt_row_history`。嚴格按需（第 2 部分 §2.2.7）。
-- **Run launcher**（Execution Detail 上的 modal）— 構造 `RunOpts`，
-  呼叫 `run_start`。
+- **Run launcher**（Execution Detail header）— 主「Run」按鈕用預設
+  值快速啟動；齒輪 icon 副按鈕展開 inline 選項面板。面板欄位:
+  Handler 目錄(localStorage 跨 session 持久化)、Sample first N rows
+  (`row_limit`)、Workers 覆寫、「Skip rows already attempted」勾選盒
+  (驅動 `skip_attempted`,用 `RowResolution.attempted_seqs` 跨多次
+  run 累進採樣不重複的 row)、Dry run。面板 header 同時顯示來自
+  `exec_rollup` 的 `total / attempted / fresh` 列計;面板底部即時
+  預覽「Will dispatch N rows」。呼叫 `run_start`。
 - **Export dialog** — 構造 `ExportOpts`，呼叫 `exec_export`。
 - **Settings** `/settings` — 實體：`Settings`。呼叫：
   `workspace_settings_load`、`workspace_settings_save`。

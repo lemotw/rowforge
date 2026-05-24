@@ -128,6 +128,33 @@ Tauri 層透過 `core.subscribe(handle)` 直接訂閱進行中的 attempt，
 當前計數器；`events()` 為 broadcast receiver。用於 run 仍存活於此
 Studio 進程內時。
 
+### 6.4.1 React 訂閱啟動補包(snapshot fallback)
+
+Tauri 的 `app.emit(channel, payload)` 是 fire-and-forget — 在
+webview listener 掛載之前發出的 payload 會被丟棄,**不會 queue**。
+React `useRun` hook 因此不能只靠 `listen("run:<handle>")`:
+`run_start` 回傳到 `listen()` 真正生效之間(實測 50–300 ms),
+那段時間的事件全部會掉。
+
+**Bootstrap 協定:**
+
+1. `useRun` 先掛 `listen()`,之後到達的事件全部進 reducer。
+2. `listen()` 掛好後立即呼叫 `run_snapshot(handle)`,把回傳的
+   `ProgressSnapshot` 用合成 action `_bootstrap` 一次性套到
+   reducer(counter / phase / status)。
+3. 步驟 1、2 之間到達的真正事件正常累積到 state。`_bootstrap`
+   可能會用稍早的 snapshot 暫時覆蓋幾個欄位;下一次真實 `Tick`
+   (≤ 250 ms)會把數字校正回來。
+4. 若 `run_snapshot` 回 `UnknownHandle`(run 在 listener 掛好之前
+   就結束了,sub-200 ms 的 run 常見),hook 派發
+   `_terminal_before_listen` 把 `phantomBootstrap = true`。頁面
+   反應:隱藏 Live tab、refetch `attempt_show`、切到 Summary。
+
+協定不暴露在 Tauri command surface;是 React `useRun` hook 加上
+支援指令 `run_snapshot` 跟 `attempt_active_handle`(第 5 部分 §5.5)
+的特性。Tests 鎖在
+`apps/rowforge-studio/src/__tests__/run-state.test.ts`。
+
 ## 6.5 失敗診斷
 
 `Aborted` 攜帶結構化情境：

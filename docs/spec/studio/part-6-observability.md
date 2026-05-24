@@ -135,6 +135,39 @@ receiver. `snapshot()` returns the aggregator's current counters;
 `events()` is the broadcast receiver. Used while a run is alive in
 this Studio process.
 
+### 6.4.1 React subscription bootstrap (snapshot fallback)
+
+Tauri's `app.emit(channel, payload)` is fire-and-forget — payloads
+emitted before any webview listener attaches are discarded, not
+queued. The React `useRun` hook therefore can't rely on
+`listen("run:<handle>")` alone: events that fired between
+`run_start` returning and `listen()` taking effect (50–300 ms in
+practice) would be lost.
+
+**Bootstrap protocol:**
+
+1. `useRun` attaches the `listen()` first so subsequent events are
+   captured into the reducer.
+2. Once `listen()` is attached, it calls `run_snapshot(handle)` and
+   dispatches a synthetic `_bootstrap` action carrying the returned
+   `ProgressSnapshot`. The reducer applies counter / phase / status
+   from the snapshot in one shot.
+3. Real events arriving between steps 1 and 2 update the reducer
+   normally. The `_bootstrap` dispatch may briefly overwrite with
+   slightly older snapshot values; the next real `Tick` (≤ 250 ms
+   later) corrects this.
+4. If `run_snapshot` rejects with `UnknownHandle` (the run finished
+   before the listener attached — common for sub-200 ms runs), the
+   hook dispatches a `_terminal_before_listen` action setting
+   `phantomBootstrap = true`. The page reacts by hiding the Live
+   tab, refetching `attempt_show`, and switching to Summary.
+
+This protocol is invisible at the Tauri command surface; it's a
+property of the React `useRun` hook and the supporting commands
+`run_snapshot` (Part 5 §5.5) and `attempt_active_handle`. Tests in
+`apps/rowforge-studio/src/__tests__/run-state.test.ts` lock both
+the `_bootstrap` and `_terminal_before_listen` actions.
+
 ## 6.5 Failure diagnostics
 
 `Aborted` carries structured context:
