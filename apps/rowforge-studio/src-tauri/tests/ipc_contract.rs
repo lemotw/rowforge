@@ -40,23 +40,26 @@ fn exec_summary_json_keys() {
 
 #[test]
 fn ui_error_workspace_unavailable_shape() {
-    // Discovery test: what does UiError::WorkspaceUnavailable serialize to?
-    // Print the JSON so we can update the TS mirror with the actual shape.
     let err = UiError::WorkspaceUnavailable("no home".into());
     let v = serde_json::to_value(&err).unwrap();
-    eprintln!("ACTUAL UiError JSON shape: {v}");
     assert!(v.get("kind").is_some(), "kind missing: {v:?}");
     let kind = v.get("kind").and_then(|k| k.as_str()).unwrap();
     assert_eq!(kind, "workspace_unavailable", "kind value");
-    // Don't assert the inner string key — we're discovering it.
-    // The test passes as long as the tag is present; the inner-value
-    // location is reported via eprintln for human consumption.
+    assert_eq!(
+        v.get("message").and_then(|m| m.as_str()),
+        Some("no home"),
+        "UiError content field must be 'message' (adjacent tagging): {v:?}"
+    );
 }
 
 #[test]
 fn ui_error_internal_shape() {
     let err = UiError::Internal("boom".into());
     let v = serde_json::to_value(&err).unwrap();
-    eprintln!("ACTUAL UiError::Internal JSON shape: {v}");
     assert_eq!(v.get("kind").and_then(|k| k.as_str()).unwrap(), "internal");
+    assert_eq!(
+        v.get("message").and_then(|m| m.as_str()),
+        Some("boom"),
+        "UiError content field must be 'message' (adjacent tagging): {v:?}"
+    );
 }

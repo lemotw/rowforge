@@ -32,13 +32,13 @@ pub fn workspace_open(
     s.workspace_root = Some(workspace.root.clone());
     settings_io::save(&app, &s)?;
 
-    *state.core.lock().unwrap() = Some(core);
+    *state.core.lock().unwrap_or_else(|p| p.into_inner()) = Some(core);
     Ok(workspace)
 }
 
 #[tauri::command]
 pub fn exec_list(state: State<'_, AppState>) -> Result<Vec<ExecSummary>, UiError> {
-    let guard = state.core.lock().unwrap();
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     let core = guard
         .as_ref()
         .ok_or_else(|| UiError::WorkspaceUnavailable("no workspace open".into()))?;
