@@ -1188,6 +1188,55 @@ async fn start_run_returns_handle_and_subscriber_gets_event() {
     );
 }
 
+#[test]
+fn export_writes_files_for_csv_format() {
+    use rowforge_core::export::{ExportFormat, ExportOpts};
+    use rowforge_studio_core::{OpenOpts, StartExecArgs, StudioCore};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let csv = tmp.path().join("in.csv");
+    std::fs::write(&csv, "row_id\nr1\nr2\n").unwrap();
+
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().into())).unwrap();
+    let id = core.start_exec(
+        StartExecArgs::new(csv, "export_test")
+    ).unwrap();
+
+    let opts = ExportOpts::new(ExportFormat::Csv)
+        .with_output_dir(tmp.path().join("out"));
+    let report = core.export(&id, opts).unwrap();
+    assert!(report.output_dir.exists());
+    let names: Vec<&str> = report.written_files.iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+        .collect();
+    assert!(names.contains(&"success.csv"), "got files: {:?}", names);
+    assert!(names.contains(&"failed.csv"), "got files: {:?}", names);
+}
+
+#[test]
+fn export_require_complete_refuses_when_unresolved() {
+    use rowforge_core::export::{ExportFormat, ExportOpts};
+    use rowforge_studio_core::{OpenOpts, StartExecArgs, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let csv = tmp.path().join("in.csv");
+    std::fs::write(&csv, "row_id\nr1\n").unwrap();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().into())).unwrap();
+    let id = core.start_exec(
+        StartExecArgs::new(csv, "strict_test")
+    ).unwrap();
+
+    let opts = ExportOpts::new(ExportFormat::Csv)
+        .with_output_dir(tmp.path().join("out"))
+        .with_require_complete(true);
+    let err = core.export(&id, opts).unwrap_err();
+    assert!(
+        matches!(err, UiError::ExportIncomplete { missing_count } if missing_count > 0),
+        "got {:?}",
+        err
+    );
+}
+
 /// Test 2: start_run enforces the per-execution concurrency limit of 1.
 /// A second start_run for the same exec_id must return UiError::RunBusy.
 ///

@@ -529,6 +529,36 @@ impl StudioCore {
         Ok(summaries)
     }
 
+    /// Export an execution to files.
+    ///
+    /// Thin wrapper over `rowforge_core::export::export_execution`.
+    /// Parses the `export_incomplete:<N>` sentinel from the core into
+    /// `UiError::ExportIncomplete { missing_count }` so the React layer can
+    /// surface a precise message. All other errors become `UiError::Internal`.
+    pub fn export(
+        &self,
+        id: &ExecutionId,
+        opts: rowforge_core::export::ExportOpts,
+    ) -> Result<rowforge_core::export::ExportReport, UiError> {
+        let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+        match rowforge_core::export::export_execution(&store, id.as_str(), &opts) {
+            Ok(report) => Ok(report),
+            Err(e) => {
+                let msg = e.to_string();
+                // CoreError::Store wraps the sentinel as "store: export_incomplete:N"
+                let sentinel_haystack = msg
+                    .strip_prefix("store: ")
+                    .unwrap_or(&msg);
+                if let Some(rest) = sentinel_haystack.strip_prefix("export_incomplete:") {
+                    let missing: u64 = rest.parse().unwrap_or(0);
+                    Err(UiError::ExportIncomplete { missing_count: missing })
+                } else {
+                    Err(UiError::Internal(msg))
+                }
+            }
+        }
+    }
+
     /// Create a new execution from a local input file.
     ///
     /// Spec §5.2. Does:
