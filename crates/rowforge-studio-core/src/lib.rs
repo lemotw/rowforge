@@ -130,6 +130,23 @@ pub struct StudioCore {
     pub(crate) sessions: std::sync::Arc<crate::session::SessionRegistry>,
 }
 
+impl Drop for StudioCore {
+    fn drop(&mut self) {
+        // Soft-cancel all active sessions. Spec §3.6.
+        //
+        // Tauri shutdown hooks handle the actual graceful drain via
+        // wait-loops; here we only signal cancellation. Tasks owning the
+        // cancel_token will observe cancellation and emit Aborted events
+        // before exiting their tokio spawn.
+        for handle in self.sessions.handles() {
+            if let Some(session) = self.sessions.get(&handle) {
+                session.cancel_token.cancel();
+                let _ = session.tick_stop.send(true);
+            }
+        }
+    }
+}
+
 impl StudioCore {
     /// Open a workspace. If `opts.workspace` is None, falls back to
     /// `rowforge_core::workspace::default_workspace_root()`.
@@ -524,4 +541,88 @@ fn read_meta_full(
         })
         .unwrap_or_default();
     Some((counts, by_code))
+}
+
+// ---------------------------------------------------------------------------
+// T8 unit test — Drop cancels active sessions (spec §3.6)
+// ---------------------------------------------------------------------------
+//
+// Lives here (unit test, not integration test) because it needs access to
+// `pub(crate) sessions` on StudioCore. Integration tests in tests/ compile
+// the crate without cfg(test) so pub(crate) items are inaccessible there.
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+    use crate::workspace::OpenOpts;
+    use crate::run::RunOpts;
+    use crate::ids::ExecutionId;
+
+    fn empty_workspace() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let _store = rowforge_core::execution_store::ExecutionStore::open(tmp.path()).unwrap();
+        tmp
+    }
+
+    /// Build a minimal handler dir with a valid rowforge.yaml whose `cmd`
+    /// points to a nonexistent binary. The manifest loads; workers fail to
+    /// start → run eventually aborts. Good enough for Drop testing.
+    fn minimal_handler_dir(base: &tempfile::TempDir) -> std::path::PathBuf {
+        let handler = base.path().join("handler");
+        std::fs::create_dir_all(&handler).unwrap();
+        std::fs::write(
+            handler.join("rowforge.yaml"),
+            "name: test-handler\nversion: 0.1.0\nentry:\n  cmd: [\"/nonexistent-binary\"]\n",
+        )
+        .unwrap();
+        handler
+    }
+
+    #[tokio::test]
+    async fn drop_cancels_active_sessions() {
+        let tmp = empty_workspace();
+        let csv = tmp.path().join("input.csv");
+        std::fs::write(&csv, "x\n1\n").unwrap();
+        let handler = minimal_handler_dir(&tmp);
+
+        let exec_id = {
+            let mut store =
+                rowforge_core::execution_store::ExecutionStore::open(tmp.path()).unwrap();
+            store
+                .create_execution(rowforge_core::execution_store::NewExecution {
+                    name: Some("drop-test".into()),
+                    input_csv_id: "csv1".into(),
+                    input_csv_path: csv,
+                    current_handler_instance_id: None,
+                })
+                .unwrap()
+                .id
+        };
+
+        // Open core, start a run, capture the cancel_token via pub(crate) sessions.
+        let session_token = {
+            let core = StudioCore::open(
+                OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+            )
+            .unwrap();
+
+            let opts = RunOpts::new(handler);
+            let handle = core
+                .start_run(&ExecutionId::new(exec_id), opts)
+                .unwrap();
+
+            // Grab the token reference via pub(crate) sessions so we can check
+            // after drop.
+            let session = core.sessions.get(&handle).unwrap();
+            let token = session.cancel_token.clone();
+            token
+            // `core` drops here at end of block.
+        };
+
+        // After drop, the token should be cancelled.
+        assert!(
+            session_token.is_cancelled(),
+            "Drop should have cancelled the active session's token"
+        );
+    }
 }
