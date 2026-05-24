@@ -4,6 +4,8 @@ Companion spec to the `rowforge` CLI (see [`../cli/`](../cli/)). Describes the
 desktop GUI (`apps/rowforge-studio`, Tauri + React) and its supporting Rust
 crate `rowforge-studio-core`.
 
+繁體中文版本：[`zh-Hant/`](zh-Hant/)。
+
 This spec is **broader than the v1 milestone**. The first milestone is scoped
 to execution management; later milestones add handler authoring and richer
 observability. Each section calls out what is in v1 vs. deferred.
@@ -16,6 +18,8 @@ observability. Each section calls out what is in v1 vs. deferred.
 4. [`part-4-data.md`](part-4-data.md) — source artifacts, caching, sidecar index, schema versioning
 5. [`part-5-api.md`](part-5-api.md) — `studio-core` API, Tauri commands, errors, settings, versioning
 6. [`part-6-observability.md`](part-6-observability.md) — event taxonomy, throughput safety, live vs replay, metrics, multi-run
+7. [`part-7-ui.md`](part-7-ui.md) — stack, design language, information architecture, primary flows, state colors, interaction patterns, boundary states
+8. [`part-8-handler-authoring.md`](part-8-handler-authoring.md) — handler discovery, edit launcher, scaffold, build, smoke test (supersedes Part 1 §1.4 / Part 5 §5.4 anchors)
 
 ## Companion artifact
 
