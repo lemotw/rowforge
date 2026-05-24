@@ -1,5 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ExecSummary, Settings, Workspace } from "./types";
+import type {
+  AttemptDetail,
+  AttemptId,
+  ExecDetail,
+  ExecRollup,
+  ExecSummary,
+  ExecutionId,
+  FailedPageQuery,
+  FailedRowPage,
+  RowHistory,
+  Settings,
+  Workspace,
+} from "./types";
 
 export const ipc = {
   workspace_open: (args: { path: string | null }) =>
@@ -9,4 +21,12 @@ export const ipc = {
   workspace_settings_load: () => invoke<Settings>("workspace_settings_load"),
   workspace_settings_save: (args: { settings: Settings }) =>
     invoke<void>("workspace_settings_save", args),
+  exec_show: (args: { id: ExecutionId }) => invoke<ExecDetail>("exec_show", args),
+  attempt_show: (args: { executionId: ExecutionId; attemptId: AttemptId }) =>
+    invoke<AttemptDetail>("attempt_show", args),
+  exec_rollup: (args: { id: ExecutionId }) => invoke<ExecRollup>("exec_rollup", args),
+  attempt_failed_page: (args: { query: FailedPageQuery }) =>
+    invoke<FailedRowPage>("attempt_failed_page", args),
+  attempt_row_history: (args: { executionId: ExecutionId; seq: number }) =>
+    invoke<RowHistory>("attempt_row_history", args),
 };
