@@ -722,7 +722,18 @@ async fn run_pipeline_in_process(
         output_dir,
         workers,
         dry_run,
-        dry_run_sample: 0,
+        // rowforge-core has a legacy CLI quirk: when dry_run=true AND
+        // row_limit=None, it uses dry_run_sample as the effective limit
+        // (matches the old `rowforge run --dry-run --dry-run-sample N`
+        // semantic). For Studio's dry-run-without-sample case ("dry-run
+        // everything"), we have to pass usize::MAX to avoid getting
+        // capped at zero. When row_limit is set, dry_run_sample is
+        // ignored (the Some(n) arm takes priority).
+        dry_run_sample: if opts.dry_run && opts.row_limit.is_none() {
+            usize::MAX
+        } else {
+            0
+        },
         // Sample / cap dispatched rows. Studio's RunOpts.row_limit maps
         // directly to rowforge-core's row_limit (usize). Cast u64→usize is
         // safe on any reasonable input (rowforge-core itself caps reads).
