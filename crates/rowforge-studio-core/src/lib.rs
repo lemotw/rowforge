@@ -46,4 +46,16 @@ impl StudioCore {
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
     }
+
+    /// List all executions in this workspace, newest first.
+    ///
+    /// Plan 1 emits one DB call per invocation (no caching). Plan 3
+    /// adds the warm-tier mtime probe per spec part-4 §4.3.
+    pub fn list(&self, _filter: ListFilter) -> Result<Vec<ExecSummary>, UiError> {
+        let executions = self
+            .store
+            .list_executions()
+            .map_err(|e| UiError::Internal(e.to_string()))?;
+        Ok(executions.iter().map(ExecSummary::from).collect())
+    }
 }
