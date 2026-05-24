@@ -95,3 +95,43 @@ The following are spec'd but not yet built — do not expect them:
 - Run launcher / start execution from UI (Plan 5).
 - Handler list / handler authoring (Plans 6–8).
 - Schema-version mismatch refusal (Plan 3).
+
+## Plan 03 additions
+
+After picking a workspace with executions:
+
+- Click any exec row → routes to `/exec/<id>` → Attempts tab lists attempts.
+- Click an attempt's "open ⏵" link → routes to `/exec/<id>/attempt/<aid>` → Summary tab.
+- Open `Rollup` tab → click `Compute rollup` button → see resolved /
+  failed_last / crashed_last / cancelled_last / too_large / never_attempted
+  counters + by_error_code table.
+- Open `Failed rows` tab → table appears; click a row's `raw` to expand
+  the JSON; click `history` to open the side drawer.
+- Open `Artifacts` tab → file paths with Reveal buttons that open Finder.
+- Click the header workspace path → modal with Reveal in Finder / Reload
+  data / Switch workspace…
+- For a running attempt (state ≠ done/aborted/crashed), an amber banner
+  shows "Snapshot may be stale" with a manual Refresh button. Live
+  updates arrive in Plan 4.
+- Breadcrumb at top: `Executions / <exec name> / Attempt <aid>` — click
+  segments to navigate.
+
+### Schema-version pin
+
+Quit the app. Manually bump the SQLite `schema_version` row in
+`<workspace>/executions.db` to 99 via:
+
+```bash
+sqlite3 <workspace>/executions.db "UPDATE schema_version SET version = 99;"
+```
+
+Relaunch the app: it refuses to open with a `WorkspaceLocked` error
+mentioning the schema version.
+
+### Edge cases worth checking
+
+- Open an exec with 0 attempts → "This execution has never been run" message.
+- Open Failed rows with > 100 errors → cursor-style "Load more" appears
+  for page 2.
+- Click "history" on a row that's been resolved in a later attempt →
+  drawer shows `✓ resolved at attempt <aid>`.
