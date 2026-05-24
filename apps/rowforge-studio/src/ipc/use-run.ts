@@ -49,8 +49,12 @@ export function useRun(handle: RunHandle | null) {
           dispatch({ type: "_bootstrap", snapshot: snap });
         }
       } catch {
-        // run terminated before bootstrap landed; events that arrived
-        // (or the final Aborted/Done) already drove the state.
+        // run_snapshot rejected (typically UnknownHandle — run finished
+        // before listener attached, session removed from registry).
+        // Signal the page so it can fall back to attempt_show static data.
+        if (!cancelled) {
+          dispatch({ type: "_terminal_before_listen" });
+        }
       }
     });
 

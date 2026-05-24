@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,6 +28,41 @@ export function AttemptDetailPage() {
   const exec = useExecDetail(id ?? null);
   const liveState = useRun(runHandle);
 
+  // Compute whether we should treat this view as terminal. Three signals:
+  // 1. attempt_show says is_terminal (sqlite-backed truth)
+  // 2. liveState got a Done / Aborted / Crashed event (terminal observed live)
+  // 3. liveState.phantomBootstrap (snapshot returned UnknownHandle — run was
+  //    gone from the registry by the time we asked; happens for fast runs)
+  const liveTerminal =
+    liveState.status === "done" ||
+    liveState.status === "aborted" ||
+    liveState.status === "crashed";
+  const isTerminal =
+    detail.data?.is_terminal === true ||
+    liveTerminal ||
+    liveState.phantomBootstrap;
+
+  // When we detect the run is done but attempt_show still says it's running
+  // (race: AttemptDetail mounted between run start and finish), force a
+  // refetch so the static panels reflect the final stats.
+  useEffect(() => {
+    if (
+      (liveTerminal || liveState.phantomBootstrap) &&
+      detail.data &&
+      !detail.data.is_terminal
+    ) {
+      detail.refetch();
+    }
+  }, [liveTerminal, liveState.phantomBootstrap, detail.data?.is_terminal]);
+
+  // Tab selection is controlled so we can auto-switch from Live to Summary
+  // when the run terminates while the page is open. defaultValue alone
+  // wouldn't re-evaluate after the initial render.
+  const [tab, setTab] = useState<string>(runHandle ? "live" : "summary");
+  useEffect(() => {
+    if (isTerminal && tab === "live") setTab("summary");
+  }, [isTerminal]);
+
   if (ws.data === null && !ws.isLoading) return <Navigate to="/" replace />;
   const workspace = ws.data ?? null;
   const crumbs = [
@@ -50,8 +86,8 @@ export function AttemptDetailPage() {
               </div>
             </header>
 
-            {/* Live mode header — only when ?run= param is present */}
-            {runHandle && (
+            {/* Live mode header — only while the run is in flight */}
+            {runHandle && !isTerminal && (
               <div className="mb-4 flex items-center justify-between">
                 <PhaseChipBar current={liveState.phase} />
                 <CancelDialog
@@ -62,7 +98,15 @@ export function AttemptDetailPage() {
               </div>
             )}
 
-            {runHandle && <LifecycleBanners banners={liveState.banners} />}
+            {runHandle && !isTerminal && <LifecycleBanners banners={liveState.banners} />}
+
+            {/* Fast-run notice — run finished before listener attached */}
+            {runHandle && liveState.phantomBootstrap && (
+              <div className="mb-4 rounded border border-blue-500/40 bg-blue-500/10 p-3 text-sm text-blue-200">
+                ✓ Run completed before live updates could attach.
+                Showing final results from the Summary tab.
+              </div>
+            )}
 
             {/* Stale banner — only when no runHandle AND attempt is non-terminal */}
             {!runHandle && !detail.data.is_terminal && (
@@ -74,16 +118,16 @@ export function AttemptDetailPage() {
               </div>
             )}
 
-            <Tabs defaultValue={runHandle ? "live" : "summary"}>
+            <Tabs value={tab} onValueChange={setTab}>
               <TabsList>
-                {runHandle && <TabsTrigger value="live">Live</TabsTrigger>}
+                {runHandle && !isTerminal && <TabsTrigger value="live">Live</TabsTrigger>}
                 <TabsTrigger value="summary">Summary</TabsTrigger>
                 <TabsTrigger value="failed">Failed rows</TabsTrigger>
                 <TabsTrigger value="errors">Errors by code</TabsTrigger>
                 <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
               </TabsList>
 
-              {runHandle && (
+              {runHandle && !isTerminal && (
                 <TabsContent value="live">
                   <div className="space-y-4">
                     <ProgressRegion state={liveState} />
