@@ -1,4 +1,4 @@
-//! Live progress events. Spec part-6 §6.1 (full 16-variant taxonomy).
+//! Live progress events. Spec part-6 §6.1 (12-variant taxonomy).
 //!
 //! These cross the IPC boundary as `run:<handle>` Tauri events.
 //! adjacently tagged JSON shape: `{ "type": "...", ... }`.
@@ -176,11 +176,11 @@ mod tests {
         });
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v.get("type").and_then(|t| t.as_str()), Some("worker_crashed"));
-        // Either inlined or under a key — verify what we actually get:
-        eprintln!("worker_crashed JSON: {v}");
-        // Lock the shape that comes out so future TS mirror knows:
-        let inlined = v.get("worker_id").is_some();
-        let nested = v.get("0").is_some() || v.get("WorkerCrashed").is_some();
-        assert!(inlined || nested, "expected either inlined or nested shape, got {v:?}");
+        // Lock the inlined shape — TS mirror at apps/rowforge-studio/src/ipc/types.ts
+        // depends on top-level worker_id/last_seq/etc. fields.
+        assert_eq!(v.get("worker_id").and_then(|w| w.as_u64()), Some(2));
+        assert_eq!(v.get("last_seq").and_then(|s| s.as_u64()), Some(99));
+        assert_eq!(v.get("signal").and_then(|s| s.as_i64()), Some(11));
+        assert_eq!(v.get("stderr_tail").and_then(|s| s.as_str()), Some("boom"));
     }
 }
