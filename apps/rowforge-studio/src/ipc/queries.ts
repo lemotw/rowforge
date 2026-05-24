@@ -91,6 +91,7 @@ export const useRunStart = () => {
       rowLimit?: number | null;
       workers?: number | null;
       dryRun?: boolean | null;
+      skipAttempted?: boolean | null;
     }
   >({
     mutationFn: (args) => ipc.run_start(args),
