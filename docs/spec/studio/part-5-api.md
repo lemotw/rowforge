@@ -56,7 +56,10 @@ impl StudioCore {
 
     // Run lifecycle (Part 3 §3.3)
     pub fn start_run(&self, e: &ExecutionId, opts: RunOpts)
-        -> Result<RunHandle, UiError>;
+        -> Result<RunStartedHandle, UiError>;
+    // RunStartedHandle = { handle: RunHandle, attempt_id: String }
+    // — returning attempt_id lets the UI build the
+    //   /exec/:id/attempt/:aid?run=<handle> URL in one round-trip.
     pub fn subscribe(&self, h: &RunHandle) -> Result<RunStream, UiError>;
     pub fn cancel(&self, h: &RunHandle, mode: CancelMode) -> Result<(), UiError>;
     pub fn status(&self, h: &RunHandle) -> Result<RunStatus, UiError>;
