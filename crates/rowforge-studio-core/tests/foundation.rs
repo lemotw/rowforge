@@ -703,3 +703,125 @@ fn row_history_returns_not_found_for_unknown_exec() {
         .expect_err("should return NotFound");
     assert!(matches!(err, UiError::NotFound(_)));
 }
+
+// ---------------------------------------------------------------------------
+// T20: round-out edge-case tests
+// ---------------------------------------------------------------------------
+
+/// A running attempt (never finished) must have `is_terminal = false`
+/// and `finished_at = None`.
+#[test]
+fn attempt_for_running_attempt_marks_is_terminal_false() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\n").unwrap();
+
+    let (exec_id, attempt_id) = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("running-attempt".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        // create_attempt inserts a "running" row; we intentionally do NOT
+        // call finish_attempt so the state remains non-terminal.
+        let attempt_id = create_bare_attempt(&mut store, &exec.id);
+
+        (exec.id, attempt_id)
+    };
+
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let det = core
+        .attempt(
+            &ExecutionId::new(exec_id),
+            &AttemptId::new(attempt_id),
+        )
+        .unwrap();
+    assert!(!det.is_terminal, "running attempt should NOT be terminal");
+    assert!(det.finished_at.is_none(), "no finished_at for a running attempt");
+}
+
+/// Write a synthetic outcomes.jsonl with 5 error rows (seqs 0–4).
+fn write_five_error_outcomes(path: &std::path::Path) {
+    let mut lines = String::new();
+    for seq in 0u64..5 {
+        lines.push_str(&format!(
+            "{{\"first_seq\":{seq},\"seqs\":[{seq}],\"outcomes\":[{{\"type\":\"error\",\"seq\":{seq},\"code\":\"E\",\"message\":\"err {seq}\",\"dur_ms\":10}}]}}\n"
+        ));
+    }
+    std::fs::write(path, lines).unwrap();
+}
+
+/// Page 1 (offset=0, limit=2) returns 2 rows and `next_offset = Some(2)`.
+/// Page 2 (offset=2, limit=2) returns the next 2 rows and `next_offset = Some(4)`.
+/// The two pages contain non-overlapping seqs.
+#[test]
+fn failed_page_pagination_advances_offset() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\nb02\nb03\nb04\nb05\n").unwrap();
+
+    let (exec_id, attempt_id) = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("pagination-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        let attempt_id = create_bare_attempt(&mut store, &exec.id);
+        let attempt_dir = tmp
+            .path()
+            .join("executions")
+            .join(&exec.id)
+            .join("attempts")
+            .join(&attempt_id);
+        write_five_error_outcomes(&attempt_dir.join("outcomes.jsonl"));
+
+        (exec.id, attempt_id)
+    };
+
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+
+    // Page 1: offset 0, limit 2 → 2 rows; more remain so next_offset = Some(2).
+    let page1 = core
+        .failed_page(FailedPageQuery::new(
+            ExecutionId::new(exec_id.clone()),
+            AttemptId::new(attempt_id.clone()),
+            0,
+            2,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(page1.rows.len(), 2, "page 1 should return 2 rows");
+    assert_eq!(page1.next_offset, Some(2), "next_offset should advance to 2");
+
+    // Page 2: offset 2, limit 2 → 2 more rows; more remain so next_offset = Some(4).
+    let page2 = core
+        .failed_page(FailedPageQuery::new(
+            ExecutionId::new(exec_id),
+            AttemptId::new(attempt_id),
+            2,
+            2,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(page2.rows.len(), 2, "page 2 should return 2 rows");
+    assert_eq!(page2.next_offset, Some(4), "next_offset should advance to 4");
+
+    // No seq overlap between pages.
+    assert_ne!(
+        page1.rows[0].seq,
+        page2.rows[0].seq,
+        "pages must not overlap"
+    );
+}
