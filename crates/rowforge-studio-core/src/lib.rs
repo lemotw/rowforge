@@ -39,6 +39,9 @@ pub use run_handle::{CancelMode, RunHandle, RunStatus};
 pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
+// Re-export export types so the Tauri shell can import them from this crate
+// without needing a direct rowforge-core dependency.
+pub use rowforge_core::export::{ExportFormat, ExportOpts, ExportReport, ExportWarning};
 
 // StartExecArgs is defined below (inline in lib.rs) and exported here.
 // Re-export is done at the bottom of the `pub use` section for discoverability.
