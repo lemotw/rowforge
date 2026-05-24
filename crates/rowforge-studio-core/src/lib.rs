@@ -6,6 +6,7 @@
 pub mod attempt_detail;
 pub mod cache;
 pub mod error;
+pub mod events;
 pub mod exec_detail;
 pub mod exec_view;
 pub mod failed;
@@ -19,6 +20,7 @@ use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
 pub use error::UiError;
+pub use events::{AbortReason, Phase, ProgressEvent, RunReport, WorkerCrashRecord};
 pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingView, InputFormat};
 pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
 pub use failed::{FailedPageQuery, FailedRow, FailedRowPage, RowOutcomeKind};
