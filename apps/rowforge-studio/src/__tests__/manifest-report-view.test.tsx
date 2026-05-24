@@ -6,10 +6,10 @@ describe("ManifestReportView", () => {
   it("renders missing-manifest error", () => {
     render(<ManifestReportView report={{
       manifest: null,
-      errors: [{ kind: "manifest_missing", path: "/x/manifest.toml" }],
+      errors: [{ kind: "manifest_missing", path: "/x/rowforge.yaml" }],
       warnings: [],
     }} />);
-    expect(screen.getByText(/manifest\.toml not found/i)).toBeTruthy();
+    expect(screen.getByText(/rowforge\.yaml not found/i)).toBeTruthy();
   });
 
   it("renders parse-failed error", () => {
@@ -23,9 +23,9 @@ describe("ManifestReportView", () => {
 
   it("renders path-lookup warning and shows manifest version", () => {
     render(<ManifestReportView report={{
-      manifest: { name: "h", version: "1.0", language: "go", build: null, run: "bin/handler" },
+      manifest: { name: "h", version: "1.0", language: "go", entry_cmd: ["./bin/handler"], entry_build: null },
       errors: [],
-      warnings: [{ kind: "path_lookup_failed", field: "run", token: "missing-bin" }],
+      warnings: [{ kind: "path_lookup_failed", field: "entry.cmd", token: "missing-bin" }],
     }} />);
     expect(screen.getByText(/missing-bin/)).toBeTruthy();
     expect(screen.getByText(/v1\.0/)).toBeTruthy();
@@ -33,7 +33,7 @@ describe("ManifestReportView", () => {
 
   it("renders success state when no errors and no warnings", () => {
     render(<ManifestReportView report={{
-      manifest: { name: "h", version: "2.1", language: "go", build: null, run: "bin/handler" },
+      manifest: { name: "h", version: "2.1", language: "go", entry_cmd: ["./bin/handler"], entry_build: null },
       errors: [],
       warnings: [],
     }} />);

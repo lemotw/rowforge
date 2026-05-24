@@ -293,18 +293,16 @@ export interface ExportReport {
 export type ManifestSource = { type: "path"; path: string };
 
 export interface Manifest {
-  name: string | null;
-  version: string | null;
-  language: string | null;
-  build: string | null;
-  run: string;
+  name: string;
+  version: string;
+  language: string;
+  entry_cmd: string[];
+  entry_build: string[] | null;
 }
 
 export type ManifestError =
   | { kind: "manifest_missing"; path: string }
-  | { kind: "parse_failed"; message: string }
-  | { kind: "missing_required"; field: string }
-  | { kind: "shell_parse_failed"; field: string; message: string };
+  | { kind: "parse_failed"; message: string };
 
 export type ManifestWarning =
   | { kind: "path_lookup_failed"; field: string; token: string };

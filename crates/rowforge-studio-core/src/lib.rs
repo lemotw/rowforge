@@ -501,7 +501,11 @@ impl StudioCore {
         })
     }
 
-    /// Validate the `manifest.toml` inside `source` per spec part 8 §8.2.
+    /// Validate the `rowforge.yaml` inside `source`.
+    ///
+    /// Delegates to `rowforge_core::manifest::Manifest::load_from_dir`,
+    /// then adds PATH-probing of `entry.cmd[0]` and `entry.build[0]`
+    /// for first tokens that aren't path-shaped.
     ///
     /// Returns a structured `ManifestReport`. Errors block exec_start /
     /// run_start; warnings (e.g. PATH miss) are informational.
