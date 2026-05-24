@@ -133,6 +133,8 @@ pub fn read_failed_page(
     let mut rows: Vec<FailedRow> = Vec::with_capacity(limit);
     let mut failed_seen: u64 = 0;
 
+    let mut next_offset: Option<u64> = None;
+
     'outer: for line_res in reader.lines() {
         let line = line_res?;
         let batch: RawBatchOutcome = match serde_json::from_str(&line) {
@@ -161,13 +163,12 @@ pub fn read_failed_page(
                 continue;
             }
 
-            // Page full — emit cursor and stop.
+            // Page already full: this outcome is the (limit+1)-th matching
+            // item — a genuine next row exists. Record its logical index and
+            // stop scanning.
             if rows.len() >= limit {
-                return Ok(FailedRowPage {
-                    rows,
-                    next_offset: Some(failed_seen),
-                    total_known: None,
-                });
+                next_offset = Some(failed_seen);
+                break 'outer;
             }
 
             rows.push(FailedRow {
@@ -179,31 +180,14 @@ pub fn read_failed_page(
                 dur_ms: ro.dur_ms.unwrap_or(0),
             });
             failed_seen += 1;
-
-            if rows.len() >= limit {
-                // Peek-ahead: if there are more outcomes in this batch or more
-                // lines, set next_offset. We break out of both loops here; the
-                // outer loop would set next_offset only after reading another
-                // line. Instead we rely on the check at top of inner loop, but
-                // to be safe we break and let the return below handle it.
-                break 'outer;
-            }
         }
     }
 
-    // If we filled the page exactly at the limit, we don't know if there are
-    // more entries. Return next_offset = failed_seen only when limit was hit.
-    if rows.len() >= limit && limit > 0 {
-        Ok(FailedRowPage {
-            rows,
-            next_offset: Some(failed_seen),
-            total_known: None,
-        })
-    } else {
-        Ok(FailedRowPage {
-            rows,
-            next_offset: None,
-            total_known: None,
-        })
-    }
+    // next_offset is Some only when a (limit+1)-th matching row was observed.
+    // If the file was exhausted with rows.len() == limit, next_offset stays None.
+    Ok(FailedRowPage {
+        rows,
+        next_offset,
+        total_known: None,
+    })
 }

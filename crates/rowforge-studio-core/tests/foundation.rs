@@ -825,3 +825,72 @@ fn failed_page_pagination_advances_offset() {
         "pages must not overlap"
     );
 }
+
+/// Write exactly 2 error rows (seqs 0 and 1) to `path`.
+fn write_two_error_outcomes(path: &std::path::Path) {
+    let lines = concat!(
+        "{\"first_seq\":0,\"seqs\":[0],\"outcomes\":[{\"type\":\"error\",\"seq\":0,\"code\":\"E\",\"message\":\"err 0\",\"dur_ms\":10}]}\n",
+        "{\"first_seq\":1,\"seqs\":[1],\"outcomes\":[{\"type\":\"error\",\"seq\":1,\"code\":\"E\",\"message\":\"err 1\",\"dur_ms\":11}]}\n",
+    );
+    std::fs::write(path, lines).unwrap();
+}
+
+/// Regression test for "phantom next_offset at EOF":
+/// When the page fills exactly at the limit AND we've reached EOF (no further
+/// matching rows), `next_offset` must be `None`, not `Some(...)`.
+///
+/// With the buggy code this test FAILS because the EOF fallback path at the
+/// bottom of `read_failed_page` sets `next_offset = Some(failed_seen)` whenever
+/// `rows.len() >= limit`, even when the file is exhausted.
+#[test]
+fn failed_page_exactly_at_limit_with_eof_returns_no_next_offset() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\nb02\n").unwrap();
+
+    let (exec_id, attempt_id) = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("eof-limit-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        let attempt_id = create_bare_attempt(&mut store, &exec.id);
+        let attempt_dir = tmp
+            .path()
+            .join("executions")
+            .join(&exec.id)
+            .join("attempts")
+            .join(&attempt_id);
+        write_two_error_outcomes(&attempt_dir.join("outcomes.jsonl"));
+
+        (exec.id, attempt_id)
+    };
+
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+
+    // Request exactly 2 rows. File has exactly 2 error rows → page fills at
+    // EOF. next_offset must be None (no phantom "Load more").
+    let page = core
+        .failed_page(FailedPageQuery::new(
+            ExecutionId::new(exec_id),
+            AttemptId::new(attempt_id),
+            0,
+            2,
+            None,
+        ))
+        .unwrap();
+
+    assert_eq!(page.rows.len(), 2);
+    assert_eq!(
+        page.next_offset,
+        None,
+        "exact limit + EOF should NOT advertise more pages: got {:?}",
+        page.next_offset
+    );
+}
