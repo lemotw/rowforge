@@ -75,6 +75,7 @@ pub struct FailedRow {
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
+#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum RowOutcomeKind {
     Error,
