@@ -153,17 +153,29 @@ export function reduceRun(state: RunState, event: ProgressEvent): RunState {
       };
     }
     case "done": {
+      const final_ = {
+        processed: event.processed,
+        success: event.success,
+        failed: event.failed,
+        crashed: event.crashed,
+        dur_ms: event.dur_ms,
+      };
+      // Sync visible counters to the authoritative final report. The
+      // backend stops the tick loop on terminal, so without this the
+      // last Tick before completion would freeze ProgressRegion at
+      // stale numbers.
       return {
         ...state,
         status: "done",
         phase: null,
-        finalReport: {
-          processed: event.processed,
-          success: event.success,
-          failed: event.failed,
-          crashed: event.crashed,
-          dur_ms: event.dur_ms,
-        },
+        processed: final_.processed,
+        success: final_.success,
+        failed: final_.failed,
+        crashed: final_.crashed,
+        in_flight: 0,
+        queue_depth: 0,
+        eta_ms: 0,
+        finalReport: final_,
       };
     }
     case "aborted": {
@@ -173,6 +185,13 @@ export function reduceRun(state: RunState, event: ProgressEvent): RunState {
         ...state,
         status,
         phase: null,
+        processed: event.partial_report.processed,
+        success: event.partial_report.success,
+        failed: event.partial_report.failed,
+        crashed: event.partial_report.crashed,
+        in_flight: 0,
+        queue_depth: 0,
+        eta_ms: 0,
         finalReport: event.partial_report,
         abortReason: event.reason,
       };

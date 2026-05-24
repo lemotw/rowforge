@@ -91,6 +91,7 @@ impl RunOpts {
 }
 
 /// Returned by `StudioCore::subscribe`.
+#[non_exhaustive]
 pub struct RunStream {
     pub handle: RunHandle,
     pub rx: broadcast::Receiver<ProgressEvent>,
@@ -242,20 +243,38 @@ impl StudioCore {
             // Compose final event and mark attempt terminal in store.
             let dur_ms = started.elapsed().as_millis() as u64;
 
+            // Helper: persist FinishAttempt; if it fails, emit a
+            // PipelineWarning so the UI sees the divergence between
+            // in-memory terminal state and on-disk attempt row. The DB
+            // row stays `Running` and orphan recovery (spec §3.7) will
+            // clean it up on the next workspace open.
+            let try_finish = |finish: FinishAttempt| -> Option<String> {
+                let mut store = store_arc.lock().unwrap_or_else(|p| p.into_inner());
+                match store.finish_attempt(&attempt_id_for_task, finish) {
+                    Ok(_) => None,
+                    Err(e) => Some(e.to_string()),
+                }
+            };
+            let emit_persist_warning = |err: String| {
+                aggregator_for_task.emit(ProgressEvent::PipelineWarning {
+                    code: "PERSIST_FAILED".to_string(),
+                    message: format!(
+                        "failed to persist terminal attempt state to sqlite: {err} \
+                         (orphan recovery will clean up on next workspace open)"
+                    ),
+                });
+            };
+
             match run_result {
                 Ok(report) => {
-                    // Mark attempt completed in store.
-                    let mut store = store_arc.lock().unwrap_or_else(|p| p.into_inner());
-                    let _ = store.finish_attempt(
-                        &attempt_id_for_task,
-                        FinishAttempt {
-                            success_count: report.success_count,
-                            failed_count: report.failed_count,
-                            aborted: report.aborted,
-                            aborted_reason: report.abort_reason.clone(),
-                        },
-                    );
-                    drop(store);
+                    if let Some(err) = try_finish(FinishAttempt {
+                        success_count: report.success_count,
+                        failed_count: report.failed_count,
+                        aborted: report.aborted,
+                        aborted_reason: report.abort_reason.clone(),
+                    }) {
+                        emit_persist_warning(err);
+                    }
 
                     if report.aborted {
                         let reason_msg = report.abort_reason.unwrap_or_default();
@@ -275,19 +294,21 @@ impl StudioCore {
                             RunStatus::Done;
                     }
                 }
-                Err(RunFailure::Cancelled) => {
-                    let _ = {
-                        let mut store = store_arc.lock().unwrap_or_else(|p| p.into_inner());
-                        store.finish_attempt(
-                            &attempt_id_for_task,
-                            FinishAttempt {
-                                success_count: 0,
-                                failed_count: 0,
-                                aborted: true,
-                                aborted_reason: Some("cancelled by operator".into()),
-                            },
-                        )
-                    };
+                Err(RunFailure::Cancelled(report)) => {
+                    // Persist the partial counts from rowforge-core so a
+                    // cancelled run with completed rows is recorded
+                    // accurately, not as 0/0.
+                    if let Some(err) = try_finish(FinishAttempt {
+                        success_count: report.success_count,
+                        failed_count: report.failed_count,
+                        aborted: true,
+                        aborted_reason: report
+                            .abort_reason
+                            .clone()
+                            .or_else(|| Some("cancelled by operator".into())),
+                    }) {
+                        emit_persist_warning(err);
+                    }
                     aggregator_for_task.emit(ProgressEvent::Aborted {
                         reason: AbortReason::UserCancelled,
                         at_phase: aggregator_for_task
@@ -300,18 +321,14 @@ impl StudioCore {
                         RunStatus::Aborted;
                 }
                 Err(RunFailure::Panic(msg)) => {
-                    let _ = {
-                        let mut store = store_arc.lock().unwrap_or_else(|p| p.into_inner());
-                        store.finish_attempt(
-                            &attempt_id_for_task,
-                            FinishAttempt {
-                                success_count: 0,
-                                failed_count: 0,
-                                aborted: true,
-                                aborted_reason: Some(format!("panic: {msg}")),
-                            },
-                        )
-                    };
+                    if let Some(err) = try_finish(FinishAttempt {
+                        success_count: 0,
+                        failed_count: 0,
+                        aborted: true,
+                        aborted_reason: Some(format!("panic: {msg}")),
+                    }) {
+                        emit_persist_warning(err);
+                    }
                     aggregator_for_task.emit(ProgressEvent::Aborted {
                         reason: AbortReason::Crashed { panic_message: msg },
                         at_phase: aggregator_for_task
@@ -324,18 +341,14 @@ impl StudioCore {
                         RunStatus::Crashed;
                 }
                 Err(RunFailure::Other(msg)) => {
-                    let _ = {
-                        let mut store = store_arc.lock().unwrap_or_else(|p| p.into_inner());
-                        store.finish_attempt(
-                            &attempt_id_for_task,
-                            FinishAttempt {
-                                success_count: 0,
-                                failed_count: 0,
-                                aborted: true,
-                                aborted_reason: Some(msg.clone()),
-                            },
-                        )
-                    };
+                    if let Some(err) = try_finish(FinishAttempt {
+                        success_count: 0,
+                        failed_count: 0,
+                        aborted: true,
+                        aborted_reason: Some(msg.clone()),
+                    }) {
+                        emit_persist_warning(err);
+                    }
                     aggregator_for_task.emit(ProgressEvent::Aborted {
                         reason: AbortReason::Internal { message: msg },
                         at_phase: aggregator_for_task
@@ -473,7 +486,9 @@ impl StudioCore {
 // ---------------------------------------------------------------------------
 
 enum RunFailure {
-    Cancelled,
+    /// Carries the partial `RunReport` from rowforge-core so persisted
+    /// attempt stats reflect the work that completed before cancellation.
+    Cancelled(rowforge_core::run::RunReport),
     Panic(String),
     Other(String),
 }
@@ -583,7 +598,7 @@ async fn run_pipeline_in_process(
     match join.await {
         Ok(Ok(report)) => {
             if report.aborted && cancel.is_cancelled() {
-                Err(RunFailure::Cancelled)
+                Err(RunFailure::Cancelled(report))
             } else {
                 Ok(report)
             }
@@ -598,8 +613,19 @@ async fn run_pipeline_in_process(
                     .unwrap_or_else(|| "unknown panic".to_string());
                 Err(RunFailure::Panic(msg))
             } else {
-                // Task was cancelled (i.e. tokio runtime shutdown).
-                Err(RunFailure::Cancelled)
+                // Task was cancelled by the tokio runtime (shutdown) — we
+                // have no report to forward. Use a zero-count synthetic
+                // so the attempt is still marked aborted with the right
+                // reason. Counts will be `0/0`, but this only fires on
+                // process shutdown so orphan recovery handles it next boot.
+                Err(RunFailure::Cancelled(rowforge_core::run::RunReport {
+                    success_count: 0,
+                    failed_count: 0,
+                    by_error_code: BTreeMap::new(),
+                    run_dir: PathBuf::new(),
+                    aborted: true,
+                    abort_reason: Some("runtime shutdown".into()),
+                }))
             }
         }
     }

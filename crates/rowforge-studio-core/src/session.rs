@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::aggregator::ProgressAggregator;
 use crate::run_handle::{RunHandle, RunStatus};
 
+#[non_exhaustive]
 pub struct Session {
     pub handle: RunHandle,
     pub execution_id: String,
@@ -125,6 +126,7 @@ impl SessionRegistry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BusyReason {
     PerExec { execution_id: String },
     Workspace { limit: u32 },
