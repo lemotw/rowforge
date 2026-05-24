@@ -358,8 +358,10 @@ impl StudioCore {
     /// Pagination is cursor-based: `query.offset` is the count of failed rows
     /// to skip; `next_offset` in the response is the resume cursor.
     ///
-    /// Returns `UiError::NotFound` when the execution or attempt does not
-    /// exist, or when `outcomes.jsonl` has not been created yet.
+    /// Returns `UiError::NotFound` only when the execution does not exist.
+    /// When the attempt's `outcomes.jsonl` is missing (attempt created but
+    /// never ran, handshake failed before any outcome, replay-in-progress,
+    /// etc.) returns an empty page — UI treats it as "no failed rows yet".
     pub fn failed_page(&self, q: FailedPageQuery) -> Result<FailedRowPage, UiError> {
         let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
         let exec = store
@@ -377,10 +379,11 @@ impl StudioCore {
             .join("outcomes.jsonl");
 
         if !outcomes.exists() {
-            return Err(UiError::NotFound(format!(
-                "attempt {} has no outcomes.jsonl",
-                q.attempt_id
-            )));
+            return Ok(FailedRowPage {
+                rows: Vec::new(),
+                next_offset: None,
+                total_known: None,
+            });
         }
 
         crate::failed::read_failed_page(&outcomes, &q)

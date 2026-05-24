@@ -574,7 +574,11 @@ fn failed_page_not_found_for_missing_execution() {
 }
 
 #[test]
-fn failed_page_not_found_when_outcomes_jsonl_absent() {
+fn failed_page_returns_empty_when_outcomes_jsonl_absent() {
+    // Attempt-created-but-never-ran (no outcomes.jsonl yet) is a legitimate
+    // state — handshake failures, replay-just-started, just-created attempts.
+    // UI treats it as "no failed rows", so the call returns an empty page,
+    // not NotFound.
     let tmp = empty_workspace();
     let csv = tmp.path().join("input.csv");
     std::fs::write(&csv, "billid\nb01\n").unwrap();
@@ -596,7 +600,7 @@ fn failed_page_not_found_when_outcomes_jsonl_absent() {
 
     let core =
         StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
-    let err = core
+    let page = core
         .failed_page(FailedPageQuery::new(
             ExecutionId::new(exec_id),
             AttemptId::new(attempt_id),
@@ -604,8 +608,10 @@ fn failed_page_not_found_when_outcomes_jsonl_absent() {
             10,
             None,
         ))
-        .expect_err("should return NotFound");
-    assert!(matches!(err, UiError::NotFound(_)));
+        .expect("missing outcomes.jsonl should yield empty page, not error");
+    assert!(page.rows.is_empty());
+    assert_eq!(page.next_offset, None);
+    assert_eq!(page.total_known, None);
 }
 
 // ---------------------------------------------------------------------------
