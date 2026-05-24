@@ -3,6 +3,7 @@ import { useExecRollup } from "@/ipc/queries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { uiErrorMessage } from "@/ipc/types";
+import { ErrorsByCodeList } from "./ErrorsByCodeList";
 
 export function RollupCard({ executionId }: { executionId: string }) {
   const [enabled, setEnabled] = useState(false);
@@ -31,7 +32,14 @@ export function RollupCard({ executionId }: { executionId: string }) {
         <Stat label="too_large" value={r.too_large} tone="text-amber-400" />
         <Stat label="never_attempted" value={r.never_attempted} tone="text-neutral-500" />
       </div>
-      {/* by_error_code table is added in Task 19. */}
+      {Object.keys(r.by_error_code).length > 0 && (
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-medium text-muted-foreground">
+            By error code
+          </h3>
+          <ErrorsByCodeList data={r.by_error_code} />
+        </div>
+      )}
     </div>
   );
 }
