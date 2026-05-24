@@ -54,6 +54,7 @@ describe("RunButton", () => {
       rowLimit: null,
       workers: null,
       dryRun: null,
+      skipAttempted: null,
     });
   });
 
@@ -78,7 +79,24 @@ describe("RunButton", () => {
       rowLimit: 3,
       workers: 2,
       dryRun: null,
+      skipAttempted: null,
     });
+  });
+
+  it("options panel 'Skip already-attempted' forwards skipAttempted=true", async () => {
+    (invoke as any).mockResolvedValue({ handle: "run-abc", attempt_id: "att-1" });
+    render(wrap(<RunButton executionId="e1" lastHandlerDir="/handlers/foo" />));
+
+    fireEvent.click(screen.getByRole("button", { name: /Run options/i }));
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. 10/), { target: { value: "2" } });
+    fireEvent.click(screen.getByLabelText(/skip rows already attempted/i));
+    fireEvent.click(screen.getByRole("button", { name: /^Start run$/i }));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(invoke).toHaveBeenCalledWith("run_start", expect.objectContaining({
+      rowLimit: 2,
+      skipAttempted: true,
+    }));
   });
 
   it("navigates to Live tab after successful run_start", async () => {

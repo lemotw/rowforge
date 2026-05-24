@@ -45,6 +45,7 @@ export const ipc = {
     rowLimit?: number | null;
     workers?: number | null;
     dryRun?: boolean | null;
+    skipAttempted?: boolean | null;
   }) =>
     invoke<RunStartedHandle>("run_start", {
       executionId: args.executionId,
@@ -52,6 +53,7 @@ export const ipc = {
       rowLimit: args.rowLimit ?? null,
       workers: args.workers ?? null,
       dryRun: args.dryRun ?? null,
+      skipAttempted: args.skipAttempted ?? null,
     }),
   run_cancel: (args: { handle: RunHandle; mode: CancelMode }) =>
     invoke<void>("run_cancel", args),

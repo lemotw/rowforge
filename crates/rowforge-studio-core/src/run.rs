@@ -82,6 +82,12 @@ pub struct RunOpts {
     /// stop after `n` rows. Useful for sampling against a slow handler /
     /// expensive external API.
     pub row_limit: Option<u64>,
+    /// When true, compute `RowResolution` for this execution and pass every
+    /// already-attempted seq (success / failed / crashed — anything that's
+    /// not `NeverAttempted`) into the pipeline as `skip_seqs`. Combine with
+    /// `row_limit` to sample successive batches of fresh rows across
+    /// repeated runs.
+    pub skip_attempted: bool,
 }
 
 impl RunOpts {
@@ -92,6 +98,7 @@ impl RunOpts {
             retry_failed: false,
             dry_run: false,
             row_limit: None,
+            skip_attempted: false,
         }
     }
 
@@ -107,6 +114,11 @@ impl RunOpts {
 
     pub fn with_dry_run(mut self, b: bool) -> Self {
         self.dry_run = b;
+        self
+    }
+
+    pub fn with_skip_attempted(mut self, b: bool) -> Self {
+        self.skip_attempted = b;
         self
     }
 }
@@ -260,7 +272,23 @@ impl StudioCore {
         });
         self.sessions.register(session.clone());
 
-        // 6. Spawn the actual pipeline task.
+        // 6. Compute skip_seqs (already-attempted rows) if requested. Done
+        //    here, before the spawn, so we can use the locked store. The
+        //    HashSet is moved into the task.
+        let skip_seqs: std::collections::HashSet<u64> = if opts.skip_attempted {
+            let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            match rowforge_core::row_resolution::compute_resolution(
+                &store,
+                execution_id.as_str(),
+            ) {
+                Ok(res) => res.attempted_seqs(),
+                Err(_) => std::collections::HashSet::new(),
+            }
+        } else {
+            std::collections::HashSet::new()
+        };
+
+        // 7. Spawn the actual pipeline task.
         let sessions_arc = self.sessions.clone();
         let store_arc = self.store.clone();
         let handle_for_task = handle.clone();
@@ -280,6 +308,7 @@ impl StudioCore {
                 opts_for_task,
                 aggregator_for_task.clone(),
                 cancel_for_task.clone(),
+                skip_seqs,
             )
             .await;
 
@@ -620,6 +649,7 @@ async fn run_pipeline_in_process(
     opts: RunOpts,
     aggregator: Arc<ProgressAggregator>,
     cancel: CancellationToken,
+    skip_seqs: std::collections::HashSet<u64>,
 ) -> Result<rowforge_core::run::RunReport, RunFailure> {
     let handler_canon = match std::fs::canonicalize(&opts.handler_dir) {
         Ok(p) => p,
@@ -697,7 +727,7 @@ async fn run_pipeline_in_process(
         // directly to rowforge-core's row_limit (usize). Cast u64→usize is
         // safe on any reasonable input (rowforge-core itself caps reads).
         row_limit: opts.row_limit.map(|n| n as usize),
-        skip_seqs: std::collections::HashSet::new(),
+        skip_seqs,
         field_map: rowforge_core::reader::FieldMap::new(),
         config_overrides: BTreeMap::new(),
         shutdown_grace: Duration::from_secs(5),

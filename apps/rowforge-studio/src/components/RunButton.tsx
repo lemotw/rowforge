@@ -37,6 +37,7 @@ export function RunButton({
   const [sample, setSample] = useState<string>("");
   const [workers, setWorkers] = useState<string>("");
   const [dryRun, setDryRun] = useState<boolean>(false);
+  const [skipAttempted, setSkipAttempted] = useState<boolean>(false);
 
   const pickHandlerDir = async () => {
     const p = await openDialog({ directory: true, multiple: false });
@@ -48,7 +49,14 @@ export function RunButton({
     const rowLimit = sample.trim() === "" ? null : Math.max(1, parseInt(sample, 10) || 0);
     const w = workers.trim() === "" ? null : Math.max(1, parseInt(workers, 10) || 0);
     runMut.mutate(
-      { executionId, handlerDir: dir, rowLimit, workers: w, dryRun: dryRun || null },
+      {
+        executionId,
+        handlerDir: dir,
+        rowLimit,
+        workers: w,
+        dryRun: dryRun || null,
+        skipAttempted: skipAttempted || null,
+      },
       {
         onSuccess: (started) => {
           setOptionsOpen(false);
@@ -148,6 +156,15 @@ export function RunButton({
                 placeholder="e.g. 4"
               />
             </div>
+
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={skipAttempted}
+                onChange={(e) => setSkipAttempted(e.target.checked)}
+              />
+              Skip rows already attempted (sample fresh rows across runs)
+            </label>
 
             <label className="flex items-center gap-2 text-xs">
               <input

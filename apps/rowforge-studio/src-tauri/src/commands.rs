@@ -149,6 +149,7 @@ pub async fn run_start(
     row_limit: Option<u64>,
     workers: Option<u32>,
     dry_run: Option<bool>,
+    skip_attempted: Option<bool>,
 ) -> Result<RunStartedHandle, UiError> {
     // Scope the MutexGuard so it is dropped before any .await point.
     // studio-core::start_run internally calls tokio::spawn (tick loop +
@@ -169,6 +170,9 @@ pub async fn run_start(
         }
         if let Some(d) = dry_run {
             opts = opts.with_dry_run(d);
+        }
+        if let Some(s) = skip_attempted {
+            opts = opts.with_skip_attempted(s);
         }
         let started = core.start_run(&execution_id, opts)?;
         let stream = core
