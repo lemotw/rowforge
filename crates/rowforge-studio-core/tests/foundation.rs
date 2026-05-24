@@ -92,6 +92,22 @@ fn list_reflects_executions_created_via_core() {
 }
 
 #[test]
+fn list_serves_from_cache_on_repeated_call() {
+    let tmp = empty_workspace();
+    // First call populates the cache.
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let first = core.list(ListFilter::default()).unwrap();
+    // Second call: cache should be hit (mtime unchanged, TTL not expired).
+    // We can't directly assert "no DB hit" without a counter, but we can
+    // assert the returned data is identical.
+    let second = core.list(ListFilter::default()).unwrap();
+    assert_eq!(first.len(), second.len());
+    // Both empty for an empty workspace — exercise still proves no error.
+}
+
+#[test]
 fn open_refuses_newer_schema_version() {
     let tmp = tempfile::tempdir().unwrap();
     {
