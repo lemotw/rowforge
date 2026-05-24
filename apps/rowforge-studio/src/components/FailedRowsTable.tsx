@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { Button } from "@/components/ui/button";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
-import { useFailedPage } from "@/ipc/queries";
+import { ipc } from "@/ipc/client";
 import { uiErrorMessage } from "@/ipc/types";
 import type { FailedRow } from "@/ipc/types";
 import { RowHistoryDrawer } from "./RowHistoryDrawer";
@@ -18,17 +19,28 @@ export function FailedRowsTable({
   attemptId: string;
   pathsOutcomes: string;
 }) {
-  const [offset, setOffset] = useState(0);
   const [historySeq, setHistorySeq] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
-  const q = useFailedPage({
-    execution_id: executionId,
-    attempt_id: attemptId,
-    offset,
-    limit: PAGE_LIMIT,
-    error_code_filter: null,
+  const q = useInfiniteQuery({
+    queryKey: ["attempt_failed_page", executionId, attemptId],
+    initialPageParam: 0 as number,
+    queryFn: ({ pageParam }) =>
+      ipc.attempt_failed_page({
+        query: {
+          execution_id: executionId,
+          attempt_id: attemptId,
+          offset: pageParam,
+          limit: PAGE_LIMIT,
+          error_code_filter: null,
+        },
+      }),
+    getNextPageParam: (lastPage) => lastPage.next_offset ?? undefined,
   });
+
+  // Flatten all accumulated pages into a single rows array.
+  const allRows: FailedRow[] = (q.data?.pages ?? []).flatMap((p) => p.rows);
+  const totalShown = allRows.length;
 
   const toggle = (seq: number) =>
     setExpanded((s) => {
@@ -63,7 +75,7 @@ export function FailedRowsTable({
           </Tr>
         </Thead>
         <tbody>
-          {q.data?.rows.map((r: FailedRow) => (
+          {allRows.map((r: FailedRow) => (
             <FailedRowItem
               key={r.seq}
               row={r}
@@ -77,15 +89,16 @@ export function FailedRowsTable({
 
       <div className="mt-3 flex items-center justify-between">
         <span className="text-sm text-muted-foreground">
-          Showing {offset + 1}–{offset + (q.data?.rows.length ?? 0)} of unknown
+          Showing {totalShown} row{totalShown !== 1 ? "s" : ""}
         </span>
-        {q.data?.next_offset != null && (
+        {q.hasNextPage && (
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setOffset(q.data!.next_offset!)}
+            onClick={() => q.fetchNextPage()}
+            disabled={q.isFetchingNextPage}
           >
-            Load more
+            {q.isFetchingNextPage ? "Loading…" : "Load more"}
           </Button>
         )}
       </div>

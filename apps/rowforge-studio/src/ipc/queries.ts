@@ -64,6 +64,8 @@ export const useExecRollup = (id: ExecutionId | null, enabled: boolean) =>
     staleTime: 60_000,
   });
 
+// no current consumer; FailedRowsTable uses useInfiniteQuery directly.
+// Kept for future single-page callers (e.g. export flows).
 export const useFailedPage = (query: FailedPageQuery | null) =>
   useQuery({
     queryKey: ["attempt_failed_page", query?.execution_id, query?.attempt_id, query?.offset, query?.error_code_filter],
