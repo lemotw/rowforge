@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
@@ -6,12 +7,15 @@ import { AppShell } from "@/layout/AppShell";
 import { useExecDetail, useWorkspace } from "@/ipc/queries";
 import { RollupCard } from "@/components/RollupCard";
 import { RunButton } from "@/components/RunButton";
+import { ExportDialog } from "@/components/ExportDialog";
 import { uiErrorMessage } from "@/ipc/types";
+import { Button } from "@/components/ui/button";
 
 export function ExecDetailPage() {
   const { id } = useParams<{ id: string }>();
   const ws = useWorkspace();
   const detail = useExecDetail(id ?? null);
+  const [exportOpen, setExportOpen] = useState(false);
 
   if (ws.data === null && !ws.isLoading) return <Navigate to="/" replace />;
 
@@ -37,10 +41,14 @@ export function ExecDetailPage() {
                   id: {detail.data.summary.id} · input: {detail.data.input_path_snapshot} ({detail.data.summary.input_rows ?? "?"} rows)
                 </div>
               </div>
-              <RunButton
-                executionId={id!}
-                lastHandlerDir={null}
-              />
+              <div className="flex gap-2">
+                <Button onClick={() => setExportOpen(true)} variant="outline">Export</Button>
+                <RunButton
+                  executionId={id!}
+                  lastHandlerDir={null}
+                />
+              </div>
+              <ExportDialog open={exportOpen} execId={id!} onClose={() => setExportOpen(false)} />
             </header>
 
             <Tabs defaultValue="attempts">
