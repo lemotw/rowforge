@@ -17,15 +17,32 @@ pub async fn forward_run_events(
     mut rx: broadcast::Receiver<ProgressEvent>,
 ) {
     let channel = format!("run:{}", handle.as_str());
+    eprintln!("[forward_run_events] starting for {channel}");
+    let mut count: u64 = 0;
     loop {
         match rx.recv().await {
             Ok(event) => {
+                count += 1;
+                // Only log non-tick events to avoid spam (4Hz).
+                let kind = match &event {
+                    ProgressEvent::Tick { .. } => "tick",
+                    ProgressEvent::PhaseChanged { .. } => "phase_changed",
+                    ProgressEvent::OutcomeSample { .. } => "outcome_sample",
+                    ProgressEvent::Done { .. } => "done",
+                    ProgressEvent::Aborted { .. } => "aborted",
+                    ProgressEvent::WorkerCrashed { .. } => "worker_crashed",
+                    _ => "other",
+                };
+                if kind != "tick" || count <= 3 || count % 20 == 0 {
+                    eprintln!("[forward_run_events] #{count} {kind} -> {channel}");
+                }
                 if let Err(e) = app.emit(&channel, &event) {
                     tracing::warn!("failed to emit {channel}: {e}");
+                    eprintln!("[forward_run_events] EMIT FAILED: {e}");
                 }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
-                // Spec §6.2: emit PipelineWarning EVENT_LAG when receiver lags.
+                eprintln!("[forward_run_events] LAGGED — dropped {n} events");
                 let warning = ProgressEvent::PipelineWarning {
                     code: "EVENT_LAG".into(),
                     message: format!("{} events dropped", n),
@@ -33,7 +50,7 @@ pub async fn forward_run_events(
                 let _ = app.emit(&channel, &warning);
             }
             Err(broadcast::error::RecvError::Closed) => {
-                // Sender dropped — terminal.
+                eprintln!("[forward_run_events] CLOSED — sent {count} events total");
                 break;
             }
         }
