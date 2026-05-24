@@ -18,3 +18,4 @@ pub mod runtime;
 pub mod row_resolution;
 pub mod worker;
 pub mod worker_loop;
+pub mod workspace;

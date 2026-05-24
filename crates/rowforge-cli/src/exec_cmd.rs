@@ -1013,6 +1013,6 @@ fn rowforge_home() -> Result<PathBuf> {
     if let Ok(env) = std::env::var("ROWFORGE_HOME") {
         return Ok(PathBuf::from(env));
     }
-    let h = dirs::home_dir().ok_or_else(|| anyhow!("no home dir"))?;
-    Ok(h.join(".rowforge"))
+    rowforge_core::workspace::default_workspace_root()
+        .ok_or_else(|| anyhow!("no home dir"))
 }
