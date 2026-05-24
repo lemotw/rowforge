@@ -33,6 +33,9 @@ describe("ExecList", () => {
     });
     render(wrap(<ExecListPage />));
     expect(await screen.findByText(/No executions yet/i)).toBeInTheDocument();
+    // Both the empty-state primary CTA and the header secondary CTA should be present
+    const btns = await screen.findAllByRole("button", { name: /new execution/i });
+    expect(btns.length).toBeGreaterThanOrEqual(2);
   });
 
   it("renders rows from invoke result", async () => {
@@ -55,5 +58,7 @@ describe("ExecList", () => {
     });
     render(wrap(<ExecListPage />));
     expect(await screen.findByText("smoke")).toBeInTheDocument();
+    // Header secondary CTA should always be visible when list is non-empty
+    expect(await screen.findByRole("button", { name: /new execution/i })).toBeInTheDocument();
   });
 });

@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useWorkspace, useExecList } from "@/ipc/queries";
 import { AppShell } from "@/layout/AppShell";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
 import { uiErrorMessage } from "@/ipc/types";
@@ -17,6 +18,9 @@ export function ExecListPage() {
       <div className="p-6">
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-lg font-medium">Executions</h1>
+          <Button onClick={() => navigate("/new")} variant="outline" size="sm">
+            New execution
+          </Button>
         </div>
 
         {list.isLoading && (
@@ -34,9 +38,9 @@ export function ExecListPage() {
         )}
 
         {list.data && list.data.length === 0 && (
-          <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-            No executions yet. Create one with{" "}
-            <code>rowforge exec start</code> in a terminal.
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border p-10 text-center">
+            <div className="text-sm text-muted-foreground">No executions yet</div>
+            <Button onClick={() => navigate("/new")}>New execution</Button>
           </div>
         )}
 
