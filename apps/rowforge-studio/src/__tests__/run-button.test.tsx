@@ -47,7 +47,38 @@ describe("RunButton", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Run$/i }));
     await new Promise((r) => setTimeout(r, 10));
     expect(openDialog).not.toHaveBeenCalled();
-    expect(invoke).toHaveBeenCalledWith("run_start", { executionId: "e1", handlerDir: "/handlers/foo" });
+    // Quick-run path passes nulls for the optional knobs.
+    expect(invoke).toHaveBeenCalledWith("run_start", {
+      executionId: "e1",
+      handlerDir: "/handlers/foo",
+      rowLimit: null,
+      workers: null,
+      dryRun: null,
+    });
+  });
+
+  it("options panel forwards sample size and workers to run_start", async () => {
+    (invoke as any).mockResolvedValue({ handle: "run-abc", attempt_id: "att-1" });
+    render(wrap(<RunButton executionId="e1" lastHandlerDir="/handlers/foo" />));
+
+    // Open the options panel (icon button next to Run).
+    fireEvent.click(screen.getByRole("button", { name: /Run options/i }));
+
+    // Set sample = 3, workers = 2.
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. 10/), { target: { value: "3" } });
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. 4/), { target: { value: "2" } });
+
+    // Submit.
+    fireEvent.click(screen.getByRole("button", { name: /^Start run$/i }));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(invoke).toHaveBeenCalledWith("run_start", {
+      executionId: "e1",
+      handlerDir: "/handlers/foo",
+      rowLimit: 3,
+      workers: 2,
+      dryRun: null,
+    });
   });
 
   it("navigates to Live tab after successful run_start", async () => {

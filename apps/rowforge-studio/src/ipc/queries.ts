@@ -82,7 +82,17 @@ export const useRowHistory = (e: ExecutionId | null, seq: number | null) =>
 
 export const useRunStart = () => {
   const qc = useQueryClient();
-  return useMutation<RunStartedHandle, Error, { executionId: ExecutionId; handlerDir: string }>({
+  return useMutation<
+    RunStartedHandle,
+    Error,
+    {
+      executionId: ExecutionId;
+      handlerDir: string;
+      rowLimit?: number | null;
+      workers?: number | null;
+      dryRun?: boolean | null;
+    }
+  >({
     mutationFn: (args) => ipc.run_start(args),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["exec_list"] });
