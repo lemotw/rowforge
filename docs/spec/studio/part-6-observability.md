@@ -127,35 +127,13 @@ stderr lines (today's behavior). Studio's sink is a
 This keeps coalescing out of `rowforge-core` (CLI stays unchanged) and
 out of the Tauri layer (which would have less context).
 
-## 6.4 Live vs replay
+## 6.4 Live
 
-Two implementations of a single contract:
-
-```rust
-trait AttemptStream {
-    fn snapshot(&self) -> AttemptSnapshot;     // counters + phase + last-N outcomes
-    fn events(&self) -> impl Stream<Item = ProgressEvent>;
-}
-```
-
-### `LiveAttemptStream`
-Wraps the `SessionRegistry` entry. `snapshot()` returns the aggregator's
-current counters; `events()` is the broadcast receiver. Used while a
-run is alive in this Studio process.
-
-### `ReplayAttemptStream` (v2)
-Opens `outcomes.jsonl` for a finished or aborted attempt plus
-`meta.json`. `snapshot()` returns `meta.json.stats`; `events()` streams
-the file at the same 4 Hz / 20 Hz budgets as live, synthesizing `Tick`
-events on 250 ms boundaries using `dur_ms` from each outcome.
-
-Replay events are lower fidelity (no `PipelineWarning`, no live
-`HandlerStderr`, no real-time `eta_ms`). The stream marks itself as
-`Replay { speed }` so the UI can label the panel accordingly.
-
-A persistent `progress.jsonl` of non-row events (lifecycle, warnings,
-stderr tail) is considered for a future revision to raise replay
-fidelity. v1 and v2 do not write it.
+The Tauri layer subscribes to a running attempt directly via
+`core.subscribe(handle)`, which returns the aggregator's broadcast
+receiver. `snapshot()` returns the aggregator's current counters;
+`events()` is the broadcast receiver. Used while a run is alive in
+this Studio process.
 
 ## 6.5 Failure diagnostics
 
@@ -245,10 +223,9 @@ Opt-in, not in v1:
 ## 6.8 Open questions
 
 1. Does `progress.jsonl` for non-row events earn its place soon enough
-   to schedule, or wait for replay demand to manifest?
+   to schedule, or wait for demand to manifest?
 2. Stderr ring policy: head+tail or contiguous? Affects "feels truncated"
    vs "feels lossy."
-3. Replay speed control beyond 1× and fast-forward — needed?
-4. Should `runs:active` survive a Studio restart by re-scanning SQLite
+3. Should `runs:active` survive a Studio restart by re-scanning SQLite
    for any `state = running` rows, or stay strictly in-memory? The
    answer interacts with §3.7 crash recovery.

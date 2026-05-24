@@ -121,32 +121,12 @@ sink 是 `ProgressAggregator`,它：
 如此把合併留在 `rowforge-core` 之外（CLI 不動)、Tauri 層之外
 （其情境不足）。
 
-## 6.4 即時 vs 重播
+## 6.4 即時
 
-同一契約的兩個實作：
-
-```rust
-trait AttemptStream {
-    fn snapshot(&self) -> AttemptSnapshot;     // 計數器 + phase + 最近 N 個 outcome
-    fn events(&self) -> impl Stream<Item = ProgressEvent>;
-}
-```
-
-### `LiveAttemptStream`
-包住 `SessionRegistry` 的項目。`snapshot()` 回傳 aggregator 當前計數器;
-`events()` 為 broadcast receiver。用於 run 仍存活於此 Studio 進程內時。
-
-### `ReplayAttemptStream`(v2)
-為已完成或中止的 attempt 開啟 `outcomes.jsonl` 加 `meta.json`。
-`snapshot()` 回傳 `meta.json.stats`;`events()` 以與即時相同的 4 Hz /
-20 Hz 預算串流檔案,並用每個 outcome 的 `dur_ms` 在 250 ms 邊界合成
-`Tick` 事件。
-
-重播事件保真度較低（無 `PipelineWarning`、無即時 `HandlerStderr`、無
-即時 `eta_ms`)。串流自標 `Replay { speed }`,UI 可據此標示面板。
-
-非列事件（生命週期、警告、stderr tail）的持久 `progress.jsonl` 被列入
-未來版本以提升重播保真度。v1 與 v2 不寫之。
+Tauri 層透過 `core.subscribe(handle)` 直接訂閱進行中的 attempt，
+回傳 aggregator 的 broadcast receiver。`snapshot()` 回傳 aggregator
+當前計數器；`events()` 為 broadcast receiver。用於 run 仍存活於此
+Studio 進程內時。
 
 ## 6.5 失敗診斷
 
@@ -230,8 +210,7 @@ struct RunRollupTick {
 
 ## 6.8 開放問題
 
-1. 非列事件的 `progress.jsonl` 是否值得儘早排程,或等到重播需求浮現？
+1. 非列事件的 `progress.jsonl` 是否值得儘早排程,或等到需求浮現？
 2. Stderr ring 策略：首+尾 vs 連續？影響「感覺被截斷」vs「感覺有遺失」。
-3. 1× 與快轉以外的重播速度控制 — 需要嗎？
-4. `runs:active` 應該在 Studio 重啟後透過重掃 SQLite 找 `state = running`
+3. `runs:active` 應該在 Studio 重啟後透過重掃 SQLite 找 `state = running`
    的 row 而存活,還是嚴格留在記憶體？答案與 §3.7 崩潰恢復互動。

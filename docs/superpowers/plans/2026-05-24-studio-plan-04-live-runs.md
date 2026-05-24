@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Start runs from Studio, watch them live (4 Hz Tick + sampled OutcomeSample event tail), cancel them in two phases, see concurrent runs in a header pill. Replay terminal attempts at variable speed.
+**Goal:** Start runs from Studio, watch them live (4 Hz Tick + sampled OutcomeSample event tail), cancel them in two phases, see concurrent runs in a header pill.
 
 **Architecture:** In-process `rowforge_core::run::execute` spawned on tokio. A `ProgressSink` impl in `studio-core` (the `ProgressAggregator`) coalesces granular per-row events into 4 Hz `Tick` + 20/s `OutcomeSample`, sends through a `tokio::broadcast` channel per `RunHandle`. Tauri forwards as `run:<handle>` events. React listens via `@tauri-apps/api/event` and updates a small in-memory reducer.
 
 **Tech Stack:** Same as Plan 3. Adds `tokio::broadcast` + `tokio_util::sync::CancellationToken` (workspace dep already), `tauri::Manager` for event emission, `@tanstack/react-virtual` for the event tail (already added Plan 2).
 
-**Spec references:** Part 3 §3.1 in-process model, §3.3 state machine, §3.4 concurrency, §3.5 cancel two-phase, §3.6 shutdown cleanup, §3.7 orphan recovery; Part 5 §5.2 run APIs, §5.3 `RunAborted` / `RunBusy` / `UnknownHandle` variants, §5.5 Tauri commands + events; Part 6 entire (event taxonomy, throughput safety, live vs replay, failure diagnostics, multi-run roll-up); Part 7 §7.6.1-6 progress region / event tail / cancel / banners.
+**Spec references:** Part 3 §3.1 in-process model, §3.3 state machine, §3.4 concurrency, §3.5 cancel two-phase, §3.6 shutdown cleanup, §3.7 orphan recovery; Part 5 §5.2 run APIs, §5.3 `RunAborted` / `RunBusy` / `UnknownHandle` variants, §5.5 Tauri commands + events; Part 6 §6.1-6.3, §6.5-§6.8 (event taxonomy, throughput safety, live, failure diagnostics, multi-run roll-up); Part 7 §7.6.1-6 progress region / event tail / cancel / banners.
 
 ---
 
@@ -17,7 +17,7 @@
 | Decision | Choice | Why |
 |---|---|---|
 | User starts run via | Minimal Run button on ExecDetail | Plan 4 needs a path to demonstrate live; full launcher is Plan 5 |
-| Live tab replay | Plan 4 includes replay (LiveAttemptStream + ReplayAttemptStream traits) | One pass to do both — they share the AttemptStream abstraction |
+| Live tab replay | Live only; replay removed via follow-up (post-merge descope) | Replay was a dev convenience not part of user workflow; removed to simplify API surface |
 | Concurrency limit config | Hard-coded spec defaults (1/exec, 3/workspace) | Settings UI is Plan 5; manual settings.json edit can override `max_concurrent_runs` (the field exists from Plan 2) |
 | Process model | In-process (spec §3.1 default) | Sidecar runner is v2 |
 | Coalescing budgets | Full spec §6.2 (4 Hz Tick, 20/s OutcomeSample, 256 broadcast slots) | UI would be unusable without it at 10K rows/sec |
@@ -32,7 +32,6 @@
 - `crates/rowforge-studio-core/src/session.rs` — `SessionRegistry`, `Session` entry, registration / lookup / cleanup
 - `crates/rowforge-studio-core/src/aggregator.rs` — `ProgressAggregator` (coalesces incoming events into Tick/OutcomeSample), `ProgressSnapshot` (current counters)
 - `crates/rowforge-studio-core/src/run.rs` — `StudioCore::start_run` / `cancel` / `subscribe` / `status` / `active_runs` / `active_runs_stream`
-- `crates/rowforge-studio-core/src/attempt_stream.rs` — `trait AttemptStream`, `LiveAttemptStream`, `ReplayAttemptStream`
 
 ### Modified — `rowforge-studio-core`
 - `src/exec_view.rs`, `src/failed.rs` — add `#[non_exhaustive]` to `AttemptCountsStub` enum siblings if any (carry-forward), plus `InputFormat` / `RowOutcomeKind` enum annotations
@@ -43,7 +42,7 @@
 - Possibly: `src/run.rs` — add `ProgressSink` trait if not already public, plus a `run_with_sink(...)` entry that studio can hook. Verify before assuming.
 
 ### New — Tauri commands
-- `apps/rowforge-studio/src-tauri/src/commands.rs` — `run_start`, `run_cancel`, `run_status`, `run_active`, plus `attempt_replay_start` for replay
+- `apps/rowforge-studio/src-tauri/src/commands.rs` — `run_start`, `run_cancel`, `run_status`, `run_active`
 - `apps/rowforge-studio/src-tauri/src/events.rs` — bridge from broadcast channel to `app.emit_to("main", "run:<handle>", ...)`
 
 ### New — React UI
@@ -56,11 +55,10 @@
 - `apps/rowforge-studio/src/components/CancelDialog.tsx` — soft → 10 s → force-kill flow
 - `apps/rowforge-studio/src/components/ActiveRunsPill.tsx` — header pill + popover
 - `apps/rowforge-studio/src/components/RunButton.tsx` — minimal "Run" on ExecDetail
-- `apps/rowforge-studio/src/components/ReplayToggle.tsx` — terminal attempt → replay mode
 - `apps/rowforge-studio/src/components/ui/popover.tsx` — shadcn primitive (needed for ActiveRunsPill)
 
 ### Modified — React UI
-- `src/pages/AttemptDetail.tsx` — Live tab enabled when running; replay toggle when terminal
+- `src/pages/AttemptDetail.tsx` — Live tab enabled when running
 - `src/pages/ExecDetail.tsx` — RunButton on header
 - `src/layout/Header.tsx` — ActiveRunsPill
 - `src/ipc/queries.ts` — `useRunStart`, `useRunCancel`, `useRunStatus`, `useActiveRuns` mutation/query hooks
@@ -986,7 +984,11 @@ git commit -m "studio-core: Drop cancels active sessions (spec §3.6)"
 
 ---
 
-## Task 9: `trait AttemptStream` + `LiveAttemptStream`
+## Task 9: ~~`trait AttemptStream` + `LiveAttemptStream`~~ **REMOVED**
+
+> **Replay descoped via post-merge follow-up.** The `AttemptStream` abstraction was added for symmetry with `ReplayAttemptStream`; since replay is removed, the indirection is unnecessary — Tauri commands subscribe directly via `core.subscribe(handle)`.
+
+
 
 **Files:**
 - Create: `crates/rowforge-studio-core/src/attempt_stream.rs`
@@ -1042,7 +1044,11 @@ git commit -m "studio-core: AttemptStream trait + LiveAttemptStream"
 
 ---
 
-## Task 10: `ReplayAttemptStream`
+## Task 10: ~~`ReplayAttemptStream`~~ **REMOVED**
+
+> **Replay descoped via post-merge follow-up.** ReplayAttemptStream and all related tests removed. See Task 9 note.
+
+
 
 **Files:**
 - Modify: `crates/rowforge-studio-core/src/attempt_stream.rs`
@@ -1168,12 +1174,10 @@ pub async fn run_active(
 ) -> Result<Vec<RunHandle>, UiError> { ... }
 ```
 
-Also: `attempt_replay_start(execution_id, attempt_id, speed)` returning a fresh `RunHandle` whose events stream from the ReplayAttemptStream. Use the same `run:<handle>` event channel for symmetry.
-
 - [ ] **Step 12.2: Register + commit**
 
 ```bash
-git commit -m "studio-shell: 5 Tauri commands for run lifecycle + replay"
+git commit -m "studio-shell: 4 Tauri commands for run lifecycle"
 ```
 
 ---
@@ -1291,7 +1295,6 @@ export function useRun(handle: RunHandle | null) {
 
 - [ ] Replace the stale-banner path with Live tab when status is non-terminal
 - [ ] Add `useRun(handle)` to subscribe to events
-- [ ] Replay toggle for terminal attempts
 - [ ] Commit
 
 ---
@@ -1312,11 +1315,9 @@ export function useRun(handle: RunHandle | null) {
 
 ---
 
-## Task 23: Replay button on terminal attempts
+## Task 23: ~~Replay button on terminal attempts~~ **REMOVED**
 
-- [ ] Reuses AttemptDetail Live tab path with ReplayAttemptStream
-- [ ] Speed selector (1x / 5x / 10x)
-- [ ] Commit
+> **Replay descoped via post-merge follow-up.** `ReplayToggle` component, its test, and the `attempt_replay_start` Tauri command removed.
 
 ---
 
@@ -1348,15 +1349,14 @@ Round-out for the new APIs. Real-pipeline test with test-handler crate.
 2. `pnpm tsc -b` clean
 3. `pnpm build` produces dist/
 4. `pnpm test` increased count (Plan 3 had 7; Plan 4 adds ~4)
-5. New Tauri commands: `run_start`, `run_cancel`, `run_status`, `run_active`, `attempt_replay_start`
+5. New Tauri commands: `run_start`, `run_cancel`, `run_status`, `run_active`
 6. New events: `run:<handle>`, `runs:active`
 7. Concurrency limits enforced (1/exec + 3/workspace) → `RunBusy`
 8. Soft cancel: token cancellation → in-flight drain → `Aborted { UserCancelled }`
 9. Hard cancel: available after 10 s soft-pending; force-kill via Child::kill
 10. Orphan recovery on open: attempts with mtime > 5 min auto-aborted
 11. Active runs pill renders + updates at 1 Hz
-12. Replay terminal attempt at 1x / 5x / 10x speed
-13. **(human)** HUMAN_SMOKE.md Plan 4 walkthrough
+12. **(human)** HUMAN_SMOKE.md Plan 4 walkthrough
 
 ## Carry-forward to Plan 5
 
@@ -1369,6 +1369,5 @@ Round-out for the new APIs. Real-pipeline test with test-handler crate.
 ## Open questions
 
 1. **Hard cancel mechanism**: cancel_token + Child::kill works for the worker subprocess but not for in-process tokio tasks blocking on IO. Worst case (handler in infinite loop): user must force-kill the Tauri app. Acceptable per spec §3.5 last paragraph.
-2. **Replay speed quantization**: 1x/5x/10x exact, or continuous? Spec doesn't specify. Plan 4 ships discrete options for simpler UI.
-3. **Live tab + workspace switch**: if user switches workspace mid-run, what happens to the active subscription? Plan 4: assume not allowed (WorkspaceMenu's Switch button could disable when active runs exist) OR drain active runs first. Decide during T20.
-4. **`start_exec` and `export`** — these are Plan 5, but the Run button (T22) needs to know an existing execution exists. Plan 4 only enables Run for already-created execs.
+2. **Live tab + workspace switch**: if user switches workspace mid-run, what happens to the active subscription? Plan 4: assume not allowed (WorkspaceMenu's Switch button could disable when active runs exist) OR drain active runs first. Decide during T20.
+3. **`start_exec` and `export`** — these are Plan 5, but the Run button (T22) needs to know an existing execution exists. Plan 4 only enables Run for already-created execs.

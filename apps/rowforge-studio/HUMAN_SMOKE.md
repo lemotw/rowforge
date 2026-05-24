@@ -154,28 +154,15 @@ After a workspace is picked, runs can be started and watched live.
 2. Append `?run=<handle>` to the URL — the handle comes from the
    `run_start` response (logged to the dev console / accessible via
    future Plan 5 auto-navigation). For now, the URL must be constructed
-   manually OR triggered via the Replay path.
+   manually.
 
    Plan 4 limitation: full auto-routing to `?run=` is deferred to Plan 5
    (the Run button doesn't know the new attempt's id until a follow-up
-   query). Use Replay (below) for the easiest end-to-end Live demo.
-
-### Replay a terminal attempt (easiest Live demo)
-
-1. Click a terminal attempt (state = done / aborted / crashed).
-2. In the header, see the speed selector (1× / 5× / 10×) + Replay button.
-3. Pick 5× or 10× and click **Replay**.
-4. The page navigates with `?run=<replay-handle>`.
-5. The **Live** tab appears alongside the existing tabs.
-6. Click **Live** to see:
-   - PhaseChipBar showing current phase
-   - ProgressRegion with rate / ETA / in-flight / queue
-   - EventTail filling with OutcomeSamples (default: Errors only)
-7. The replay reaches Done; status flips, recent events stop updating.
+   query).
 
 ### Cancel a live run
 
-1. While a live run is active (replay or real), click the **Cancel** button
+1. While a live run is active, click the **Cancel** button
    in the header.
 2. Soft confirm dialog appears: "Soft cancel? In-flight rows will finish."
 3. Click "Soft cancel". The header switches to an amber "Cancelling…"
@@ -187,7 +174,7 @@ After a workspace is picked, runs can be started and watched live.
 
 ### Active runs pill
 
-When ≥ 1 runs (real or replay) are active, the header shows a green
+When ≥ 1 runs are active, the header shows a green
 **N running** pill. Click it for a popover listing the active handles
 and aggregate counters (total processed / total failed).
 
@@ -195,8 +182,7 @@ and aggregate counters (total processed / total failed).
 
 1. Try starting a second run on the same exec — should fail with
    "execution X already has an active run" (per-exec limit = 1).
-2. Start 3 different runs on 3 different execs (using Replay for the
-   easiest reproduction). Starting a 4th should fail with
+2. Start 3 different runs on 3 different execs. Starting a 4th should fail with
    "workspace concurrent-run limit reached" (workspace limit = 3).
 
 ### Orphan recovery
