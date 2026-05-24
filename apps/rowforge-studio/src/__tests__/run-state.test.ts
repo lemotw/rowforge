@@ -1,0 +1,87 @@
+import { describe, it, expect } from "vitest";
+import { initialRunState, reduceRun } from "@/ipc/run-state";
+import type { ProgressEvent } from "@/ipc/types";
+
+describe("reduceRun", () => {
+  it("tick updates counters and rates", () => {
+    const tick: ProgressEvent = {
+      type: "tick",
+      seq: 1,
+      at_ms: 250,
+      processed: 100,
+      total: 1000,
+      success: 95,
+      failed: 5,
+      crashed: 0,
+      in_flight: 4,
+      queue_depth: 12,
+      rate_1s: 400,
+      rate_10s: 380,
+      eta_ms: 2250,
+    };
+    const after = reduceRun(initialRunState, tick);
+    expect(after.processed).toBe(100);
+    expect(after.failed).toBe(5);
+    expect(after.rate_10s).toBe(380);
+  });
+
+  it("phase_changed sets status correctly", () => {
+    const evt: ProgressEvent = { type: "phase_changed", phase: "running", at_ms: 0 };
+    const after = reduceRun(initialRunState, evt);
+    expect(after.phase).toBe("running");
+    expect(after.status).toBe("running");
+  });
+
+  it("outcome_sample prepends and caps at 200", () => {
+    let s = initialRunState;
+    for (let i = 0; i < 250; i++) {
+      s = reduceRun(s, {
+        type: "outcome_sample",
+        row_index: i,
+        kind: "error",
+        code: "X",
+        message: null,
+        dur_ms: 1,
+      });
+    }
+    expect(s.recentSamples.length).toBe(200);
+    expect(s.recentSamples[0].row_index).toBe(249);
+  });
+
+  it("done sets status and finalReport", () => {
+    const evt: ProgressEvent = {
+      type: "done",
+      processed: 100, success: 95, failed: 5, crashed: 0, dur_ms: 1000,
+    };
+    const after = reduceRun(initialRunState, evt);
+    expect(after.status).toBe("done");
+    expect(after.finalReport?.success).toBe(95);
+  });
+
+  it("aborted with crashed reason maps to crashed status", () => {
+    const evt: ProgressEvent = {
+      type: "aborted",
+      reason: { kind: "crashed", panic_message: "boom" },
+      at_phase: "running",
+      partial_report: { processed: 50, success: 40, failed: 10, crashed: 0, dur_ms: 500 },
+    };
+    const after = reduceRun(initialRunState, evt);
+    expect(after.status).toBe("crashed");
+    expect(after.abortReason?.kind).toBe("crashed");
+  });
+
+  it("worker_crashed adds a banner", () => {
+    const evt: ProgressEvent = {
+      type: "worker_crashed",
+      worker_id: 2,
+      last_seq: 99,
+      exit_code: null,
+      signal: 11,
+      stderr_tail: "boom",
+    };
+    const after = reduceRun(initialRunState, evt);
+    expect(after.banners.length).toBe(1);
+    expect(after.banners[0].kind).toBe("worker_crashed");
+    expect(after.banners[0].stderr_tail).toBe("boom");
+  });
+});
