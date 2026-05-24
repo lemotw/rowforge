@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AppShell } from "@/layout/AppShell";
 import { useExecDetail, useWorkspace } from "@/ipc/queries";
 import { RollupCard } from "@/components/RollupCard";
+import { RunButton } from "@/components/RunButton";
 import { uiErrorMessage } from "@/ipc/types";
 
 export function ExecDetailPage() {
@@ -29,11 +30,17 @@ export function ExecDetailPage() {
         )}
         {detail.data && (
           <>
-            <header className="mb-6">
-              <h1 className="text-xl font-medium">{detail.data.summary.name || "(unnamed)"}</h1>
-              <div className="mt-1 font-mono text-xs text-muted-foreground">
-                id: {detail.data.summary.id} · input: {detail.data.input_path_snapshot} ({detail.data.summary.input_rows ?? "?"} rows)
+            <header className="mb-6 flex items-start justify-between">
+              <div>
+                <h1 className="text-xl font-medium">{detail.data.summary.name || "(unnamed)"}</h1>
+                <div className="mt-1 font-mono text-xs text-muted-foreground">
+                  id: {detail.data.summary.id} · input: {detail.data.input_path_snapshot} ({detail.data.summary.input_rows ?? "?"} rows)
+                </div>
               </div>
+              <RunButton
+                executionId={id!}
+                lastHandlerDir={null}
+              />
             </header>
 
             <Tabs defaultValue="attempts">
