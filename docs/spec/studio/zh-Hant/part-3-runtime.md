@@ -39,12 +39,8 @@ run 共用。Studio 強制 `workers × concurrent_runs ≤ logical_cpus × 2`,
 ## 3.3 Run 狀態機
 
 ```
-        ┌─────────┐
-        │ Pending │  已分配 RunHandle，tokio task 尚未 spawn。
-        └────┬────┘
-             ▼
         ┌──────────┐
-        │ Starting │  Workers spawn 中、handler build / handshake 中。
+        │ Starting │  session 已注冊；Workers spawn 中、handler build / handshake 中。
         └────┬─────┘
              │  首列 dispatch 後
              ▼
@@ -68,9 +64,13 @@ run 共用。Studio 強制 `workers × concurrent_runs ≤ logical_cpus × 2`,
                          └─────────┘
 ```
 
+Session 直接從 `Starting` 開始注冊，不存在 `Pending` 狀態——
+`start_run` 原子性地插入 SQLite `attempts` row 並 spawn tokio task，
+因此 session 對外可見時已至少處於 `Starting`。
+
 轉移時的持久化：
 
-- **Pending → Starting**：SQLite 插入 `attempts` row，`state = starting`。
+- **Starting**（注冊時）：SQLite 插入 `attempts` row，`state = starting`。
 - **Starting → Running**：row 更新為 `state = running`。
 - **Running → Done**：outcomes flush 完成、`meta.json` 寫入、SQLite row
   更新為 `state = done` 並寫入最終 stats。`Done` 事件在三者完成**後**

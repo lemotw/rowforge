@@ -36,7 +36,6 @@ impl From<String> for RunHandle {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RunStatus {
-    Pending,
     Starting,
     Running,
     Cancelling,
@@ -87,5 +86,29 @@ mod tests {
     fn cancel_mode_snake_case_serialization() {
         let v = serde_json::to_value(&CancelMode::Hard).unwrap();
         assert_eq!(v, serde_json::Value::String("hard".into()));
+    }
+
+    #[test]
+    fn run_status_has_six_variants() {
+        // Plan 5 dropped Pending. Sessions enter at Starting.
+        let all = [
+            RunStatus::Starting,
+            RunStatus::Running,
+            RunStatus::Cancelling,
+            RunStatus::Done,
+            RunStatus::Aborted,
+            RunStatus::Crashed,
+        ];
+        assert_eq!(all.len(), 6);
+    }
+
+    #[test]
+    fn run_status_pending_does_not_exist() {
+        // Sanity assertion via JSON — if Pending ever comes back, this fails.
+        let json = serde_json::to_string(&RunStatus::Starting).unwrap();
+        assert_eq!(json, "\"starting\"");
+        // Confirm "pending" cannot be deserialized.
+        let r: Result<RunStatus, _> = serde_json::from_str("\"pending\"");
+        assert!(r.is_err(), "RunStatus must not accept 'pending' anymore");
     }
 }

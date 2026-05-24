@@ -143,7 +143,6 @@ export interface RowHistory {
 export type RunHandle = string;
 
 export type RunStatus =
-  | "pending"
   | "starting"
   | "running"
   | "cancelling"
