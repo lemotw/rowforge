@@ -34,7 +34,7 @@ pub use failed::{FailedPageQuery, FailedRow, FailedRowPage, RowOutcomeKind};
 pub use ids::{AttemptId, ExecutionId};
 pub use row_history::RowHistory;
 pub use rollup::ExecRollup;
-pub use run::{RunOpts, RunStream};
+pub use run::{RunOpts, RunRollupTick, RunStream};
 pub use run_handle::{CancelMode, RunHandle, RunStatus};
 pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
