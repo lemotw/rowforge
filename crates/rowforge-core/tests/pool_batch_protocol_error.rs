@@ -103,6 +103,7 @@ async fn length_mismatch_yields_batch_protocol_error_per_row() {
         fsync_outcomes: false,
         stall_timeout: Some(Duration::from_secs(5)),
         stall_poll_interval: Some(Duration::from_millis(100)),
+        on_row_done: None,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());

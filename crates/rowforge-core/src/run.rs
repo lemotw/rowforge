@@ -51,7 +51,7 @@ pub enum RunProgressEvent {
     Completed { success: u64, failed: u64 },
 }
 
-pub type ProgressCallback = Box<dyn Fn(RunProgressEvent) + Send + Sync>;
+pub type ProgressCallback = std::sync::Arc<dyn Fn(RunProgressEvent) + Send + Sync>;
 
 pub struct RunRequest {
     pub run_id: String,
@@ -192,6 +192,20 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
 
     // 5. Run the streaming pool.
     let jsonl_path = req.output_dir.join("outcomes.jsonl");
+
+    // Bridge: rowforge-core's pool only knows about `Fn(seq, success)`. Map
+    // it onto the caller's full ProgressCallback so per-row `RowDone` events
+    // fire as the pool durably appends to outcomes.jsonl.
+    let on_row_done: Option<Arc<dyn Fn(u64, bool) + Send + Sync>> = req
+        .on_progress
+        .as_ref()
+        .map(|cb| {
+            let cb = cb.clone();
+            Arc::new(move |seq: u64, success: bool| {
+                cb(RunProgressEvent::RowDone { seq, success });
+            }) as Arc<dyn Fn(u64, bool) + Send + Sync>
+        });
+
     let pool_cfg = StreamingPoolConfig {
         handler_dir: req.handler_dir.clone(),
         manifest: Arc::new(manifest.clone()),
@@ -205,6 +219,7 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
         fsync_outcomes: req.fsync_outcomes,
         stall_timeout: None,
         stall_poll_interval: None,
+        on_row_done,
     };
 
     let pool_report = run_pool_streaming(

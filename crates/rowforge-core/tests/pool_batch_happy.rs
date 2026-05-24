@@ -92,6 +92,22 @@ async fn batch_mode_processes_all_rows_with_echoed_payload() {
     let manifest = batch_echo_manifest();
     let runtime = manifest.runtime.clone().unwrap();
 
+    // Regression: capture per-row callbacks to verify the studio-side
+    // progress wiring fires for every row (not just at Started/Completed).
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let row_done_count = std::sync::Arc::new(AtomicU64::new(0));
+    let success_count = std::sync::Arc::new(AtomicU64::new(0));
+    let on_row_done: std::sync::Arc<dyn Fn(u64, bool) + Send + Sync> = {
+        let total = row_done_count.clone();
+        let ok = success_count.clone();
+        std::sync::Arc::new(move |_seq, success| {
+            total.fetch_add(1, Ordering::Relaxed);
+            if success {
+                ok.fetch_add(1, Ordering::Relaxed);
+            }
+        })
+    };
+
     let cfg = StreamingPoolConfig {
         handler_dir: std::env::temp_dir(),
         manifest,
@@ -105,6 +121,7 @@ async fn batch_mode_processes_all_rows_with_echoed_payload() {
         fsync_outcomes: false,
         stall_timeout: None,
         stall_poll_interval: None,
+        on_row_done: Some(on_row_done),
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());
@@ -140,6 +157,19 @@ async fn batch_mode_processes_all_rows_with_echoed_payload() {
         by_seq.insert(seq, o);
     }
     assert_eq!(by_seq.len(), 350, "every seq 0..350 represented exactly once");
+
+    // Regression check (per-row callback wiring — guards against the bug
+    // where pool_streaming only fired Started/Completed):
+    assert_eq!(
+        row_done_count.load(Ordering::Relaxed),
+        350,
+        "on_row_done must fire once per input row"
+    );
+    assert_eq!(
+        success_count.load(Ordering::Relaxed),
+        350,
+        "all rows succeeded so on_row_done should report success=true for each"
+    );
 
     for i in 0..350u64 {
         let o = by_seq.get(&i).expect("missing seq");

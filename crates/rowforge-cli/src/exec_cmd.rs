@@ -419,7 +419,7 @@ async fn run_attempt(store: &mut ExecutionStore, a: RunAttemptArgs) -> Result<i3
         field_map,
         config_overrides: config,
         shutdown_grace: Duration::from_secs(5),
-        on_progress: Some(Box::new({
+        on_progress: Some(std::sync::Arc::new({
             use std::sync::atomic::{AtomicU64, Ordering};
             use std::sync::Arc;
             let total = Arc::new(AtomicU64::new(0));

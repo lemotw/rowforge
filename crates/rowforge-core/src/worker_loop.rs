@@ -59,7 +59,22 @@ pub async fn run_worker_loop(
     jsonl: Arc<SharedJsonlWriter>,
     grace: Duration,
     cancel: Option<CancellationToken>,
+    on_row_done: Option<Arc<dyn Fn(u64, bool) + Send + Sync>>,
 ) -> Result<(), CoreError> {
+    // Closure capturing on_row_done — fires for every row in a BatchOutcome
+    // *after* it has been durably appended to outcomes.jsonl. seq + success
+    // semantics match the existing `RunProgressEvent::RowDone` shape.
+    let report_outcomes = |bo: &crate::pool::BatchOutcome| {
+        let Some(cb) = on_row_done.as_ref() else { return };
+        for o in &bo.outcomes {
+            let (seq, success) = match o {
+                crate::pool::RowOutcome::Success { seq, .. } => (*seq, true),
+                crate::pool::RowOutcome::Error { seq, .. } => (*seq, false),
+                crate::pool::RowOutcome::Crash { seq, .. } => (*seq, false),
+            };
+            cb(seq, success);
+        }
+    };
     loop {
         // Pull next batch — cancel-aware (§8.2 biased select!).
         // The lock is held only for the duration of recv(), then dropped
@@ -98,6 +113,7 @@ pub async fn run_worker_loop(
                     let outcomes = vec![synthesize_crash(seq, worker.id, idempotent)];
                     let bo = BatchOutcome::from_outcomes(outcomes);
                     jsonl.append_line(&bo).await?;
+                    report_outcomes(&bo);
                     break;
                 }
 
@@ -114,6 +130,7 @@ pub async fn run_worker_loop(
                             let outcomes = vec![synthesize_crash(seq, worker.id, idempotent)];
                             let bo = BatchOutcome::from_outcomes(outcomes);
                             jsonl.append_line(&bo).await?;
+                            report_outcomes(&bo);
                             break;
                         },
                         r = worker.recv() => r,
@@ -150,6 +167,7 @@ pub async fn run_worker_loop(
                         .collect::<Vec<_>>();
                     let bo = BatchOutcome::from_outcomes(outcomes);
                     jsonl.append_line(&bo).await?;
+                    report_outcomes(&bo);
                     break;
                 }
                 // Cancel-aware recv: if cancel fires while waiting for a batch
@@ -166,6 +184,7 @@ pub async fn run_worker_loop(
                                 .collect::<Vec<_>>();
                             let bo = BatchOutcome::from_outcomes(outcomes);
                             jsonl.append_line(&bo).await?;
+                            report_outcomes(&bo);
                             break;
                         },
                         r = worker.recv_batch_result(&seqs) => r,
@@ -190,6 +209,7 @@ pub async fn run_worker_loop(
         // in-flight results must land regardless of cancel state.
         let bo = BatchOutcome::from_outcomes(outcomes);
         jsonl.append_line(&bo).await?;
+        report_outcomes(&bo);
     }
 
     // Shutdown handler even on cancel (§8.2: "shutdown handler").
@@ -356,6 +376,7 @@ mod tests {
             Arc::clone(&jsonl),
             Duration::from_secs(2),
             cancel,
+            None,
         )
         .await
         .expect("run_worker_loop returned Err");
@@ -459,6 +480,7 @@ mod tests {
             Arc::clone(&jsonl),
             Duration::from_secs(2),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -518,6 +540,7 @@ mod tests {
             Arc::clone(&jsonl),
             Duration::from_secs(2),
             Some(cancel),
+            None,
         )
         .await
         .unwrap();

@@ -101,7 +101,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<i32> {
     let cb: Option<rowforge_core::run::ProgressCallback> = if quiet {
         None
     } else if json_events {
-        Some(Box::new(|ev| {
+        Some(std::sync::Arc::new(|ev| {
             let s = match ev {
                 rowforge_core::run::RunProgressEvent::Started { total_rows } => {
                     serde_json::json!({"type":"started","total_rows":total_rows})
@@ -116,7 +116,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<i32> {
             println!("{}", s);
         }))
     } else {
-        Some(Box::new(|ev| {
+        Some(std::sync::Arc::new(|ev| {
             if let rowforge_core::run::RunProgressEvent::Completed { success, failed } = ev {
                 eprintln!("[rowforge] progress: {} OK / {} failed", success, failed);
             }
