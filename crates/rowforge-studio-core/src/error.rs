@@ -81,10 +81,7 @@ pub enum UiError {
     /// Handler manifest validation failed. errors block exec_start / run_start.
     #[error("manifest invalid")]
     ManifestInvalid {
-        // ManifestError lives in crate::manifest (added in Task 5). Use the
-        // typed list once that module lands. For now, accept Vec<String> as
-        // a placeholder shape so we don't block Task 5.
-        errors: Vec<String>,
+        errors: Vec<crate::manifest::ManifestError>,
     },
 
     /// Manifest references a binary not found on PATH (used by future plans).
