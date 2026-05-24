@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useWorkspace, useExecList } from "@/ipc/queries";
 import { AppShell } from "@/layout/AppShell";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -5,6 +6,7 @@ import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
 import { uiErrorMessage } from "@/ipc/types";
 
 export function ExecListPage() {
+  const navigate = useNavigate();
   const ws = useWorkspace();
   const list = useExecList(!!ws.data);
 
@@ -50,7 +52,7 @@ export function ExecListPage() {
             </Thead>
             <tbody>
               {list.data.map((e) => (
-                <Tr key={e.id}>
+                <Tr key={e.id} className="cursor-pointer" onClick={() => navigate(`/exec/${e.id}`)}>
                   <Td className="font-mono">{e.name || "—"}</Td>
                   <Td className="font-mono">
                     {new Date(e.created_at).toISOString().replace("T", " ").slice(0, 16)}

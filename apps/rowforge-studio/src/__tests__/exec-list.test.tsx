@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ExecListPage } from "@/pages/ExecList";
 import type React from "react";
@@ -16,7 +17,11 @@ describe("ExecList", () => {
   });
 
   function wrap(node: React.ReactNode) {
-    return <QueryClientProvider client={qc}>{node}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>{node}</MemoryRouter>
+      </QueryClientProvider>
+    );
   }
 
   it("renders empty state when list is []", async () => {
