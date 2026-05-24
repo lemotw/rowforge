@@ -47,22 +47,68 @@ export type UiErrorKind =
   | "toolchain_missing";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
-// JSON shape (confirmed by ipc_contract.rs test in src-tauri/tests/):
-//   { "kind": "workspace_locked", "message": "no home" }
+// JSON shapes (confirmed by ipc_contract tests):
+//   tuple-String variant: { "kind": "workspace_locked", "message": "no home" }
+//   struct variant:       { "kind": "duplicate_exec_name",
+//                           "message": { "name": "foo" } }
+//   #[serde(flatten)] on RunAborted.reason: the AbortReason JSON sits
+//   directly under "message":
+//                        { "kind": "run_aborted",
+//                          "message": { "kind": "user_cancelled" } }
+//
 // NOTE: Plan 1 originally used #[serde(tag = "kind")] (internal tagging) which
 // panics at runtime for newtype variants wrapping primitives. Fixed in Task 11
 // to use adjacent tagging; the inner field is "message", not "0".
-export interface UiError {
-  kind: UiErrorKind;
-  message: string;
+export type UiError =
+  | { kind: "workspace_locked"; message: string }
+  | { kind: "not_found"; message: string }
+  | { kind: "invalid_arg"; message: string }
+  | { kind: "io"; message: string }
+  | { kind: "internal"; message: string }
+  | { kind: "unknown_handle"; message: string }
+  | { kind: "run_aborted"; message: AbortReason }
+  | {
+      kind: "run_busy";
+      message: { execution_id: string; limit: number; scope: BusyScope };
+    }
+  | { kind: "invalid_input"; message: { reason: string } }
+  | { kind: "duplicate_exec_name"; message: { name: string } }
+  | { kind: "export_incomplete"; message: { missing_count: number } }
+  | { kind: "manifest_invalid"; message: { errors: ManifestError[] } }
+  | { kind: "toolchain_missing"; message: { token: string } };
+
+function isUiError(e: unknown): e is UiError {
+  return !!e && typeof e === "object" && "kind" in e && "message" in e;
 }
 
 export function uiErrorMessage(e: unknown): string {
-  if (e && typeof e === "object" && "kind" in e) {
-    const ue = e as UiError;
-    return `[${ue.kind}] ${ue.message ?? ""}`;
+  if (!isUiError(e)) return String(e);
+  switch (e.kind) {
+    // tuple-String variants — render the message verbatim.
+    case "workspace_locked":
+    case "not_found":
+    case "invalid_arg":
+    case "io":
+    case "internal":
+    case "unknown_handle":
+      return `[${e.kind}] ${e.message}`;
+
+    // struct variants — render the typed payload.
+    case "run_aborted":
+      return `[run_aborted] ${e.message.kind}`;
+    case "run_busy":
+      return `[run_busy] ${e.message.scope} limit ${e.message.limit} reached`;
+    case "invalid_input":
+      return `[invalid_input] ${e.message.reason}`;
+    case "duplicate_exec_name":
+      return `[duplicate_exec_name] '${e.message.name}' already exists in this workspace`;
+    case "export_incomplete":
+      return `[export_incomplete] ${e.message.missing_count} row(s) unresolved`;
+    case "manifest_invalid":
+      return `[manifest_invalid] ${e.message.errors.length} error(s)`;
+    case "toolchain_missing":
+      return `[toolchain_missing] '${e.message.token}' not on PATH`;
   }
-  return String(e);
 }
 
 export type ExecutionId = string;

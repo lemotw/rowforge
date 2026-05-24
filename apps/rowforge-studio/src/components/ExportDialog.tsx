@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useExport } from "@/ipc/use-export";
-import type { ExportFormat, ExecutionId, UiError } from "@/ipc/types";
+import { uiErrorMessage, type ExportFormat, type ExecutionId, type UiError } from "@/ipc/types";
 
 export function ExportDialog({
   open,
@@ -48,14 +48,15 @@ export function ExportDialog({
       onClose();
     } catch (e) {
       toast.dismiss(toastId);
-      const err = e as Partial<UiError>;
-      if (err.kind === "export_incomplete") {
-        const missing = (err.message as unknown as { missing_count?: number })?.missing_count ?? "some";
+      // Surface ExportIncomplete with the specific missing-row count;
+      // fall back to the generic uiErrorMessage formatter otherwise.
+      const err = e as UiError | null;
+      if (err && err.kind === "export_incomplete") {
         toast.error(
-          `Export incomplete: ${missing} rows unresolved — uncheck 'Require complete' or finish the run first.`
+          `Export incomplete: ${err.message.missing_count} rows unresolved — uncheck 'Require complete' or finish the run first.`
         );
       } else {
-        toast.error(`Export failed: ${String((err as { message?: unknown }).message ?? e)}`);
+        toast.error(`Export failed: ${uiErrorMessage(e)}`);
       }
     }
   };
