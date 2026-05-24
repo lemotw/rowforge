@@ -131,23 +131,35 @@ pub fn attempt_row_history(
 }
 
 #[tauri::command]
-pub fn run_start(
+pub async fn run_start(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
     execution_id: ExecutionId,
     handler_dir: PathBuf,
 ) -> Result<RunHandle, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-    let opts = RunOpts::new(handler_dir);
-    let handle = core.start_run(&execution_id, opts)?;
+    // Scope the MutexGuard so it is dropped before any .await point.
+    // studio-core::start_run internally calls tokio::spawn (tick loop +
+    // pipeline task); those spawns require an entered tokio runtime.
+    // Making this command async ensures Tauri executes it on its tokio
+    // runtime, so the inner spawn calls have a runtime context.
+    let (handle, stream_rx) = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        let opts = RunOpts::new(handler_dir);
+        let handle = core.start_run(&execution_id, opts)?;
+        let stream = core
+            .subscribe(&handle)
+            .map_err(|e| UiError::Internal(e.to_string()))?;
+        (handle, stream.rx)
+    }; // guard dropped here, before any .await
 
     // Spawn the per-run event forwarder onto run:<handle>.
-    let stream = core.subscribe(&handle).map_err(|e| UiError::Internal(e.to_string()))?;
     let handle_for_task = handle.clone();
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
-        crate::events::forward_run_events(app_clone, handle_for_task, stream.rx).await;
+        crate::events::forward_run_events(app_clone, handle_for_task, stream_rx).await;
     });
 
     Ok(handle)
