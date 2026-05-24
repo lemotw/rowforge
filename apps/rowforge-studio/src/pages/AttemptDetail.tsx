@@ -1,4 +1,4 @@
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,20 @@ import { useAttemptDetail, useWorkspace } from "@/ipc/queries";
 import { uiErrorMessage } from "@/ipc/types";
 import { ErrorsByCodeList } from "@/components/ErrorsByCodeList";
 import { FailedRowsTable } from "@/components/FailedRowsTable";
+import { ProgressRegion } from "@/components/ProgressRegion";
+import { EventTail } from "@/components/EventTail";
+import { PhaseChipBar } from "@/components/PhaseChipBar";
+import { LifecycleBanners } from "@/components/LifecycleBanner";
+import { CancelDialog } from "@/components/CancelDialog";
+import { useRun } from "@/ipc/use-run";
 
 export function AttemptDetailPage() {
   const { id, aid } = useParams<{ id: string; aid: string }>();
+  const [searchParams] = useSearchParams();
+  const runHandle = searchParams.get("run");
   const ws = useWorkspace();
   const detail = useAttemptDetail(id ?? null, aid ?? null);
+  const liveState = useRun(runHandle);
 
   if (ws.data === null && !ws.isLoading) return <Navigate to="/" replace />;
   const workspace = ws.data ?? null;
@@ -37,23 +46,47 @@ export function AttemptDetailPage() {
               </div>
             </header>
 
-            {!detail.data.is_terminal && (
-              <div className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                ⚠ This attempt may still be running. Snapshot may be stale.{" "}
-                <button onClick={() => detail.refetch()} className="underline">
-                  Refresh manually
-                </button>{" "}
-                · live progress arrives in Plan 4.
+            {/* Live mode header — only when ?run= param is present */}
+            {runHandle && (
+              <div className="mb-4 flex items-center justify-between">
+                <PhaseChipBar current={liveState.phase} />
+                <CancelDialog
+                  handle={runHandle}
+                  status={liveState.status}
+                  execName={detail.data.id ?? id ?? ""}
+                />
               </div>
             )}
 
-            <Tabs defaultValue="summary">
+            {runHandle && <LifecycleBanners banners={liveState.banners} />}
+
+            {/* Stale banner — only when no runHandle AND attempt is non-terminal */}
+            {!runHandle && !detail.data.is_terminal && (
+              <div className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+                ⚠ This attempt may still be running. Snapshot may be stale.{" "}
+                <button onClick={() => detail.refetch()} className="underline ml-1">
+                  Refresh manually
+                </button>
+              </div>
+            )}
+
+            <Tabs defaultValue={runHandle ? "live" : "summary"}>
               <TabsList>
+                {runHandle && <TabsTrigger value="live">Live</TabsTrigger>}
                 <TabsTrigger value="summary">Summary</TabsTrigger>
                 <TabsTrigger value="failed">Failed rows</TabsTrigger>
                 <TabsTrigger value="errors">Errors by code</TabsTrigger>
                 <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
               </TabsList>
+
+              {runHandle && (
+                <TabsContent value="live">
+                  <div className="space-y-4">
+                    <ProgressRegion state={liveState} />
+                    <EventTail samples={liveState.recentSamples} />
+                  </div>
+                </TabsContent>
+              )}
 
               <TabsContent value="summary">
                 <div className="grid grid-cols-3 gap-3">
