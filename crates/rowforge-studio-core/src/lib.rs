@@ -15,6 +15,7 @@ pub mod ids;
 pub mod rollup;
 pub mod row_history;
 pub mod run_handle;
+pub mod session;
 pub mod settings;
 pub mod workspace;
 
@@ -31,6 +32,7 @@ pub use ids::{AttemptId, ExecutionId};
 pub use row_history::RowHistory;
 pub use rollup::ExecRollup;
 pub use run_handle::{CancelMode, RunHandle, RunStatus};
+pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
 
