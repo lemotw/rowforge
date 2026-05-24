@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum CoreError {
     #[error("handler startup timeout after {timeout_ms}ms")]
     StartupTimeout { timeout_ms: u64 },
@@ -14,6 +15,8 @@ pub enum CoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("store: {0}")]
     Store(String),
+    #[error("schema version {found} is newer than this binary knows about (max {max_known})")]
+    SchemaTooNew { found: u8, max_known: u8 },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }

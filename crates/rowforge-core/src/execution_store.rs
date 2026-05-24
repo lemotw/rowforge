@@ -238,6 +238,12 @@ impl ExecutionStore {
                     .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
             }
             Some(v) if v == SCHEMA_VERSION => {}
+            Some(v) if v > SCHEMA_VERSION => {
+                return Err(CoreError::SchemaTooNew {
+                    found: v as u8,
+                    max_known: SCHEMA_VERSION as u8,
+                });
+            }
             Some(v) => {
                 return Err(CoreError::Store(format!(
                     "executions.db schema version {v} not supported (expected {SCHEMA_VERSION})"

@@ -5,7 +5,7 @@
 //! surface. No CLI binary is invoked.
 
 use rowforge_core::execution_store::ExecutionStore;
-use rowforge_studio_core::{OpenOpts, StudioCore};
+use rowforge_studio_core::{OpenOpts, StudioCore, UiError};
 use std::path::PathBuf;
 
 /// Helper: produces a temp workspace dir with an initialized SQLite
@@ -89,4 +89,33 @@ fn list_reflects_executions_created_via_core() {
     assert_eq!(rows[0].name, "smoke");
     assert_eq!(rows[0].input_rows, Some(2));
     assert_eq!(rows[0].attempts_count, 0, "Plan 1 stubs this");
+}
+
+#[test]
+fn open_refuses_newer_schema_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    {
+        let _store = ExecutionStore::open(tmp.path()).unwrap();
+    }
+
+    // Bump the schema_version table to simulate a future schema written
+    // by a newer rowforge binary.
+    let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+    conn.execute("UPDATE schema_version SET version = 99", []).unwrap();
+    drop(conn);
+
+    let result = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    );
+    assert!(result.is_err(), "should refuse newer schema");
+    let err = result.err().unwrap();
+    match err {
+        UiError::WorkspaceLocked(msg) => {
+            assert!(
+                msg.contains("schema") || msg.contains("version"),
+                "expected schema/version in message, got: {msg}"
+            );
+        }
+        other => panic!("expected WorkspaceLocked, got: {other:?}"),
+    }
 }
