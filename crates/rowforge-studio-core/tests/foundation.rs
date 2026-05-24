@@ -43,7 +43,9 @@ fn open_with_nonexistent_workspace_path_creates_it() {
     assert!(fresh.join("executions.db").exists());
 }
 
-use rowforge_core::execution_store::NewExecution;
+use rowforge_core::execution_store::{
+    FinishAttempt, NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source,
+};
 use rowforge_studio_core::ListFilter;
 
 #[test]
@@ -88,7 +90,7 @@ fn list_reflects_executions_created_via_core() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "smoke");
     assert_eq!(rows[0].input_rows, Some(2));
-    assert_eq!(rows[0].attempts_count, 0, "Plan 1 stubs this");
+    assert_eq!(rows[0].attempts_count, 0, "no attempts created in this test");
 }
 
 #[test]
@@ -134,4 +136,76 @@ fn open_refuses_newer_schema_version() {
         }
         other => panic!("expected WorkspaceLocked, got: {other:?}"),
     }
+}
+
+#[test]
+fn list_reflects_attempts_count_and_last_state() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\nb02\n").unwrap();
+
+    let exec_id = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("backfill-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        let hi = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "h_test".into(),
+                manifest_hash: "sha256:test".into(),
+                source_snapshot_dir: std::path::PathBuf::from("/tmp/snap"),
+                binary_hash: None,
+            })
+            .unwrap();
+
+        let attempt = store
+            .create_attempt(NewAttempt {
+                execution_id: exec.id.clone(),
+                handler_instance_id: hi.id,
+                parent_attempt_id: None,
+                run_type: RunType {
+                    source: Source::Full,
+                    simulation: Simulation::Real,
+                },
+            })
+            .unwrap();
+
+        store
+            .finish_attempt(
+                &attempt.id,
+                FinishAttempt {
+                    success_count: 2,
+                    failed_count: 0,
+                    aborted: false,
+                    aborted_reason: None,
+                },
+            )
+            .unwrap();
+
+        exec.id
+    };
+
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let rows = core.list(ListFilter::default()).unwrap();
+    let row = rows.iter().find(|r| r.id.as_str() == exec_id).unwrap();
+    assert_eq!(row.attempts_count, 1, "attempts_count should reflect created attempt");
+    assert!(
+        row.last_attempt_state.is_some(),
+        "last_attempt_state should be populated"
+    );
+    assert_eq!(
+        row.last_attempt_state.as_deref(),
+        Some("completed"),
+        "last_attempt_state should be 'completed'"
+    );
+    // last_attempt_counts is None because no meta.json was written — acceptable.
 }
