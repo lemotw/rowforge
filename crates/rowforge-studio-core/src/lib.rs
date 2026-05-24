@@ -8,6 +8,7 @@ pub mod cache;
 pub mod error;
 pub mod exec_detail;
 pub mod exec_view;
+pub mod failed;
 pub mod ids;
 pub mod rollup;
 pub mod settings;
@@ -19,6 +20,7 @@ pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
 pub use error::UiError;
 pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingView, InputFormat};
 pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
+pub use failed::{FailedPageQuery, FailedRow, FailedRowPage, RowOutcomeKind};
 pub use ids::{AttemptId, ExecutionId};
 pub use rollup::ExecRollup;
 pub use settings::Settings;
@@ -214,6 +216,40 @@ impl StudioCore {
             never_attempted: res.counts.never_attempted,
             by_error_code: res.by_error_code,
         })
+    }
+
+    /// Return a paged list of failed rows for one attempt.
+    ///
+    /// Reads `outcomes.jsonl` linearly, collecting `error` and `crash` rows.
+    /// Pagination is cursor-based: `query.offset` is the count of failed rows
+    /// to skip; `next_offset` in the response is the resume cursor.
+    ///
+    /// Returns `UiError::NotFound` when the execution or attempt does not
+    /// exist, or when `outcomes.jsonl` has not been created yet.
+    pub fn failed_page(&self, q: FailedPageQuery) -> Result<FailedRowPage, UiError> {
+        let exec = self
+            .store
+            .get_execution(q.execution_id.as_str())
+            .map_err(|e| UiError::Internal(e.to_string()))?
+            .ok_or_else(|| {
+                UiError::NotFound(format!("execution {} not found", q.execution_id))
+            })?;
+
+        let outcomes = exec
+            .dir
+            .join("attempts")
+            .join(q.attempt_id.as_str())
+            .join("outcomes.jsonl");
+
+        if !outcomes.exists() {
+            return Err(UiError::NotFound(format!(
+                "attempt {} has no outcomes.jsonl",
+                q.attempt_id
+            )));
+        }
+
+        crate::failed::read_failed_page(&outcomes, &q)
+            .map_err(|e| UiError::Io(e.to_string()))
     }
 
     /// List all executions in this workspace, newest first.
