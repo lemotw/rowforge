@@ -1023,6 +1023,52 @@ fn open_marks_orphan_attempts_as_aborted() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Plan 5 T6: start_exec tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn start_exec_creates_and_returns_id() {
+    use rowforge_studio_core::{OpenOpts, StartExecArgs, StudioCore};
+    let tmp = tempfile::tempdir().unwrap();
+    let csv_path = tmp.path().join("in.csv");
+    std::fs::write(&csv_path, "row_id\nr1\nr2\nr3\n").unwrap();
+
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().into())).unwrap();
+    let id = core
+        .start_exec(StartExecArgs::new(csv_path, "plan5_test_exec"))
+        .unwrap();
+
+    assert!(id.as_str().starts_with("e_"), "id should be e_<ulid>, got {}", id.as_str());
+    let summaries = core.list(Default::default()).unwrap();
+    assert!(summaries.iter().any(|s| s.id.as_str() == id.as_str()));
+}
+
+#[test]
+fn start_exec_rejects_missing_input() {
+    use rowforge_studio_core::{OpenOpts, StartExecArgs, StudioCore, UiError};
+    let tmp = tempfile::tempdir().unwrap();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().into())).unwrap();
+    let err = core
+        .start_exec(StartExecArgs::new(tmp.path().join("nope.csv"), "x"))
+        .unwrap_err();
+    assert!(matches!(err, UiError::InvalidInput { .. }), "got {:?}", err);
+}
+
+#[test]
+fn start_exec_rejects_duplicate_name() {
+    use rowforge_studio_core::{OpenOpts, StartExecArgs, StudioCore, UiError};
+    let tmp = tempfile::tempdir().unwrap();
+    let csv = tmp.path().join("in.csv");
+    std::fs::write(&csv, "row_id\nr1\n").unwrap();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().into())).unwrap();
+
+    let args = StartExecArgs::new(csv, "dup_name");
+    core.start_exec(args.clone()).unwrap();
+    let err = core.start_exec(args).unwrap_err();
+    assert!(matches!(err, UiError::DuplicateExecName { .. }), "got {:?}", err);
+}
+
 /// A running attempt whose outcomes.jsonl was written < 5 min ago must NOT be
 /// touched by orphan recovery — a live CLI run may still be active externally.
 #[test]

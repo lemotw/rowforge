@@ -40,6 +40,58 @@ pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
 
+// StartExecArgs is defined below (inline in lib.rs) and exported here.
+// Re-export is done at the bottom of the `pub use` section for discoverability.
+
+// ---------------------------------------------------------------------------
+// StartExecArgs (spec §5.2)
+// ---------------------------------------------------------------------------
+
+/// Arguments for `StudioCore::start_exec`.
+///
+/// `#[non_exhaustive]` so that new optional fields (e.g. field_mapping,
+/// config_overrides) can be added without a breaking API change.
+///
+/// Use `StartExecArgs::new(input_path, name)` to construct; optional fields
+/// can be set via the builder-style setters.
+#[non_exhaustive]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StartExecArgs {
+    /// Local filesystem path to the input file (csv/jsonl/ndjson).
+    pub input_path: std::path::PathBuf,
+    /// Human-readable name for this execution; must be unique in the workspace.
+    pub name: String,
+    /// Optional logical CSV id for pre-registered CSVs. Defaults to
+    /// `"csv_unregistered"` when absent.
+    pub csv_id: Option<String>,
+    /// If set, pins the execution to a specific handler instance id.
+    pub pinned_handler_instance: Option<String>,
+}
+
+impl StartExecArgs {
+    /// Construct with required fields; optional fields default to `None`.
+    pub fn new(input_path: impl Into<std::path::PathBuf>, name: impl Into<String>) -> Self {
+        Self {
+            input_path: input_path.into(),
+            name: name.into(),
+            csv_id: None,
+            pinned_handler_instance: None,
+        }
+    }
+
+    /// Set the logical CSV id.
+    pub fn with_csv_id(mut self, id: impl Into<String>) -> Self {
+        self.csv_id = Some(id.into());
+        self
+    }
+
+    /// Pin to a specific handler instance.
+    pub fn with_pinned_handler(mut self, id: impl Into<String>) -> Self {
+        self.pinned_handler_instance = Some(id.into());
+        self
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Orphan recovery (spec §3.7)
 // ---------------------------------------------------------------------------
@@ -475,6 +527,62 @@ impl StudioCore {
         drop(store);
         self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
         Ok(summaries)
+    }
+
+    /// Create a new execution from a local input file.
+    ///
+    /// Spec §5.2. Does:
+    /// 1. Input validation: file must exist and have a csv/jsonl/ndjson extension.
+    /// 2. Workspace-scoped duplicate name check via `store.list_executions()`.
+    /// 3. Delegates to `rowforge_core::ExecutionStore::create_execution`.
+    ///
+    /// Returns the new `ExecutionId` on success.
+    pub fn start_exec(&self, args: StartExecArgs) -> Result<ExecutionId, UiError> {
+        // 1. Input validation — file must exist.
+        if !args.input_path.is_file() {
+            return Err(UiError::InvalidInput {
+                reason: format!(
+                    "input not found or not a file: {}",
+                    args.input_path.display()
+                ),
+            });
+        }
+        // Format sniff by extension.
+        let ext = args
+            .input_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if !matches!(ext.as_deref(), Some("csv") | Some("jsonl") | Some("ndjson")) {
+            return Err(UiError::InvalidInput {
+                reason: "unsupported input format — must be csv/jsonl/ndjson".into(),
+            });
+        }
+
+        // 2. Duplicate name check (workspace-scoped).
+        // NOTE: list_executions() is the actual method on ExecutionStore — returns
+        //       Vec<Execution>, each with an `id: String` and `name: Option<String>`.
+        let mut store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+        let existing = store
+            .list_executions()
+            .map_err(|e| UiError::Internal(e.to_string()))?;
+        if existing.iter().any(|e| e.name.as_deref() == Some(&args.name)) {
+            return Err(UiError::DuplicateExecName { name: args.name });
+        }
+
+        // 3. Delegate to core store.
+        let new = rowforge_core::execution_store::NewExecution {
+            name: Some(args.name.clone()),
+            input_csv_id: args
+                .csv_id
+                .unwrap_or_else(|| "csv_unregistered".into()),
+            input_csv_path: args.input_path,
+            current_handler_instance_id: args.pinned_handler_instance,
+        };
+        let exec = store
+            .create_execution(new)
+            .map_err(|e| UiError::Internal(e.to_string()))?;
+        Ok(ExecutionId::new(exec.id))
     }
 }
 
