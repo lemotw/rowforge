@@ -602,12 +602,30 @@ async fn run_pipeline_in_process(
     // Build the per-row progress callback. The closure captures `aggregator`
     // and updates counters for every RowDone event. `Started` wires the total
     // so the Tick ETA calculation works.
+    //
+    // in_flight / queue_depth are HEURISTIC because rowforge-core's
+    // RunProgressEvent doesn't carry a RowDispatched event — we can't know
+    // exactly which rows are in worker hands at any moment. The pool is
+    // assumed to stay full while rows remain:
+    //   in_flight = min(workers, total - processed)
+    //   queue_depth = max(0, total - processed - in_flight)
+    // This is accurate to within `workers` rows for steady-state runs and
+    // tracks correctly during the final wind-down.
     let agg_cb = aggregator.clone();
+    let workers_for_cb = workers;
     let on_progress: rowforge_core::run::ProgressCallback = Box::new(move |ev| {
+        let update_in_flight = |agg: &Arc<ProgressAggregator>, total: u64, processed: u64| {
+            let remaining = total.saturating_sub(processed);
+            let in_flight = (workers_for_cb as u64).min(remaining) as u32;
+            let queue = remaining.saturating_sub(in_flight as u64) as u32;
+            agg.set_in_flight(in_flight, queue);
+        };
+
         match ev {
             RunProgressEvent::Started { total_rows } => {
                 agg_cb.set_total(total_rows);
                 agg_cb.set_phase(Phase::Running);
+                update_in_flight(&agg_cb, total_rows, 0);
             }
             RunProgressEvent::RowDone { seq, success } => {
                 if success {
@@ -621,9 +639,15 @@ async fn run_pipeline_in_process(
                         0,
                     );
                 }
+                let snap = agg_cb.snapshot();
+                if let Some(total) = snap.total {
+                    update_in_flight(&agg_cb, total, snap.processed);
+                }
             }
             RunProgressEvent::Completed { .. } => {
-                // Aggregator already has accurate counts from per-row calls.
+                // Pipeline finished — zero out in_flight/queue_depth in case
+                // the last RowDone left them at 1/0 momentarily.
+                agg_cb.set_in_flight(0, 0);
             }
         }
     });

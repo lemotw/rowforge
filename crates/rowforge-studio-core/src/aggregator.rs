@@ -286,6 +286,25 @@ mod tests {
     }
 
     #[test]
+    fn set_in_flight_propagates_to_snapshot_and_tick() {
+        let agg = ProgressAggregator::new();
+        agg.set_total(10);
+        agg.set_in_flight(2, 5);
+        let s = agg.snapshot();
+        assert_eq!(s.in_flight, 2);
+        assert_eq!(s.queue_depth, 5);
+
+        // Compose a tick — the emitted event must carry the same values.
+        let ev = agg.compose_tick();
+        if let ProgressEvent::Tick { in_flight, queue_depth, .. } = ev {
+            assert_eq!(in_flight, 2);
+            assert_eq!(queue_depth, 5);
+        } else {
+            panic!("compose_tick did not return Tick");
+        }
+    }
+
+    #[test]
     fn outcome_sample_token_bucket_drops_excess() {
         // Burst 100 errors quickly; should NOT all emit. Token bucket caps
         // at ~18 (20 tokens/s × 0.9 error ratio); some may emit beyond on
