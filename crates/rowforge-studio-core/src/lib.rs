@@ -33,13 +33,13 @@ impl StudioCore {
             Some(p) => p,
             None => rowforge_core::workspace::default_workspace_root()
                 .ok_or_else(|| {
-                    UiError::WorkspaceUnavailable(
+                    UiError::WorkspaceLocked(
                         "no home directory available".into(),
                     )
                 })?,
         };
         let store = rowforge_core::execution_store::ExecutionStore::open(&root)
-            .map_err(|e| UiError::WorkspaceUnavailable(e.to_string()))?;
+            .map_err(|e| UiError::WorkspaceLocked(e.to_string()))?;
         let workspace = Workspace {
             root,
             schema_version: store.schema_version(),

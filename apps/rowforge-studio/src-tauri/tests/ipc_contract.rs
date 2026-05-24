@@ -39,16 +39,28 @@ fn exec_summary_json_keys() {
 }
 
 #[test]
-fn ui_error_workspace_unavailable_shape() {
-    let err = UiError::WorkspaceUnavailable("no home".into());
+fn ui_error_workspace_locked_shape() {
+    let err = UiError::WorkspaceLocked("no home".into());
     let v = serde_json::to_value(&err).unwrap();
     assert!(v.get("kind").is_some(), "kind missing: {v:?}");
     let kind = v.get("kind").and_then(|k| k.as_str()).unwrap();
-    assert_eq!(kind, "workspace_unavailable", "kind value");
+    assert_eq!(kind, "workspace_locked", "kind value");
     assert_eq!(
         v.get("message").and_then(|m| m.as_str()),
         Some("no home"),
         "UiError content field must be 'message' (adjacent tagging): {v:?}"
+    );
+}
+
+#[test]
+fn ui_error_not_found_shape() {
+    let err = UiError::NotFound("execution e1 not found".into());
+    let v = serde_json::to_value(&err).unwrap();
+    assert_eq!(v.get("kind").and_then(|k| k.as_str()).unwrap(), "not_found");
+    assert_eq!(
+        v.get("message").and_then(|m| m.as_str()),
+        Some("execution e1 not found"),
+        "message field expected"
     );
 }
 

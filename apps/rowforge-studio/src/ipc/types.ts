@@ -31,11 +31,16 @@ export interface Settings {
   telemetry_opt_in: boolean;
 }
 
-export type UiErrorKind = "workspace_unavailable" | "io" | "internal";
+export type UiErrorKind =
+  | "workspace_locked"
+  | "not_found"
+  | "invalid_arg"
+  | "io"
+  | "internal";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shape (confirmed by ipc_contract.rs test in src-tauri/tests/):
-//   { "kind": "workspace_unavailable", "message": "no home" }
+//   { "kind": "workspace_locked", "message": "no home" }
 // NOTE: Plan 1 originally used #[serde(tag = "kind")] (internal tagging) which
 // panics at runtime for newtype variants wrapping primitives. Fixed in Task 11
 // to use adjacent tagging; the inner field is "message", not "0".
