@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rowforge-core",
     "crates/rowforge-cli",
+    "crates/rowforge-studio-core",
     "crates/test-handler",
 ]
 
