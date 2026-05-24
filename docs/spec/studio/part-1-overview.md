@@ -64,9 +64,13 @@ there. See Part 5 §5.1.
 - Crash recovery for orphaned attempts (Part 3 §3.7).
 
 ### Anchored in v1, implemented later
-- Handler authoring (manifest editor backing, scaffolding, in-app build,
-  smoke test, `pack`). API anchor points are listed in Part 5 §5.4.
 - Replay of finished attempts as an event stream (Part 6 §6.4).
+- Structured manifest editor and `rowforge pack` from Studio (see Part 8
+  §8.9 for the deferred list).
+
+> Handler authoring is now in v1 — discovery, edit-launcher, scaffold,
+> build, and smoke test. See **Part 8**. The §1.4 "anchored" position
+> is superseded for handler authoring.
 
 ### Out of scope
 - Multi-workspace registry, remote workspaces, daemon mode.

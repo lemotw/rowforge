@@ -178,6 +178,11 @@ Composition rules:
 
 ## 5.4 Extension surface for handler authoring (anchor points)
 
+> **Realized in Part 8.** Handler authoring is now v1 scope. The
+> anchors below remain valid but their v2-only labels (`Sandbox`,
+> `Draft`) refer to features still deferred. See Part 8 §8.5 for the
+> full handler API added on top of these anchors.
+
 v1 reserves three anchor points so handler-authoring features land
 without breaking changes:
 
