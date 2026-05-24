@@ -39,7 +39,7 @@ pub fn workspace_open(
 
     // Spawn the 1 Hz workspace rollup forwarder for this workspace session.
     let app_clone = app.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         crate::events::forward_active_runs(app_clone, sessions).await;
     });
 
@@ -146,7 +146,7 @@ pub fn run_start(
     let stream = core.subscribe(&handle).map_err(|e| UiError::Internal(e.to_string()))?;
     let handle_for_task = handle.clone();
     let app_clone = app.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         crate::events::forward_run_events(app_clone, handle_for_task, stream.rx).await;
     });
 
@@ -216,7 +216,7 @@ pub fn attempt_replay_start(
     let handle_for_task = handle.clone();
     let channel = format!("run:{}", handle.as_str());
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         use futures::StreamExt as _;
         let mut events = Box::new(stream).events();
         while let Some(event) = events.next().await {
