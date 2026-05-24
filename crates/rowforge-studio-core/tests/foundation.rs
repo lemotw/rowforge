@@ -46,7 +46,7 @@ fn open_with_nonexistent_workspace_path_creates_it() {
 use rowforge_core::execution_store::{
     FinishAttempt, NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source,
 };
-use rowforge_studio_core::{ExecutionId, ListFilter};
+use rowforge_studio_core::{AttemptId, ExecutionId, ListFilter};
 
 #[test]
 fn list_empty_workspace_returns_empty_vec() {
@@ -237,5 +237,81 @@ fn show_returns_not_found_for_unknown_exec() {
     let tmp = empty_workspace();
     let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
     let err = core.show(&ExecutionId::new("missing")).expect_err("should not exist");
+    matches!(err, UiError::NotFound(_));
+}
+
+#[test]
+fn attempt_returns_detail_for_existing_attempt() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\n").unwrap();
+
+    let (exec_id, attempt_id) = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("attempt-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        let hi = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "h_test".into(),
+                manifest_hash: "sha256:test".into(),
+                source_snapshot_dir: std::path::PathBuf::from("/tmp/snap"),
+                binary_hash: None,
+            })
+            .unwrap();
+
+        let attempt = store
+            .create_attempt(NewAttempt {
+                execution_id: exec.id.clone(),
+                handler_instance_id: hi.id,
+                parent_attempt_id: None,
+                run_type: RunType {
+                    source: Source::Full,
+                    simulation: Simulation::Real,
+                },
+            })
+            .unwrap();
+
+        store
+            .finish_attempt(
+                &attempt.id,
+                FinishAttempt {
+                    success_count: 1,
+                    failed_count: 0,
+                    aborted: false,
+                    aborted_reason: None,
+                },
+            )
+            .unwrap();
+
+        (exec.id, attempt.id)
+    };
+
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let det = core
+        .attempt(
+            &ExecutionId::new(exec_id),
+            &AttemptId::new(attempt_id),
+        )
+        .unwrap();
+    assert!(det.is_terminal, "finished attempt should be terminal");
+    assert!(det.finished_at.is_some());
+}
+
+#[test]
+fn attempt_returns_not_found_for_unknown_attempt() {
+    let tmp = empty_workspace();
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let err = core
+        .attempt(&ExecutionId::new("missing"), &AttemptId::new("a1"))
+        .expect_err("should not exist");
     matches!(err, UiError::NotFound(_));
 }

@@ -3,6 +3,7 @@
 //! See `docs/spec/studio/part-1-overview.md` for principles and
 //! `docs/spec/studio/part-5-api.md` for the public surface.
 
+pub mod attempt_detail;
 pub mod cache;
 pub mod error;
 pub mod exec_detail;
@@ -13,6 +14,7 @@ pub mod workspace;
 
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
+pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
 pub use error::UiError;
 pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingView, InputFormat};
 pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
@@ -114,6 +116,72 @@ impl StudioCore {
         })
     }
 
+    /// Return detail for a single attempt.
+    ///
+    /// Returns `UiError::NotFound` if the execution or attempt does not exist.
+    /// meta.json is read best-effort; missing/malformed → zero counts.
+    pub fn attempt(
+        &self,
+        e: &ExecutionId,
+        r: &AttemptId,
+    ) -> Result<AttemptDetail, UiError> {
+        use crate::attempt_detail::{AttemptPaths, HandlerInstanceView};
+
+        let exec = self
+            .store
+            .get_execution(e.as_str())
+            .map_err(|err| UiError::Internal(err.to_string()))?
+            .ok_or_else(|| UiError::NotFound(format!("execution {} not found", e)))?;
+
+        let attempts = self
+            .store
+            .list_attempts_for_execution(e.as_str())
+            .map_err(|err| UiError::Internal(err.to_string()))?;
+
+        let attempt = attempts
+            .into_iter()
+            .find(|a| a.id == r.as_str())
+            .ok_or_else(|| UiError::NotFound(format!("attempt {} not found", r)))?;
+
+        let attempt_dir = exec.dir.join("attempts").join(&attempt.id);
+        let meta_path = attempt_dir.join("meta.json");
+        let (stats, by_error_code) = read_meta_full(&meta_path).unwrap_or_default();
+
+        let state_str = serde_json::to_value(&attempt.state)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| format!("{:?}", attempt.state).to_lowercase());
+        let is_terminal =
+            matches!(state_str.as_str(), "done" | "completed" | "aborted" | "crashed");
+
+        let run_type_str = serde_json::to_value(&attempt.run_type)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| format!("{:?}", attempt.run_type).to_lowercase());
+
+        Ok(AttemptDetail {
+            id: AttemptId::new(attempt.id),
+            execution_id: e.clone(),
+            state: state_str,
+            run_type: run_type_str,
+            started_at: attempt.started_at,
+            finished_at: attempt.ended_at,
+            stats,
+            by_error_code,
+            handler_instance: HandlerInstanceView {
+                id: exec.current_handler_instance_id.clone(),
+                handler_id: None,
+                version: None,
+            },
+            paths: AttemptPaths {
+                meta_json: meta_path,
+                outcomes_jsonl: attempt_dir.join("outcomes.jsonl"),
+                handler_stderr_log: attempt_dir.join("handler.stderr.log"),
+            },
+            is_terminal,
+        })
+    }
+
     /// List all executions in this workspace, newest first.
     ///
     /// Uses a warm-tier mtime probe per spec part-4 §4.3: cache is valid
@@ -135,4 +203,31 @@ impl StudioCore {
         self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
         Ok(summaries)
     }
+}
+
+/// Read the full meta.json for an attempt — best-effort.
+///
+/// Returns `(AttemptCountsStub, by_error_code)` or `None` if the file is
+/// absent, unreadable, or malformed.
+fn read_meta_full(
+    path: &std::path::Path,
+) -> Option<(AttemptCountsStub, std::collections::BTreeMap<String, u64>)> {
+    let bytes = std::fs::read(path).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let stats = v.get("stats").cloned().unwrap_or_default();
+    let counts = AttemptCountsStub {
+        success: stats.get("success").and_then(|x| x.as_u64()).unwrap_or(0),
+        failed: stats.get("failed").and_then(|x| x.as_u64()).unwrap_or(0),
+        crashed: stats.get("crashed").and_then(|x| x.as_u64()).unwrap_or(0),
+    };
+    let by_code = v
+        .get("by_error_code")
+        .and_then(|m| m.as_object())
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_u64()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((counts, by_code))
 }
