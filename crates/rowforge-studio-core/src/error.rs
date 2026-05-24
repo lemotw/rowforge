@@ -7,8 +7,13 @@
 use serde::Serialize;
 use thiserror::Error;
 
+//  serde's internally-tagged representation (#[serde(tag = "kind")]) does NOT
+//  support newtype variants that wrap primitives — serde errors at runtime with
+//  "cannot serialize tagged newtype variant … containing a string".
+//  We use adjacent tagging (#[serde(tag = "kind", content = "message")]) instead.
+//  JSON shape: { "kind": "workspace_unavailable", "message": "no home" }
 #[derive(Debug, Error, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "message", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum UiError {
     /// Workspace cannot be located (no `$HOME` and no explicit override) or

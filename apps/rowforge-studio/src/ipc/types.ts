@@ -33,20 +33,21 @@ export interface Settings {
 
 export type UiErrorKind = "workspace_unavailable" | "io" | "internal";
 
-// Plan 1 used tuple variants under #[serde(tag = "kind")]. The exact JSON
-// shape for tuple variants with internal tagging may be { "kind": "...", "0": "..." }
-// or { "kind": "..." } alone with the inner string lost. Task 11's IPC
-// contract test confirms the actual shape; this type may need adjustment
-// after that test runs.
+// Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
+// JSON shape (confirmed by ipc_contract.rs test in src-tauri/tests/):
+//   { "kind": "workspace_unavailable", "message": "no home" }
+// NOTE: Plan 1 originally used #[serde(tag = "kind")] (internal tagging) which
+// panics at runtime for newtype variants wrapping primitives. Fixed in Task 11
+// to use adjacent tagging; the inner field is "message", not "0".
 export interface UiError {
   kind: UiErrorKind;
-  0?: string;
+  message: string;
 }
 
 export function uiErrorMessage(e: unknown): string {
   if (e && typeof e === "object" && "kind" in e) {
     const ue = e as UiError;
-    return `[${ue.kind}] ${ue[0] ?? ""}`;
+    return `[${ue.kind}] ${ue.message ?? ""}`;
   }
   return String(e);
 }
