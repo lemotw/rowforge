@@ -206,27 +206,23 @@ verify Studio refuses to open.)
 
 ## Plan 05 additions
 
-### Create an execution via Wizard (Flow A)
+### Create an execution (Flow A)
+
+The handler is **not** picked here — it is selected per-Run on ExecDetail
+(the data model binds handler to attempt, not to exec).
 
 1. Empty workspace (or with execs) → click **New execution** on Workspace Home (either the empty-state primary button or the header secondary button)
-2. **Step 1** — enter name `smoke_test_plan5` (must match `[a-z0-9_-]+`, ≤ 64 chars)
+2. Enter name `smoke_test_plan5` (must match `[a-z0-9_-]+`, ≤ 64 chars)
 3. Click **Pick…** next to "Input file" → choose any CSV/JSONL/NDJSON file
 4. Confirm format chip shows the detected extension
-5. Click **Next**
-6. **Step 2** — click **Pick…** next to "Handler directory" → choose a directory (e.g. `examples/handlers/golang-billing-channel`)
-7. Click **Validate** → should show green "Manifest valid" with version + language chips (if manifest.toml has them)
-8. Optional: check **Start a run immediately after creation**
-9. Click **Create execution**:
-   - Without checkbox: routes to `/exec/<id>` (Detail)
-   - With checkbox: routes to `/exec/<id>/attempt/<aid>?run=<handle>` (Live tab)
+5. Click **Create execution** → routes to `/exec/<id>` (Detail). Click **Run** there when ready to pick a handler and start a run.
 
 #### Negative paths to verify
 
-- **Empty handler dir** — pick a directory without `manifest.toml` → red banner "manifest.toml not found"; Create button disabled
-- **Bad TOML** — write a `manifest.toml` with `[`unbalanced` → red banner "TOML parse failed"; Create button disabled
-- **Missing `run` field** — write `manifest.toml` with `run = ""` → red banner "Required field missing: 'run'"; Create button disabled
-- **Binary not on PATH** — write `run = "definitely-not-installed-xyz123"` → amber warning, Create button **enabled** (warnings don't block)
-- **Duplicate name** — submit twice with the same name → second submit shows red error "duplicate exec name" inside the Wizard
+- **Bad name** — typing characters outside `[a-z0-9_-]` shows the inline regex hint; Create button stays disabled
+- **Missing input** — Create stays disabled until input file is picked
+- **Unsupported extension** — pick a `.txt` file → backend rejects with `invalid_input` (currently the picker filters extensions, so this requires manually pasting a path)
+- **Duplicate name** — submit twice with the same name → second submit shows red error "duplicate exec name" inside the form
 
 ### Run button auto-navigate (Plan 4 carry-forward closed)
 
