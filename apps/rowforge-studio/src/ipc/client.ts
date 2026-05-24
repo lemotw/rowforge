@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AttemptDetail,
   AttemptId,
+  CancelMode,
   ExecDetail,
   ExecRollup,
   ExecSummary,
@@ -9,6 +10,8 @@ import type {
   FailedPageQuery,
   FailedRowPage,
   RowHistory,
+  RunHandle,
+  RunStatus,
   Settings,
   Workspace,
 } from "./types";
@@ -29,4 +32,18 @@ export const ipc = {
     invoke<FailedRowPage>("attempt_failed_page", args),
   attempt_row_history: (args: { executionId: ExecutionId; seq: number }) =>
     invoke<RowHistory>("attempt_row_history", args),
+  run_start: (args: { executionId: ExecutionId; handlerDir: string }) =>
+    invoke<RunHandle>("run_start", { executionId: args.executionId, handlerDir: args.handlerDir }),
+  run_cancel: (args: { handle: RunHandle; mode: CancelMode }) =>
+    invoke<void>("run_cancel", args),
+  run_status: (args: { handle: RunHandle }) =>
+    invoke<RunStatus>("run_status", args),
+  run_active: () =>
+    invoke<RunHandle[]>("run_active"),
+  attempt_replay_start: (args: {
+    executionId: ExecutionId;
+    attemptId: AttemptId;
+    speed: number;
+  }) =>
+    invoke<RunHandle>("attempt_replay_start", args),
 };

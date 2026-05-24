@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ipc } from "./client";
-import type { AttemptId, ExecutionId, FailedPageQuery, Settings } from "./types";
+import type { AttemptId, CancelMode, ExecutionId, FailedPageQuery, RunHandle, Settings } from "./types";
 
 export const useSettings = () =>
   useQuery({
@@ -78,4 +78,29 @@ export const useRowHistory = (e: ExecutionId | null, seq: number | null) =>
     queryKey: ["attempt_row_history", e, seq],
     queryFn: () => ipc.attempt_row_history({ executionId: e!, seq: seq! }),
     enabled: !!e && seq !== null,
+  });
+
+export const useRunStart = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { executionId: ExecutionId; handlerDir: string }) =>
+      ipc.run_start(args),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["exec_list"] });
+      qc.invalidateQueries({ queryKey: ["exec_show"] });
+    },
+  });
+};
+
+export const useRunCancel = () =>
+  useMutation({
+    mutationFn: (args: { handle: RunHandle; mode: CancelMode }) =>
+      ipc.run_cancel(args),
+  });
+
+export const useActiveRuns = () =>
+  useQuery({
+    queryKey: ["run_active"],
+    queryFn: ipc.run_active,
+    refetchInterval: 2000, // 2s poll fallback if runs:active event missed
   });

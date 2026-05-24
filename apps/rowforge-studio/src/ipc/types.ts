@@ -137,3 +137,114 @@ export interface RowHistory {
   rows: Array<[AttemptId, RowOutcomeKind, string | null]>;
   resolved_at: AttemptId | null;
 }
+
+// ===== Plan 4: Run lifecycle + live progress =====
+
+export type RunHandle = string;
+
+export type RunStatus =
+  | "pending"
+  | "starting"
+  | "running"
+  | "cancelling"
+  | "done"
+  | "aborted"
+  | "crashed";
+
+export type CancelMode = "soft" | "hard";
+
+export type Phase =
+  | "initializing"
+  | "snapshotting"
+  | "starting"
+  | "running"
+  | "cancelling"
+  | "persisting";
+
+export interface RunReport {
+  processed: number;
+  success: number;
+  failed: number;
+  crashed: number;
+  dur_ms: number;
+}
+
+export interface WorkerCrashRecord {
+  worker_id: number;
+  last_seq: number | null;
+  exit_code: number | null;
+  signal: number | null;
+  stderr_tail: string;
+}
+
+// AbortReason is internally tagged on "kind".
+export type AbortReason =
+  | { kind: "user_cancelled" }
+  | { kind: "handler_startup_timeout"; failed_workers: number; last_stderr: string }
+  | { kind: "all_workers_crashed"; crashes: WorkerCrashRecord[] }
+  | { kind: "stalled"; silent_secs: number; last_seq: number | null }
+  | { kind: "missing_required_input"; columns: string[] }
+  | { kind: "snapshot_hash_mismatch"; path: string; expected: string; actual: string }
+  | { kind: "orphaned_on_restart" }
+  | { kind: "crashed"; panic_message: string }
+  | { kind: "internal"; message: string };
+
+// ProgressEvent: adjacent-tag-like via "type" field. Tuple-variant
+// payloads (WorkerCrashed, Done) are INLINED at top level (verified
+// by Plan 4 T2 contract test for WorkerCrashed).
+export type ProgressEvent =
+  | { type: "phase_changed"; phase: Phase; at_ms: number }
+  | { type: "worker_spawned"; worker_id: number }
+  | { type: "handler_ready"; worker_id: number; handler_version: string; startup_ms: number }
+  // WorkerCrashed payload is inlined:
+  | ({ type: "worker_crashed" } & WorkerCrashRecord)
+  | { type: "stall_warning"; silent_secs: number }
+  | {
+      type: "tick";
+      seq: number;
+      at_ms: number;
+      processed: number;
+      total: number | null;
+      success: number;
+      failed: number;
+      crashed: number;
+      in_flight: number;
+      queue_depth: number;
+      rate_1s: number;
+      rate_10s: number;
+      eta_ms: number | null;
+    }
+  | {
+      type: "outcome_sample";
+      row_index: number;
+      kind: RowOutcomeKind;
+      code: string | null;
+      message: string | null;
+      dur_ms: number;
+    }
+  | {
+      type: "batch_summary";
+      first_seq: number;
+      n: number;
+      success: number;
+      failed: number;
+      dur_ms: number;
+    }
+  | { type: "pipeline_warning"; code: string; message: string }
+  | { type: "handler_stderr"; worker_id: number; line: string }
+  // Done payload (RunReport) is inlined:
+  | ({ type: "done" } & RunReport)
+  | {
+      type: "aborted";
+      reason: AbortReason;
+      at_phase: Phase;
+      partial_report: RunReport;
+    };
+
+export interface RunRollupTick {
+  active_runs: number;
+  total_processed: number;
+  total_failed: number;
+  total_rate: number;
+  slowest_run: RunHandle | null;
+}
