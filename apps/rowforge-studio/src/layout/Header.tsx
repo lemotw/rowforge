@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Workspace } from "@/ipc/types";
 import { Breadcrumb, type Crumb } from "@/components/Breadcrumb";
 import { WorkspaceMenu } from "@/components/WorkspaceMenu";
+import { ActiveRunsPill } from "@/components/ActiveRunsPill";
 
 export function Header({
   workspace,
@@ -30,6 +31,9 @@ export function Header({
           <Breadcrumb crumbs={crumbs} />
         </div>
       )}
+      <div className="ml-auto">
+        <ActiveRunsPill />
+      </div>
       {workspace && (
         <WorkspaceMenu workspaceRoot={workspace.root} open={menuOpen} onOpenChange={setMenuOpen} />
       )}
