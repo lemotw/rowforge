@@ -41,7 +41,7 @@ pub fn exec_list(state: State<'_, AppState>) -> Result<Vec<ExecSummary>, UiError
     let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     let core = guard
         .as_ref()
-        .ok_or_else(|| UiError::WorkspaceUnavailable("no workspace open".into()))?;
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
     core.list(ListFilter::default())
 }
 
