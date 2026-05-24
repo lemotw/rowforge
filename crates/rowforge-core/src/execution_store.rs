@@ -193,13 +193,6 @@ impl ExecutionStore {
     /// Open (or create) the store rooted at `home` (typically `~/.rowforge`).
     /// Ensures the executions/ subdir and SQLite database exist and are at
     /// the current schema version.
-    /// The SQLite `schema_version` recorded after `open_with_migrations`
-    /// completes. Studio uses this to enforce a hard version pin
-    /// (spec part-4 §4.6).
-    pub fn schema_version(&self) -> u8 {
-        SCHEMA_VERSION as u8
-    }
-
     pub fn open(home: &Path) -> Result<Self> {
         fs::create_dir_all(home).map_err(CoreError::Io)?;
         fs::create_dir_all(home.join("executions")).map_err(CoreError::Io)?;
@@ -213,6 +206,13 @@ impl ExecutionStore {
         };
         store.migrate()?;
         Ok(store)
+    }
+
+    /// The SQLite `schema_version` recorded after `open_with_migrations`
+    /// completes. Studio uses this to enforce a hard version pin
+    /// (spec part-4 §4.6).
+    pub fn schema_version(&self) -> u8 {
+        SCHEMA_VERSION as u8
     }
 
     fn migrate(&mut self) -> Result<()> {
