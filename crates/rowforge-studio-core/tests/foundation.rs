@@ -46,7 +46,7 @@ fn open_with_nonexistent_workspace_path_creates_it() {
 use rowforge_core::execution_store::{
     FinishAttempt, NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source,
 };
-use rowforge_studio_core::ListFilter;
+use rowforge_studio_core::{ExecutionId, ListFilter};
 
 #[test]
 fn list_empty_workspace_returns_empty_vec() {
@@ -208,4 +208,34 @@ fn list_reflects_attempts_count_and_last_state() {
         "last_attempt_state should be 'completed'"
     );
     // last_attempt_counts is None because no meta.json was written — acceptable.
+}
+
+#[test]
+fn show_returns_exec_detail_for_existing_exec() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\nb02\n").unwrap();
+    let exec_id = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        store.create_execution(NewExecution {
+            name: Some("show-test".into()),
+            input_csv_id: "csv1".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        }).unwrap().id
+    };
+
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let detail = core.show(&ExecutionId::new(exec_id.clone())).unwrap();
+    assert_eq!(detail.summary.id.as_str(), exec_id);
+    assert_eq!(detail.summary.name, "show-test");
+    assert_eq!(detail.attempts.len(), 0);
+}
+
+#[test]
+fn show_returns_not_found_for_unknown_exec() {
+    let tmp = empty_workspace();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let err = core.show(&ExecutionId::new("missing")).expect_err("should not exist");
+    matches!(err, UiError::NotFound(_));
 }

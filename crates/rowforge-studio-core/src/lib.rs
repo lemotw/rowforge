@@ -5,6 +5,7 @@
 
 pub mod cache;
 pub mod error;
+pub mod exec_detail;
 pub mod exec_view;
 pub mod ids;
 pub mod settings;
@@ -13,7 +14,8 @@ pub mod workspace;
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use error::UiError;
-pub use exec_view::{ExecSummary, ListFilter};
+pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingView, InputFormat};
+pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
 pub use ids::{AttemptId, ExecutionId};
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
@@ -57,6 +59,59 @@ impl StudioCore {
 
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
+    }
+
+    /// Return detail for a single execution by id.
+    ///
+    /// Returns `UiError::NotFound` if no execution with that id exists.
+    pub fn show(&self, id: &ExecutionId) -> Result<ExecDetail, UiError> {
+        use crate::exec_detail::{AttemptSummary, HandlerBindingView, InputFormat};
+
+        let exec = self
+            .store
+            .get_execution(id.as_str())
+            .map_err(|e| UiError::Internal(e.to_string()))?
+            .ok_or_else(|| UiError::NotFound(format!("execution {} not found", id)))?;
+
+        let summary = ExecSummary::from_execution(&exec, &self.store)
+            .map_err(|e| UiError::Internal(e.to_string()))?;
+
+        let attempts_raw = self
+            .store
+            .list_attempts_for_execution(id.as_str())
+            .map_err(|e| UiError::Internal(e.to_string()))?;
+
+        let attempts: Vec<AttemptSummary> = attempts_raw
+            .into_iter()
+            .map(|a| AttemptSummary {
+                id: AttemptId::new(a.id),
+                state: serde_json::to_value(&a.state)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_else(|| format!("{:?}", a.state).to_lowercase()),
+                started_at: a.started_at,
+                finished_at: a.ended_at,
+                run_type: serde_json::to_value(&a.run_type)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_else(|| format!("{:?}", a.run_type).to_lowercase()),
+                stats: None, // backfilled in attempt() detail call (Task 9)
+            })
+            .collect();
+
+        Ok(ExecDetail {
+            summary,
+            input_path_snapshot: exec.dir.join("input.csv"),
+            input_format: InputFormat::Csv,
+            handler_binding: HandlerBindingView {
+                handler_id: None,
+                handler_instance_id: exec.current_handler_instance_id.clone(),
+                version: None,
+            },
+            attempts,
+            field_mapping: None,
+            config_overrides: Default::default(),
+        })
     }
 
     /// List all executions in this workspace, newest first.
