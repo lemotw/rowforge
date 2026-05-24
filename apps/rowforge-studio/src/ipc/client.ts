@@ -49,6 +49,8 @@ export const ipc = {
     invoke<RunHandle[]>("run_active"),
   run_snapshot: (args: { handle: RunHandle }) =>
     invoke<ProgressSnapshot>("run_snapshot", args),
+  attempt_active_handle: (args: { attemptId: AttemptId }) =>
+    invoke<RunHandle | null>("attempt_active_handle", args),
 
   exec_start: (args: StartExecArgs) =>
     invoke<ExecutionId>("exec_start", { args }),

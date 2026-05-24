@@ -14,6 +14,11 @@ use crate::run_handle::{RunHandle, RunStatus};
 pub struct Session {
     pub handle: RunHandle,
     pub execution_id: String,
+    /// Attempt id this session is producing rows into. Used by
+    /// `SessionRegistry::lookup_by_attempt` so a user landing on
+    /// AttemptDetail without `?run=` can be offered to re-attach to
+    /// the live stream.
+    pub attempt_id: String,
     pub aggregator: Arc<ProgressAggregator>,
     pub cancel_token: CancellationToken,
     /// Drop sender to stop the per-session tick loop on shutdown.
@@ -82,6 +87,17 @@ impl SessionRegistry {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(h)
+    }
+
+    /// Find the live RunHandle associated with a given attempt, if any.
+    /// Used by AttemptDetail to offer a "Watch live" affordance when the
+    /// user lands on the page without `?run=` in the URL.
+    pub fn lookup_by_attempt(&self, attempt_id: &str) -> Option<RunHandle> {
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        inner
+            .values()
+            .find(|s| s.attempt_id == attempt_id)
+            .map(|s| s.handle.clone())
     }
 
     pub fn handles(&self) -> Vec<RunHandle> {
@@ -166,6 +182,7 @@ mod tests {
         Arc::new(Session {
             handle: RunHandle::new(),
             execution_id: exec.into(),
+            attempt_id: format!("a_{}", exec),
             aggregator: Arc::new(ProgressAggregator::new()),
             cancel_token: CancellationToken::new(),
             tick_stop,

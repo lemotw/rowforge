@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { ipc } from "@/ipc/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -27,6 +29,20 @@ export function AttemptDetailPage() {
   // attempt ulid. Already cached if Exec page was visited.
   const exec = useExecDetail(id ?? null);
   const liveState = useRun(runHandle);
+  const navigate = useNavigate();
+
+  // If the user lands on this page without `?run=` in the URL, see whether
+  // there's still a live session for this attempt — if so, offer to attach.
+  // Skip the query if `?run=` is already present (we're already live) or
+  // if attempt id is missing.
+  const activeHandle = useQuery({
+    queryKey: ["attempt_active_handle", aid],
+    queryFn: () => ipc.attempt_active_handle({ attemptId: aid! }),
+    enabled: !!aid && !runHandle,
+    // Re-poll every 2s while we don't have a handle, so users notice when a
+    // run starts (e.g. from CLI in another terminal) without manual refresh.
+    refetchInterval: !runHandle ? 2000 : false,
+  });
 
   // Compute whether we should treat this view as terminal. Three signals:
   // 1. attempt_show says is_terminal (sqlite-backed truth)
@@ -108,8 +124,27 @@ export function AttemptDetailPage() {
               </div>
             )}
 
-            {/* Stale banner — only when no runHandle AND attempt is non-terminal */}
-            {!runHandle && !detail.data.is_terminal && (
+            {/* Live-run available banner — re-attach to a live session that
+                we landed on without ?run= in the URL */}
+            {!runHandle && activeHandle.data && (
+              <div className="mb-4 flex items-center justify-between rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+                <span>● Live run in progress for this attempt.</span>
+                <button
+                  onClick={() =>
+                    navigate(
+                      `/exec/${id}/attempt/${aid}?run=${activeHandle.data}`,
+                      { replace: true }
+                    )
+                  }
+                  className="rounded bg-emerald-500/20 px-2 py-0.5 underline"
+                >
+                  Watch live →
+                </button>
+              </div>
+            )}
+
+            {/* Stale banner — only when no runHandle, no active session, AND attempt is non-terminal */}
+            {!runHandle && !activeHandle.data && !detail.data.is_terminal && (
               <div className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
                 ⚠ This attempt may still be running. Snapshot may be stale.{" "}
                 <button onClick={() => detail.refetch()} className="underline ml-1">

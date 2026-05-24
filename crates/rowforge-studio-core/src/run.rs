@@ -231,6 +231,7 @@ impl StudioCore {
         let session = Arc::new(Session {
             handle: handle.clone(),
             execution_id: execution_id.as_str().to_string(),
+            attempt_id: attempt_id.clone(),
             aggregator: aggregator.clone(),
             cancel_token: cancel_token.clone(),
             tick_stop: tick_stop_tx.clone(),
@@ -464,6 +465,17 @@ impl StudioCore {
     /// Return handles for all currently-active runs in this workspace.
     pub fn active_runs(&self) -> Vec<RunHandle> {
         self.sessions.handles()
+    }
+
+    /// Look up the live run handle for a given attempt, if one exists in
+    /// the registry. Used by AttemptDetail to offer "Watch live" when the
+    /// user lands on the page without `?run=` in the URL (e.g. by
+    /// navigating from the Executions list rather than via the Run
+    /// button's auto-navigate).
+    ///
+    /// Returns `None` if the attempt is not currently running.
+    pub fn active_handle_for_attempt(&self, attempt_id: &str) -> Option<RunHandle> {
+        self.sessions.lookup_by_attempt(attempt_id)
     }
 
     /// Return the current [`ProgressSnapshot`] for a run.
