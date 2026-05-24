@@ -54,7 +54,10 @@ impl StudioCore {
 
     // Run 生命週期（第 3 部分 §3.3）
     pub fn start_run(&self, e: &ExecutionId, opts: RunOpts)
-        -> Result<RunHandle, UiError>;
+        -> Result<RunStartedHandle, UiError>;
+    // RunStartedHandle = { handle: RunHandle, attempt_id: String }
+    // — 回傳 attempt_id 讓 UI 一次往返就組出
+    //   /exec/:id/attempt/:aid?run=<handle> URL。
     pub fn subscribe(&self, h: &RunHandle) -> Result<RunStream, UiError>;
     pub fn cancel(&self, h: &RunHandle, mode: CancelMode) -> Result<(), UiError>;
     pub fn status(&self, h: &RunHandle) -> Result<RunStatus, UiError>;
