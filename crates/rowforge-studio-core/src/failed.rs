@@ -68,6 +68,7 @@ pub struct FailedRow {
     /// Outcome kind: Error or Crash (TooLarge reserved for future).
     pub kind: RowOutcomeKind,
     /// Handler-supplied domain payload for Error rows; `null` for Crash.
+    #[serde(rename = "raw_record")]
     pub data: serde_json::Value,
     /// Duration in milliseconds. Crash rows carry 0 (no timing data).
     pub dur_ms: u64,
