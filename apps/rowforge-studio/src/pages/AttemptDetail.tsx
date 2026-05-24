@@ -7,6 +7,7 @@ import { AppShell } from "@/layout/AppShell";
 import { useAttemptDetail, useWorkspace } from "@/ipc/queries";
 import { uiErrorMessage } from "@/ipc/types";
 import { ErrorsByCodeList } from "@/components/ErrorsByCodeList";
+import { FailedRowsTable } from "@/components/FailedRowsTable";
 
 export function AttemptDetailPage() {
   const { id, aid } = useParams<{ id: string; aid: string }>();
@@ -63,7 +64,11 @@ export function AttemptDetailPage() {
               </TabsContent>
 
               <TabsContent value="failed">
-                <FailedRowsPlaceholder />
+                <FailedRowsTable
+                  executionId={id!}
+                  attemptId={aid!}
+                  pathsOutcomes={detail.data.paths.outcomes_jsonl}
+                />
               </TabsContent>
 
               <TabsContent value="errors">
@@ -100,10 +105,3 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
   );
 }
 
-function FailedRowsPlaceholder() {
-  return (
-    <div className="rounded-lg border border-dashed border-border p-10 text-center text-muted-foreground">
-      Failed rows table arrives in Task 17.
-    </div>
-  );
-}
