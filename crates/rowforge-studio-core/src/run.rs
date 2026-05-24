@@ -36,10 +36,11 @@ use rowforge_core::execution_store::{FinishAttempt, NewAttempt, NewHandlerInstan
 use rowforge_core::run::{RunProgressEvent, RunRequest};
 
 use crate::aggregator::{ProgressAggregator, ProgressSnapshot};
+use crate::error::BusyScope;
 use crate::events::{AbortReason, Phase, ProgressEvent, RunReport};
 use crate::ids::ExecutionId;
 use crate::run_handle::{CancelMode, RunHandle, RunStatus};
-use crate::session::Session;
+use crate::session::{BusyReason, Session};
 use crate::{StudioCore, UiError};
 
 // ---------------------------------------------------------------------------
@@ -114,9 +115,11 @@ impl StudioCore {
         opts: RunOpts,
     ) -> Result<RunHandle, UiError> {
         // 1. Concurrency check (fast path, no store I/O).
+        let workspace_limit = self.sessions.workspace_limit();
+        let per_exec_limit = self.sessions.per_exec_limit();
         self.sessions
             .can_start(execution_id.as_str())
-            .map_err(|reason| UiError::RunBusy(reason.to_string()))?;
+            .map_err(|reason| busy_reason_to_ui_error(reason, workspace_limit, per_exec_limit))?;
 
         // 2. Resolve execution + create attempt (store writes happen here,
         //    synchronously, so we fail fast if exec doesn't exist or the
@@ -478,6 +481,29 @@ impl StudioCore {
                 };
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+fn busy_reason_to_ui_error(
+    reason: BusyReason,
+    _workspace_limit: u32,
+    per_exec_limit: u32,
+) -> UiError {
+    match reason {
+        BusyReason::PerExec { execution_id } => UiError::RunBusy {
+            execution_id,
+            limit: per_exec_limit,
+            scope: BusyScope::PerExec,
+        },
+        BusyReason::Workspace { limit } => UiError::RunBusy {
+            execution_id: String::new(),
+            limit,
+            scope: BusyScope::PerWorkspace,
+        },
     }
 }
 

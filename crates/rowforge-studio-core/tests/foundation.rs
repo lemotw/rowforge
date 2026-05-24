@@ -1167,7 +1167,7 @@ async fn start_run_enforces_per_exec_limit() {
         .expect_err("second start_run must return RunBusy");
 
     assert!(
-        matches!(err, UiError::RunBusy(_)),
+        matches!(err, UiError::RunBusy { .. }),
         "expected RunBusy, got: {:?}",
         err
     );

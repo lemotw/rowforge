@@ -106,6 +106,14 @@ impl SessionRegistry {
         self.inner.lock().unwrap_or_else(|p| p.into_inner()).len()
     }
 
+    pub fn workspace_limit(&self) -> u32 {
+        self.workspace_limit
+    }
+
+    pub fn per_exec_limit(&self) -> u32 {
+        self.per_exec_limit
+    }
+
     /// Build a [`crate::run::RunRollupTick`] from the current registry state.
     ///
     /// Used by the Tauri event bridge to emit `runs:active` without needing a

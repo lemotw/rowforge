@@ -24,7 +24,7 @@ use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use aggregator::{ProgressAggregator, ProgressSnapshot};
 pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
-pub use error::UiError;
+pub use error::{BusyScope, UiError};
 pub use events::{AbortReason, Phase, ProgressEvent, RunReport, WorkerCrashRecord};
 pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingView, InputFormat};
 pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
