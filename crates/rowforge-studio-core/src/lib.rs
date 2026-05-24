@@ -24,7 +24,7 @@ pub mod workspace;
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use aggregator::{ProgressAggregator, ProgressSnapshot};
-pub use attempt_stream::{AttemptStream, LiveAttemptStream};
+pub use attempt_stream::{AttemptStream, LiveAttemptStream, ReplayAttemptStream};
 pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
 pub use error::UiError;
 pub use events::{AbortReason, Phase, ProgressEvent, RunReport, WorkerCrashRecord};
@@ -189,6 +189,15 @@ impl StudioCore {
 
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
+    }
+
+    /// Return the Arc-wrapped session registry for this workspace.
+    ///
+    /// Used by the Tauri event bridge to spawn `forward_active_runs` with only
+    /// a `SessionRegistry` handle, avoiding the need to hold a `StudioCore`
+    /// reference across async task boundaries.
+    pub fn sessions(&self) -> std::sync::Arc<crate::session::SessionRegistry> {
+        self.sessions.clone()
     }
 
     /// Return detail for a single execution by id.

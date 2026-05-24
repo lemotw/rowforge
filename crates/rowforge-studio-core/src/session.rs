@@ -104,6 +104,24 @@ impl SessionRegistry {
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap_or_else(|p| p.into_inner()).len()
     }
+
+    /// Build a [`crate::run::RunRollupTick`] from the current registry state.
+    ///
+    /// Used by the Tauri event bridge to emit `runs:active` without needing a
+    /// `StudioCore` reference (only `Arc<SessionRegistry>` is available there).
+    pub fn rollup_tick(&self) -> crate::run::RunRollupTick {
+        let snaps = self.snapshots();
+        let active = snaps.len() as u32;
+        let total_processed: u64 = snaps.iter().map(|(_, s)| s.processed).sum();
+        let total_failed: u64 = snaps.iter().map(|(_, s)| s.failed + s.crashed).sum();
+        crate::run::RunRollupTick {
+            active_runs: active,
+            total_processed,
+            total_failed,
+            total_rate: 0.0,
+            slowest_run: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
