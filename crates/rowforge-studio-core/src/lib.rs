@@ -5,10 +5,12 @@
 
 pub mod error;
 pub mod exec_view;
+pub mod settings;
 pub mod workspace;
 
 pub use error::UiError;
 pub use exec_view::{ExecSummary, ListFilter};
+pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
 
 /// Top-level handle returned by `StudioCore::open`.
