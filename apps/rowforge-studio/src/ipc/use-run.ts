@@ -49,9 +49,19 @@ export function useRun(handle: RunHandle | null) {
         if (!cancelled) {
           dispatch({ type: "_bootstrap", snapshot: snap });
         }
-      } catch {
-        if (!cancelled) {
+      } catch (e) {
+        if (cancelled) return;
+        // Only UnknownHandle implies "run finished before we attached —
+        // pivot to Summary tab + refetch attempt_show". Any other error
+        // (workspace_locked, internal, io, ...) means the bootstrap
+        // failed for an unrelated reason; keep the listener attached
+        // and let live events populate state as they arrive.
+        const kind = (e as { kind?: string } | null)?.kind;
+        if (kind === "unknown_handle") {
           dispatch({ type: "_terminal_before_listen" });
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn("[useRun] run_snapshot failed unexpectedly:", e);
         }
       }
     });
