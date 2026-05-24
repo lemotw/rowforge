@@ -189,6 +189,23 @@ pub fn compute_resolution(store: &ExecutionStore, exec_id: &str) -> Result<RowRe
     })
 }
 
+/// Counts-only entry point for cross-attempt resolution. Currently
+/// implemented as a wrapper around `compute_resolution` that discards
+/// the canonical-success map — same cost, less interface surface.
+///
+/// A future revision can specialize the inner loop to skip the map
+/// allocation when only counts are needed. This is gated behind a real
+/// performance need (Studio's ExecRollup is gated by user click and
+/// shown with a spinner; current implementation is acceptable).
+///
+/// Spec: `docs/spec/studio/part-5-api.md` §5.1 lift list.
+pub fn compute_resolution_counts_only(
+    store: &ExecutionStore,
+    exec_id: &str,
+) -> Result<ResolutionCounts> {
+    Ok(compute_resolution(store, exec_id)?.counts)
+}
+
 /// Read `outcomes.jsonl` for one attempt and merge outcomes into `per_seq`.
 ///
 /// - File missing → `Ok(())`: legitimate for an empty Aborted attempt that
@@ -703,6 +720,27 @@ mod tests {
             *r.by_error_code.get("INVALID").unwrap(), 1,
             "INVALID appears in by_error_code"
         );
+    }
+
+    #[test]
+    fn counts_only_matches_full_computation_counts() {
+        let (_h, mut store, exec_id, hi) = fixture(5);
+        // seq 0 resolved; seqs 1-2 fail with different codes; seq 3 crashed; seq 4 never touched.
+        run_attempt(
+            &mut store,
+            &exec_id,
+            &hi,
+            &[0],
+            &[(1, "INVALID"), (2, "INVALID"), (3, "WORKER_CRASH")],
+        );
+        let full = compute_resolution(&store, &exec_id).unwrap();
+        let counts = compute_resolution_counts_only(&store, &exec_id).unwrap();
+        assert_eq!(counts.resolved, full.counts.resolved);
+        assert_eq!(counts.failed_last, full.counts.failed_last);
+        assert_eq!(counts.crashed_last, full.counts.crashed_last);
+        assert_eq!(counts.cancelled_last, full.counts.cancelled_last);
+        assert_eq!(counts.too_large, full.counts.too_large);
+        assert_eq!(counts.never_attempted, full.counts.never_attempted);
     }
 
     /// §13.1 fail-fast on corrupt outcomes.jsonl.
