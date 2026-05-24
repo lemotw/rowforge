@@ -12,6 +12,7 @@ pub mod exec_detail;
 pub mod exec_view;
 pub mod failed;
 pub mod ids;
+pub mod manifest;
 pub mod rollup;
 pub mod row_history;
 pub mod run;
@@ -30,6 +31,7 @@ pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingVi
 pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
 pub use failed::{FailedPageQuery, FailedRow, FailedRowPage, RowOutcomeKind};
 pub use ids::{AttemptId, ExecutionId};
+pub use manifest::{Manifest, ManifestError, ManifestReport, ManifestSource, ManifestWarning, validate_manifest};
 pub use row_history::RowHistory;
 pub use rollup::ExecRollup;
 pub use run::{RunOpts, RunRollupTick, RunStream};
@@ -442,6 +444,14 @@ impl StudioCore {
             rows,
             resolved_at,
         })
+    }
+
+    /// Validate the `manifest.toml` inside `source` per spec part 8 §8.2.
+    ///
+    /// Returns a structured `ManifestReport`. Errors block exec_start /
+    /// run_start; warnings (e.g. PATH miss) are informational.
+    pub fn validate_manifest(&self, source: ManifestSource) -> Result<ManifestReport, UiError> {
+        Ok(crate::manifest::validate_manifest(&source))
     }
 
     /// List all executions in this workspace, newest first.
