@@ -82,8 +82,8 @@ Single small commit that resolves the four minor issues the Plan 2 final review 
 **Files:**
 - Modify: `apps/rowforge-studio/src-tauri/src/state.rs`
 - Modify: `apps/rowforge-studio/src-tauri/src/commands.rs`
-- Modify: `apps/rowforge-studio/src/pages/ExecList.tsx`
 - Modify: `apps/rowforge-studio/src-tauri/tests/ipc_contract.rs`
+- (`ExecList.tsx` no longer changes here — see Step 1.3)
 
 - [ ] **Step 1.1: Fix `state.rs` `!Send` comment**
 
@@ -112,26 +112,16 @@ let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
 
 In `workspace_open` and `exec_list`.
 
-- [ ] **Step 1.3: Consolidate ExecListPage workspace query**
+- [ ] **Step 1.3: (already done in PR #2 fix — skip)**
 
-Open `apps/rowforge-studio/src/pages/ExecList.tsx`. Replace the local `useWorkspaceRoot` hook with `useSettings`:
-
-```tsx
-import { useSettings, useExecList } from "@/ipc/queries";
-// remove the local useWorkspaceRoot definition + the useQuery + ipc imports it needs
-
-export function ExecListPage() {
-  const settings = useSettings();
-  const list = useExecList(true);
-
-  const workspace = settings.data?.workspace_root
-    ? { root: settings.data.workspace_root, schema_version: settings.data.schema_version }
-    : null;
-  // ... rest unchanged
-}
-```
-
-This dedupes the query cache and uses the canonical settings shape.
+The original Plan 3 step asked to dedupe `ExecListPage`'s local
+`useWorkspaceRoot` with the canonical `useSettings`. An external PR #2
+reviewer caught a more important bug: synthesizing `Workspace` from
+`Settings` hardcoded `schema_version: 1`, but core's real schema is
+`2`. That was fixed in commit `b9ff79b` on main by adding a
+`workspace_current` Tauri command + canonical `useWorkspace()` hook,
+and migrating `ExecListPage` to consume it. The dedupe goal is
+satisfied; no further action needed in Plan 3.
 
 - [ ] **Step 1.4: Lock `UiError.message` field name in contract test**
 
