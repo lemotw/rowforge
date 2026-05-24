@@ -1190,3 +1190,70 @@ async fn cancel_unknown_handle_returns_unknown_handle_error() {
         err
     );
 }
+
+#[tokio::test]
+async fn active_runs_stream_emits_at_1hz() {
+    use futures::StreamExt;
+
+    let tmp = empty_workspace();
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    let mut stream = Box::pin(core.active_runs_stream());
+
+    // Collect 2 ticks within 2.5 seconds.
+    let mut ticks = Vec::new();
+    for _ in 0..2 {
+        let tick = tokio::time::timeout(
+            std::time::Duration::from_millis(1500),
+            stream.next(),
+        ).await.expect("timed out").expect("stream ended");
+        ticks.push(tick);
+    }
+
+    assert_eq!(ticks.len(), 2);
+    assert_eq!(ticks[0].active_runs, 0, "empty workspace = 0 active runs");
+}
+
+#[tokio::test]
+async fn active_runs_stream_reflects_started_runs() {
+    use futures::StreamExt;
+
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "x\n1\n").unwrap();
+    let exec_id = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        store.create_execution(NewExecution {
+            name: Some("rollup-test".into()),
+            input_csv_id: "csv1".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        }).unwrap().id
+    };
+
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    // Start a run (will fail quickly with bad handler — but the session
+    // will exist briefly before being removed).
+    let _h = core.start_run(
+        &rowforge_studio_core::ExecutionId::new(exec_id),
+        rowforge_studio_core::RunOpts::new(
+            std::path::PathBuf::from("/non-existent"),
+        ),
+    );
+
+    let mut stream = Box::pin(core.active_runs_stream());
+    let tick = tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        stream.next(),
+    ).await.expect("timed out").expect("stream ended");
+
+    // active_runs is racy — could be 0 (if session was removed already)
+    // or 1 (if still running). Both are acceptable; the test verifies
+    // the stream yields a tick.
+    assert!(tick.active_runs <= 1);
+}

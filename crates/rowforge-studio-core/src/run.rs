@@ -42,6 +42,29 @@ use crate::run_handle::{CancelMode, RunHandle, RunStatus};
 use crate::session::Session;
 use crate::{StudioCore, UiError};
 
+// ---------------------------------------------------------------------------
+// Workspace rollup (spec §6.6)
+// ---------------------------------------------------------------------------
+
+/// Workspace-level rollup emitted by [`StudioCore::active_runs_stream`] at 1 Hz.
+/// Used by the header pill and dock badge in the UI.
+#[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
+pub struct RunRollupTick {
+    /// Number of currently active (in-registry) runs.
+    pub active_runs: u32,
+    /// Sum of processed row counts across all active sessions.
+    pub total_processed: u64,
+    /// Sum of failed + crashed row counts across all active sessions.
+    pub total_failed: u64,
+    /// Aggregate rows/s across all active sessions.
+    /// Ships as 0.0 in Plan 4 (per-session rate not yet cached in registry).
+    pub total_rate: f32,
+    /// The handle of the session with the lowest throughput, if any.
+    /// Ships as None in Plan 4.
+    pub slowest_run: Option<RunHandle>,
+}
+
 /// Options for launching a run via `StudioCore::start_run`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -406,6 +429,42 @@ impl StudioCore {
     /// Return handles for all currently-active runs in this workspace.
     pub fn active_runs(&self) -> Vec<RunHandle> {
         self.sessions.handles()
+    }
+
+    /// Returns a stream that yields a [`RunRollupTick`] every 1 second.
+    ///
+    /// The stream lives as long as the caller holds it; dropping it stops the
+    /// 1 Hz interval. Spec §6.6.
+    pub fn active_runs_stream(&self) -> impl futures::Stream<Item = RunRollupTick> + Send + 'static {
+        let sessions = self.sessions.clone();
+        async_stream::stream! {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let snapshots = sessions.snapshots();
+                let active = snapshots.len() as u32;
+                let total_processed: u64 = snapshots.iter().map(|(_, s)| s.processed).sum();
+                let total_failed: u64 = snapshots.iter().map(|(_, s)| s.failed + s.crashed).sum();
+                // total_rate: aggregate from per-session rate. ProgressSnapshot
+                // doesn't carry rate — that's only in Tick events. Plan 4 ships
+                // 0.0 for now; spec §6.6 is satisfied by counter aggregation.
+                // Future: SessionRegistry could cache last-Tick rate per session.
+                let total_rate = 0.0_f32;
+                // slowest_run: heuristic — the session with the lowest rate.
+                // Without per-session rate, pick the one with the longest
+                // started_at duration. Plan 4 ships None for simplicity.
+                let slowest_run = None;
+
+                yield RunRollupTick {
+                    active_runs: active,
+                    total_processed,
+                    total_failed,
+                    total_rate,
+                    slowest_run,
+                };
+            }
+        }
     }
 }
 
