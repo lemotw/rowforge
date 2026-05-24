@@ -7,13 +7,18 @@ import type {
   ExecRollup,
   ExecSummary,
   ExecutionId,
+  ExportOpts,
+  ExportReport,
   FailedPageQuery,
   FailedRowPage,
+  ManifestReport,
+  ManifestSource,
   RowHistory,
   RunHandle,
   RunStartedHandle,
   RunStatus,
   Settings,
+  StartExecArgs,
   Workspace,
 } from "./types";
 
@@ -41,4 +46,13 @@ export const ipc = {
     invoke<RunStatus>("run_status", args),
   run_active: () =>
     invoke<RunHandle[]>("run_active"),
+
+  exec_start: (args: StartExecArgs) =>
+    invoke<ExecutionId>("exec_start", { args }),
+
+  exec_export: (id: ExecutionId, opts: ExportOpts) =>
+    invoke<ExportReport>("exec_export", { id, opts }),
+
+  manifest_validate: (source: ManifestSource) =>
+    invoke<ManifestReport>("manifest_validate", { source }),
 };

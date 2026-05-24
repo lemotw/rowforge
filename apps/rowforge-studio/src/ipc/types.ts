@@ -39,7 +39,12 @@ export type UiErrorKind =
   | "internal"
   | "run_aborted"
   | "run_busy"
-  | "unknown_handle";
+  | "unknown_handle"
+  | "invalid_input"
+  | "duplicate_exec_name"
+  | "export_incomplete"
+  | "manifest_invalid"
+  | "toolchain_missing";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shape (confirmed by ipc_contract.rs test in src-tauri/tests/):
@@ -254,3 +259,60 @@ export interface RunRollupTick {
   total_rate: number;
   slowest_run: RunHandle | null;
 }
+
+// ===== Plan 5 mirrors =====
+
+export interface StartExecArgs {
+  input_path: string;
+  name: string;
+  csv_id: string | null;
+  pinned_handler_instance: string | null;
+}
+
+export type ExportFormat = "csv" | "jsonl" | "both";
+
+export interface ExportOpts {
+  output_dir: string | null;
+  format: ExportFormat;
+  require_complete: boolean;
+}
+
+export interface ExportWarning {
+  code: string;
+  message: string;
+}
+
+export interface ExportReport {
+  output_dir: string;
+  written_files: string[];
+  success_count: number;
+  failed_count: number;
+  warnings: ExportWarning[];
+}
+
+export type ManifestSource = { type: "path"; path: string };
+
+export interface Manifest {
+  name: string | null;
+  version: string | null;
+  language: string | null;
+  build: string | null;
+  run: string;
+}
+
+export type ManifestError =
+  | { kind: "manifest_missing"; path: string }
+  | { kind: "parse_failed"; message: string }
+  | { kind: "missing_required"; field: string }
+  | { kind: "shell_parse_failed"; field: string; message: string };
+
+export type ManifestWarning =
+  | { kind: "path_lookup_failed"; field: string; token: string };
+
+export interface ManifestReport {
+  manifest: Manifest | null;
+  errors: ManifestError[];
+  warnings: ManifestWarning[];
+}
+
+export type BusyScope = "per_exec" | "per_workspace";
