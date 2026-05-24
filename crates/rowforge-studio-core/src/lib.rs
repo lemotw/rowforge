@@ -11,6 +11,7 @@ pub mod exec_view;
 pub mod failed;
 pub mod ids;
 pub mod rollup;
+pub mod row_history;
 pub mod settings;
 pub mod workspace;
 
@@ -22,6 +23,7 @@ pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingVi
 pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
 pub use failed::{FailedPageQuery, FailedRow, FailedRowPage, RowOutcomeKind};
 pub use ids::{AttemptId, ExecutionId};
+pub use row_history::RowHistory;
 pub use rollup::ExecRollup;
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
@@ -252,6 +254,61 @@ impl StudioCore {
             .map_err(|e| UiError::Io(e.to_string()))
     }
 
+    /// Return the per-attempt history of a single row identified by `seq`.
+    ///
+    /// Walks all attempts for the execution in order; for each attempt reads
+    /// `outcomes.jsonl` to find the outcome for `seq`. Failure outcomes are
+    /// accumulated in `rows`; the first Success short-circuits and sets
+    /// `resolved_at`.
+    pub fn row_history(&self, e: &ExecutionId, seq: u64) -> Result<RowHistory, UiError> {
+        let exec = self
+            .store
+            .get_execution(e.as_str())
+            .map_err(|err| UiError::Internal(err.to_string()))?
+            .ok_or_else(|| UiError::NotFound(format!("execution {} not found", e)))?;
+
+        let attempts = self
+            .store
+            .list_attempts_for_execution(e.as_str())
+            .map_err(|err| UiError::Internal(err.to_string()))?;
+
+        let mut rows = Vec::new();
+        let mut resolved_at: Option<AttemptId> = None;
+
+        for attempt in attempts {
+            let outcomes_path = exec
+                .dir
+                .join("attempts")
+                .join(&attempt.id)
+                .join("outcomes.jsonl");
+            if !outcomes_path.exists() {
+                continue;
+            }
+            let outcome_for_seq =
+                read_outcome_for_seq(&outcomes_path, seq).map_err(UiError::from)?;
+            if let Some(kind_and_code) = outcome_for_seq {
+                match kind_and_code {
+                    OutcomeForSeq::Success => {
+                        if resolved_at.is_none() {
+                            resolved_at = Some(AttemptId::new(attempt.id.clone()));
+                        }
+                        // First success short-circuits per-attempt collection.
+                        break;
+                    }
+                    OutcomeForSeq::Failure(kind, code) => {
+                        rows.push((AttemptId::new(attempt.id.clone()), kind, code));
+                    }
+                }
+            }
+        }
+
+        Ok(RowHistory {
+            seq,
+            rows,
+            resolved_at,
+        })
+    }
+
     /// List all executions in this workspace, newest first.
     ///
     /// Uses a warm-tier mtime probe per spec part-4 §4.3: cache is valid
@@ -273,6 +330,66 @@ impl StudioCore {
         self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
         Ok(summaries)
     }
+}
+
+// ---------------------------------------------------------------------------
+// row_history helpers
+// ---------------------------------------------------------------------------
+
+enum OutcomeForSeq {
+    Success,
+    Failure(crate::failed::RowOutcomeKind, Option<String>),
+}
+
+fn read_outcome_for_seq(
+    outcomes_jsonl: &std::path::Path,
+    seq: u64,
+) -> Result<Option<OutcomeForSeq>, std::io::Error> {
+    use std::io::{BufRead, BufReader};
+
+    use crate::failed::RowOutcomeKind;
+
+    let f = std::fs::File::open(outcomes_jsonl)?;
+    let reader = BufReader::new(f);
+
+    for line_res in reader.lines() {
+        let line = line_res?;
+        let v: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue, // skip malformed lines silently
+        };
+        // Batched: iterate outcomes[] inside the BatchOutcome line.
+        let outcomes = v.get("outcomes").and_then(|o| o.as_array());
+        let Some(outcomes) = outcomes else {
+            continue;
+        };
+        for outcome in outcomes {
+            let s = outcome
+                .get("seq")
+                .and_then(|s| s.as_u64())
+                .unwrap_or(u64::MAX);
+            if s != seq {
+                continue;
+            }
+            let kind = outcome
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+            return Ok(Some(match kind {
+                "success" => OutcomeForSeq::Success,
+                "error" => OutcomeForSeq::Failure(
+                    RowOutcomeKind::Error,
+                    outcome
+                        .get("code")
+                        .and_then(|c| c.as_str())
+                        .map(String::from),
+                ),
+                "crash" => OutcomeForSeq::Failure(RowOutcomeKind::Crash, None),
+                _ => return Ok(None), // unknown type
+            }));
+        }
+    }
+    Ok(None)
 }
 
 /// Read the full meta.json for an attempt — best-effort.

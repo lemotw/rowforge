@@ -46,7 +46,7 @@ fn open_with_nonexistent_workspace_path_creates_it() {
 use rowforge_core::execution_store::{
     FinishAttempt, NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source,
 };
-use rowforge_studio_core::{AttemptId, ExecutionId, FailedPageQuery, ListFilter, RowOutcomeKind};
+use rowforge_studio_core::{AttemptId, ExecutionId, FailedPageQuery, ListFilter, RowHistory, RowOutcomeKind};
 
 #[test]
 fn rollup_returns_zero_counts_for_exec_with_no_attempts() {
@@ -604,6 +604,102 @@ fn failed_page_not_found_when_outcomes_jsonl_absent() {
             10,
             None,
         ))
+        .expect_err("should return NotFound");
+    assert!(matches!(err, UiError::NotFound(_)));
+}
+
+// ---------------------------------------------------------------------------
+// T12: row_history tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn row_history_returns_failures_then_success() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\n").unwrap();
+
+    let exec_id = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store
+            .create_execution(NewExecution {
+                name: Some("history-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap();
+
+        // Attempt 1: error for seq=0.
+        let attempt1_id = create_bare_attempt(&mut store, &exec.id);
+        let attempt1_dir = tmp
+            .path()
+            .join("executions")
+            .join(&exec.id)
+            .join("attempts")
+            .join(&attempt1_id);
+        std::fs::write(
+            attempt1_dir.join("outcomes.jsonl"),
+            "{\"first_seq\":0,\"seqs\":[0],\"outcomes\":[{\"type\":\"error\",\"seq\":0,\"code\":\"X\",\"message\":\"m\",\"dur_ms\":1}]}\n",
+        )
+        .unwrap();
+        store
+            .finish_attempt(
+                &attempt1_id,
+                FinishAttempt {
+                    success_count: 0,
+                    failed_count: 1,
+                    aborted: false,
+                    aborted_reason: None,
+                },
+            )
+            .unwrap();
+
+        // Attempt 2: success for seq=0.
+        let attempt2_id = create_bare_attempt(&mut store, &exec.id);
+        let attempt2_dir = tmp
+            .path()
+            .join("executions")
+            .join(&exec.id)
+            .join("attempts")
+            .join(&attempt2_id);
+        std::fs::write(
+            attempt2_dir.join("outcomes.jsonl"),
+            "{\"first_seq\":0,\"seqs\":[0],\"outcomes\":[{\"type\":\"success\",\"seq\":0,\"dur_ms\":2}]}\n",
+        )
+        .unwrap();
+        store
+            .finish_attempt(
+                &attempt2_id,
+                FinishAttempt {
+                    success_count: 1,
+                    failed_count: 0,
+                    aborted: false,
+                    aborted_reason: None,
+                },
+            )
+            .unwrap();
+
+        exec.id
+    };
+
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let hist = core
+        .row_history(&ExecutionId::new(exec_id), 0)
+        .unwrap();
+    assert_eq!(hist.seq, 0);
+    assert!(hist.resolved_at.is_some(), "should record the success");
+    assert_eq!(hist.rows.len(), 1, "1 failure before the success");
+    assert!(matches!(hist.rows[0].1, RowOutcomeKind::Error));
+}
+
+#[test]
+fn row_history_returns_not_found_for_unknown_exec() {
+    let tmp = empty_workspace();
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let err = core
+        .row_history(&ExecutionId::new("missing"), 0)
         .expect_err("should return NotFound");
     assert!(matches!(err, UiError::NotFound(_)));
 }
