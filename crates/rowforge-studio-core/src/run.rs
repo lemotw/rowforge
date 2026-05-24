@@ -78,6 +78,10 @@ pub struct RunOpts {
     pub retry_failed: bool,
     /// When true, every row is dispatched with `meta.dry_run = true`.
     pub dry_run: bool,
+    /// Cap how many rows are dispatched. `None` = run all rows; `Some(n)` =
+    /// stop after `n` rows. Useful for sampling against a slow handler /
+    /// expensive external API.
+    pub row_limit: Option<u64>,
 }
 
 impl RunOpts {
@@ -87,7 +91,23 @@ impl RunOpts {
             workers: None,
             retry_failed: false,
             dry_run: false,
+            row_limit: None,
         }
+    }
+
+    pub fn with_row_limit(mut self, n: u64) -> Self {
+        self.row_limit = Some(n);
+        self
+    }
+
+    pub fn with_workers(mut self, n: u32) -> Self {
+        self.workers = Some(n);
+        self
+    }
+
+    pub fn with_dry_run(mut self, b: bool) -> Self {
+        self.dry_run = b;
+        self
     }
 }
 
@@ -673,7 +693,10 @@ async fn run_pipeline_in_process(
         workers,
         dry_run,
         dry_run_sample: 0,
-        row_limit: None,
+        // Sample / cap dispatched rows. Studio's RunOpts.row_limit maps
+        // directly to rowforge-core's row_limit (usize). Cast u64→usize is
+        // safe on any reasonable input (rowforge-core itself caps reads).
+        row_limit: opts.row_limit.map(|n| n as usize),
         skip_seqs: std::collections::HashSet::new(),
         field_map: rowforge_core::reader::FieldMap::new(),
         config_overrides: BTreeMap::new(),

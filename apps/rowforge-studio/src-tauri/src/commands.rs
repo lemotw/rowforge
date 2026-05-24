@@ -146,6 +146,9 @@ pub async fn run_start(
     app: tauri::AppHandle,
     execution_id: ExecutionId,
     handler_dir: PathBuf,
+    row_limit: Option<u64>,
+    workers: Option<u32>,
+    dry_run: Option<bool>,
 ) -> Result<RunStartedHandle, UiError> {
     // Scope the MutexGuard so it is dropped before any .await point.
     // studio-core::start_run internally calls tokio::spawn (tick loop +
@@ -157,7 +160,16 @@ pub async fn run_start(
         let core = guard
             .as_ref()
             .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        let opts = RunOpts::new(handler_dir);
+        let mut opts = RunOpts::new(handler_dir);
+        if let Some(n) = row_limit {
+            opts = opts.with_row_limit(n);
+        }
+        if let Some(w) = workers {
+            opts = opts.with_workers(w);
+        }
+        if let Some(d) = dry_run {
+            opts = opts.with_dry_run(d);
+        }
         let started = core.start_run(&execution_id, opts)?;
         let stream = core
             .subscribe(&started.handle)

@@ -39,8 +39,20 @@ export const ipc = {
     invoke<FailedRowPage>("attempt_failed_page", args),
   attempt_row_history: (args: { executionId: ExecutionId; seq: number }) =>
     invoke<RowHistory>("attempt_row_history", args),
-  run_start: (args: { executionId: ExecutionId; handlerDir: string }) =>
-    invoke<RunStartedHandle>("run_start", { executionId: args.executionId, handlerDir: args.handlerDir }),
+  run_start: (args: {
+    executionId: ExecutionId;
+    handlerDir: string;
+    rowLimit?: number | null;
+    workers?: number | null;
+    dryRun?: boolean | null;
+  }) =>
+    invoke<RunStartedHandle>("run_start", {
+      executionId: args.executionId,
+      handlerDir: args.handlerDir,
+      rowLimit: args.rowLimit ?? null,
+      workers: args.workers ?? null,
+      dryRun: args.dryRun ?? null,
+    }),
   run_cancel: (args: { handle: RunHandle; mode: CancelMode }) =>
     invoke<void>("run_cancel", args),
   run_status: (args: { handle: RunHandle }) =>
