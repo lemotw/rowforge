@@ -30,7 +30,20 @@ export function useRun(handle: RunHandle | null) {
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
 
+    // Dev-only diagnostic. Toggle off by setting localStorage.runDebug = "0".
+    const debug = import.meta.env.DEV && localStorage.getItem("runDebug") !== "0";
+    if (debug) console.info(`[useRun] attaching listener for run:${handle}`);
+
+    let eventCount = 0;
     listen<ProgressEvent>(`run:${handle}`, (e) => {
+      eventCount += 1;
+      if (debug) {
+        console.info(
+          `[useRun] event #${eventCount}`,
+          e.payload.type,
+          e.payload,
+        );
+      }
       dispatch(e.payload);
     }).then(async (f) => {
       if (cancelled) {
@@ -45,10 +58,12 @@ export function useRun(handle: RunHandle | null) {
       // errors with UnknownHandle and we just keep going.
       try {
         const snap = await ipc.run_snapshot({ handle });
+        if (debug) console.info(`[useRun] bootstrap snapshot`, snap);
         if (!cancelled) {
           dispatch({ type: "_bootstrap", snapshot: snap });
         }
-      } catch {
+      } catch (e) {
+        if (debug) console.info(`[useRun] snapshot failed (run gone?)`, e);
         // run_snapshot rejected (typically UnknownHandle — run finished
         // before listener attached, session removed from registry).
         // Signal the page so it can fall back to attempt_show static data.
