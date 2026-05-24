@@ -35,13 +35,17 @@ export function AttemptDetailPage() {
   // there's still a live session for this attempt — if so, offer to attach.
   // Skip the query if `?run=` is already present (we're already live) or
   // if attempt id is missing.
+  // Skip when ?run= is already in the URL (we're attaching to a known
+  // handle), or when attempt_show says this attempt is terminal (no
+  // session can possibly be active — polling would just hit None forever).
+  const skipActiveHandlePoll = !!runHandle || detail.data?.is_terminal === true;
   const activeHandle = useQuery({
     queryKey: ["attempt_active_handle", aid],
     queryFn: () => ipc.attempt_active_handle({ attemptId: aid! }),
-    enabled: !!aid && !runHandle,
-    // Re-poll every 2s while we don't have a handle, so users notice when a
+    enabled: !!aid && !skipActiveHandlePoll,
+    // Re-poll every 2s while no handle resolved, so users notice when a
     // run starts (e.g. from CLI in another terminal) without manual refresh.
-    refetchInterval: !runHandle ? 2000 : false,
+    refetchInterval: skipActiveHandlePoll ? false : 2000,
   });
 
   // Compute whether we should treat this view as terminal. Three signals:
@@ -71,13 +75,18 @@ export function AttemptDetailPage() {
     }
   }, [liveTerminal, liveState.phantomBootstrap, detail.data?.is_terminal]);
 
-  // Tab selection is controlled so we can auto-switch from Live to Summary
-  // when the run terminates while the page is open. defaultValue alone
-  // wouldn't re-evaluate after the initial render.
+  // Tab selection is controlled so we can auto-switch in two directions:
+  // 1. terminal observed mid-page → switch from Live to Summary
+  // 2. runHandle appears (Watch-live click added ?run=<h> to the URL while
+  //    we were on Summary) → switch to Live
+  // defaultValue alone wouldn't re-evaluate after initial mount.
   const [tab, setTab] = useState<string>(runHandle ? "live" : "summary");
   useEffect(() => {
     if (isTerminal && tab === "live") setTab("summary");
   }, [isTerminal]);
+  useEffect(() => {
+    if (runHandle && !isTerminal && tab !== "live") setTab("live");
+  }, [runHandle, isTerminal]);
 
   if (ws.data === null && !ws.isLoading) return <Navigate to="/" replace />;
   const workspace = ws.data ?? null;
