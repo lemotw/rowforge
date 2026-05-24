@@ -72,7 +72,11 @@ impl StudioCore {
             .store
             .list_executions()
             .map_err(|e| UiError::Internal(e.to_string()))?;
-        let summaries: Vec<ExecSummary> = executions.iter().map(ExecSummary::from).collect();
+        let summaries: Vec<ExecSummary> = executions
+            .iter()
+            .map(|e| ExecSummary::from_execution(e, &self.store))
+            .collect::<Result<_, _>>()
+            .map_err(|e: rowforge_core::error::CoreError| UiError::Internal(e.to_string()))?;
         self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
         Ok(summaries)
     }
