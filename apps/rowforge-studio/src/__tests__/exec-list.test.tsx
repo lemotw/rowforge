@@ -21,14 +21,8 @@ describe("ExecList", () => {
 
   it("renders empty state when list is []", async () => {
     (invoke as any).mockImplementation((cmd: string) => {
-      if (cmd === "workspace_settings_load")
-        return Promise.resolve({
-          workspace_root: "/tmp/ws",
-          schema_version: 1,
-          default_workers: null,
-          max_concurrent_runs: null,
-          telemetry_opt_in: false,
-        });
+      if (cmd === "workspace_current")
+        return Promise.resolve({ root: "/tmp/ws", schema_version: 2 });
       if (cmd === "exec_list") return Promise.resolve([]);
       throw new Error("unexpected invoke: " + cmd);
     });
@@ -38,14 +32,8 @@ describe("ExecList", () => {
 
   it("renders rows from invoke result", async () => {
     (invoke as any).mockImplementation((cmd: string) => {
-      if (cmd === "workspace_settings_load")
-        return Promise.resolve({
-          workspace_root: "/tmp/ws",
-          schema_version: 1,
-          default_workers: null,
-          max_concurrent_runs: null,
-          telemetry_opt_in: false,
-        });
+      if (cmd === "workspace_current")
+        return Promise.resolve({ root: "/tmp/ws", schema_version: 2 });
       if (cmd === "exec_list")
         return Promise.resolve([
           {
