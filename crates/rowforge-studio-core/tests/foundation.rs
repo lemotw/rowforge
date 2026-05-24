@@ -5,7 +5,7 @@
 //! surface. No CLI binary is invoked.
 
 use rowforge_core::execution_store::ExecutionStore;
-use rowforge_studio_core::{OpenOpts, StudioCore, UiError};
+use rowforge_studio_core::{ExecRollup, OpenOpts, StudioCore, UiError};
 use std::path::PathBuf;
 
 /// Helper: produces a temp workspace dir with an initialized SQLite
@@ -47,6 +47,44 @@ use rowforge_core::execution_store::{
     FinishAttempt, NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source,
 };
 use rowforge_studio_core::{AttemptId, ExecutionId, ListFilter};
+
+#[test]
+fn rollup_returns_zero_counts_for_exec_with_no_attempts() {
+    let tmp = empty_workspace();
+    let csv = tmp.path().join("input.csv");
+    std::fs::write(&csv, "billid\nb01\nb02\n").unwrap();
+    let exec_id = {
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        store
+            .create_execution(NewExecution {
+                name: Some("rollup-test".into()),
+                input_csv_id: "csv1".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: None,
+            })
+            .unwrap()
+            .id
+    };
+
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let r = core.rollup(&ExecutionId::new(exec_id)).unwrap();
+    assert_eq!(r.resolved, 0);
+    // never_attempted should equal input_row_count (2) since no attempt has dispatched.
+    assert_eq!(r.never_attempted, 2);
+    assert!(r.by_error_code.is_empty());
+}
+
+#[test]
+fn rollup_returns_not_found_for_unknown_exec() {
+    let tmp = empty_workspace();
+    let core =
+        StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let err = core
+        .rollup(&ExecutionId::new("missing"))
+        .expect_err("should return NotFound");
+    matches!(err, UiError::NotFound(_));
+}
 
 #[test]
 fn list_empty_workspace_returns_empty_vec() {

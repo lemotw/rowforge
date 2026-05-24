@@ -9,6 +9,7 @@ pub mod error;
 pub mod exec_detail;
 pub mod exec_view;
 pub mod ids;
+pub mod rollup;
 pub mod settings;
 pub mod workspace;
 
@@ -19,6 +20,7 @@ pub use error::UiError;
 pub use exec_detail::{AttemptSummary, ExecDetail, FieldMapping, HandlerBindingView, InputFormat};
 pub use exec_view::{AttemptCountsStub, ExecSummary, ListFilter};
 pub use ids::{AttemptId, ExecutionId};
+pub use rollup::ExecRollup;
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
 
@@ -179,6 +181,38 @@ impl StudioCore {
                 handler_stderr_log: attempt_dir.join("handler.stderr.log"),
             },
             is_terminal,
+        })
+    }
+
+    /// Return a cold rollup of row-resolution counts for an execution.
+    ///
+    /// Uses the full `compute_resolution` path (not counts_only) because
+    /// `by_error_code` is a sibling field on `RowResolution`, not inside
+    /// `ResolutionCounts`. See task T10 context.
+    pub fn rollup(&self, id: &ExecutionId) -> Result<ExecRollup, UiError> {
+        // Validate existence first to return a clean NotFound.
+        let _exec = self
+            .store
+            .get_execution(id.as_str())
+            .map_err(|e| UiError::Internal(e.to_string()))?
+            .ok_or_else(|| UiError::NotFound(format!("execution {} not found", id)))?;
+
+        // Call the full compute_resolution because we need by_error_code (which
+        // is a sibling field, not inside ResolutionCounts).
+        let res = rowforge_core::row_resolution::compute_resolution(
+            &self.store,
+            id.as_str(),
+        )
+        .map_err(|e| UiError::Internal(e.to_string()))?;
+
+        Ok(ExecRollup {
+            resolved: res.counts.resolved,
+            failed_last: res.counts.failed_last,
+            crashed_last: res.counts.crashed_last,
+            cancelled_last: res.counts.cancelled_last,
+            too_large: res.counts.too_large,
+            never_attempted: res.counts.never_attempted,
+            by_error_code: res.by_error_code,
         })
     }
 
