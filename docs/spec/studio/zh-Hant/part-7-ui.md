@@ -89,8 +89,6 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 - **Sidebar「Authoring」群組** — *本部分原寫為* disabled「Coming soon」。
   **第 8 部分取代此立場**:v1 Authoring 群組為可用,含 Handlers 路由。
   下方剩餘的錨點項目(Manifest editor、Pack)仍適用。
-- **Attempt Detail「Replay as live」按鈕** — v1 disabled（第 6 部分
-  §6.4）。
 - **`ListFilter` filter bar** — exec list 上方保留區域；v1 隱藏
   （第 5 部分 §5.2 `ListFilter`）。
 - **`HandlerSource` picker** — v1 僅 `Dir`，picker 為單欄位。v2 升級
@@ -595,11 +593,8 @@ Active runs pill hover 展開見 W-2。
    等使用者撞到上限再說。
 2. **v2 索引之前的失敗列 filter UI。** 不依靠索引而對 `error_code`
    篩選需要全掃。提供「可能很慢」動作,還是延到 v2（第 4 部分 §4.4)？
-3. **Replay panel 取景（v2）。** 重用 Live tab 加 `Replay { speed }`
-   ribbon,還是另開 sub-tab？牽涉第 6 部分 §6.4 保真度缺口（無即時
-   `HandlerStderr` 等）。
-4. **macOS App Nap UX 提示。** 規格不要求 opt-out（第 3 部分 §3.8）。
+3. **macOS App Nap UX 提示。** 規格不要求 opt-out（第 3 部分 §3.8）。
    是否在首次長時間 run 時被動提示「保持視窗在前景以獲得最順暢更新」,
    或留給 docs？
-5. **高摩擦 force-kill 的確認 token。** Exec 名稱前綴還是固定字串
+4. **高摩擦 force-kill 的確認 token。** Exec 名稱前綴還是固定字串
    「FORCE KILL」？前者具情境,後者通用但需打更多字。

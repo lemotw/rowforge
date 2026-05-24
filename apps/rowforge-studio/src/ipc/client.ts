@@ -40,10 +40,4 @@ export const ipc = {
     invoke<RunStatus>("run_status", args),
   run_active: () =>
     invoke<RunHandle[]>("run_active"),
-  attempt_replay_start: (args: {
-    executionId: ExecutionId;
-    attemptId: AttemptId;
-    speed: number;
-  }) =>
-    invoke<RunHandle>("attempt_replay_start", args),
 };

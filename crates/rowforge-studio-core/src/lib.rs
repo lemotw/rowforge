@@ -4,7 +4,6 @@
 //! `docs/spec/studio/part-5-api.md` for the public surface.
 
 pub mod aggregator;
-pub mod attempt_stream;
 pub mod attempt_detail;
 pub mod cache;
 pub mod error;
@@ -24,7 +23,6 @@ pub mod workspace;
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use aggregator::{ProgressAggregator, ProgressSnapshot};
-pub use attempt_stream::{AttemptStream, LiveAttemptStream, ReplayAttemptStream};
 pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
 pub use error::UiError;
 pub use events::{AbortReason, Phase, ProgressEvent, RunReport, WorkerCrashRecord};

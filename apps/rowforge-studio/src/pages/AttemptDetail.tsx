@@ -13,7 +13,6 @@ import { EventTail } from "@/components/EventTail";
 import { PhaseChipBar } from "@/components/PhaseChipBar";
 import { LifecycleBanners } from "@/components/LifecycleBanner";
 import { CancelDialog } from "@/components/CancelDialog";
-import { ReplayToggle } from "@/components/ReplayToggle";
 import { useRun } from "@/ipc/use-run";
 
 export function AttemptDetailPage() {
@@ -60,13 +59,6 @@ export function AttemptDetailPage() {
             )}
 
             {runHandle && <LifecycleBanners banners={liveState.banners} />}
-
-            {/* Replay toggle — only when terminal and not currently replaying */}
-            {detail.data.is_terminal && !runHandle && (
-              <div className="mb-4">
-                <ReplayToggle executionId={id!} attemptId={aid!} />
-              </div>
-            )}
 
             {/* Stale banner — only when no runHandle AND attempt is non-terminal */}
             {!runHandle && !detail.data.is_terminal && (

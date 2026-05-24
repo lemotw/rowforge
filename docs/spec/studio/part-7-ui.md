@@ -100,8 +100,6 @@ different lib is not a breaking spec change.
   in this part. **Part 8 supersedes this**: in v1 the Authoring group
   is active and contains a Handlers route. The remaining anchored
   items below (Manifest editor, Pack) still apply.
-- **Attempt Detail "Replay as live" button** — disabled in v1
-  (Part 6 §6.4).
 - **`ListFilter` filter bar** — reserved area above the exec list;
   hidden in v1 (Part 5 §5.2 `ListFilter`).
 - **`HandlerSource` picker** — `Dir` only in v1; the picker is a single
@@ -628,12 +626,9 @@ These wireframes are not normative. They are sketches. The
 2. **Failed-row filter UI before v2 index.** Filtering by `error_code`
    without the index requires a full scan. Offer it as a "may be slow"
    action, or hide until v2 (Part 4 §4.4)?
-3. **Replay panel framing (v2).** Reuse Live tab with a `Replay { speed }`
-   ribbon, or split into its own sub-tab? Tied to Part 6 §6.4 fidelity
-   gaps (no live `HandlerStderr`, etc.).
-4. **macOS App Nap UX hint.** Spec does not require opt-out (Part 3
+3. **macOS App Nap UX hint.** Spec does not require opt-out (Part 3
    §3.8). Should the UI show a passive hint ("Keep window foregrounded
    for smoothest updates") on first long run, or leave it to docs?
-5. **High-friction force-kill confirmation token.** Exec-name prefix or
+4. **High-friction force-kill confirmation token.** Exec-name prefix or
    the literal string "FORCE KILL"? First is contextual, second is
    universal but more typing.
