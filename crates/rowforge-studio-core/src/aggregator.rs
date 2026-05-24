@@ -22,7 +22,7 @@ const OUTCOME_TOKENS_PER_SEC: f32 = 20.0;
 const ERROR_BUDGET_RATIO: f32 = 0.9;
 const BROADCAST_CAPACITY: usize = 256;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 #[non_exhaustive]
 pub struct ProgressSnapshot {
     pub processed: u64,

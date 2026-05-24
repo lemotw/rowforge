@@ -314,3 +314,20 @@ export interface ManifestReport {
 }
 
 export type BusyScope = "per_exec" | "per_workspace";
+
+/**
+ * Counter snapshot mirrored from rowforge-studio-core::aggregator::ProgressSnapshot.
+ * Used by useRun to bootstrap state on mount — Tauri events are
+ * fire-and-forget, so a listener that attaches after the run started
+ * misses earlier events. Calling `run_snapshot` fills them back in.
+ */
+export interface ProgressSnapshot {
+  processed: number;
+  total: number | null;
+  success: number;
+  failed: number;
+  crashed: number;
+  in_flight: number;
+  queue_depth: number;
+  phase: Phase | null;
+}

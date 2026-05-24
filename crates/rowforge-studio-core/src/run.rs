@@ -466,6 +466,23 @@ impl StudioCore {
         self.sessions.handles()
     }
 
+    /// Return the current [`ProgressSnapshot`] for a run.
+    ///
+    /// Used by the UI to bootstrap state when subscribing to a run that's
+    /// already in flight — Tauri events are fire-and-forget, so a fresh
+    /// `listen` only sees events from now on. Calling `snapshot` after
+    /// `listen` is set up fills in the counters that fired before the
+    /// listener attached.
+    ///
+    /// Returns `UiError::UnknownHandle` if the handle is not in the registry.
+    pub fn snapshot(&self, h: &RunHandle) -> Result<crate::aggregator::ProgressSnapshot, UiError> {
+        let session = self
+            .sessions
+            .get(h)
+            .ok_or_else(|| UiError::UnknownHandle(h.to_string()))?;
+        Ok(session.aggregator.snapshot())
+    }
+
     /// Returns a stream that yields a [`RunRollupTick`] every 1 second.
     ///
     /// The stream lives as long as the caller holds it; dropping it stops the
