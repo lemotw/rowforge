@@ -34,7 +34,7 @@ fn exec_summary_json_keys() {
         "last_attempt_state":null,"last_attempt_counts":null
     }"#;
     let parsed: ExecSummary = serde_json::from_str(json).expect("deserialize");
-    assert_eq!(parsed.id, "e1");
+    assert_eq!(parsed.id.as_str(), "e1");
     assert_eq!(parsed.input_rows, Some(42));
 }
 

@@ -5,11 +5,13 @@
 
 pub mod error;
 pub mod exec_view;
+pub mod ids;
 pub mod settings;
 pub mod workspace;
 
 pub use error::UiError;
 pub use exec_view::{ExecSummary, ListFilter};
+pub use ids::{AttemptId, ExecutionId};
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
 

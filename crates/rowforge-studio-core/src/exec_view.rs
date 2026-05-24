@@ -11,6 +11,8 @@ use chrono::{DateTime, Utc};
 use rowforge_core::execution_store::Execution;
 use serde::{Deserialize, Serialize};
 
+use crate::ids::ExecutionId;
+
 /// Filter passed to `list`. Reserved for future use; Plan 1 has no
 /// filter knobs.
 #[derive(Debug, Clone, Default)]
@@ -21,7 +23,7 @@ pub struct ListFilter;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ExecSummary {
-    pub id: String,
+    pub id: ExecutionId,
     pub name: String,
     pub created_at: DateTime<Utc>,
     pub input_rows: Option<u64>,
@@ -46,7 +48,7 @@ pub struct AttemptCountsStub {
 impl From<&Execution> for ExecSummary {
     fn from(e: &Execution) -> Self {
         ExecSummary {
-            id: e.id.clone(),
+            id: ExecutionId::new(e.id.clone()),
             name: e.name.clone().unwrap_or_default(),
             created_at: e.created_at,
             input_rows: Some(e.input_row_count),
