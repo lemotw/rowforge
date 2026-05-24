@@ -162,6 +162,7 @@ async fn run_cancel_during_recv_test(
             jsonl_clone,
             Duration::from_secs(2),
             Some(cancel_clone),
+            None,
         )
         .await
     });

@@ -625,7 +625,7 @@ async fn run_pipeline_in_process(
     // tracks correctly during the final wind-down.
     let agg_cb = aggregator.clone();
     let workers_for_cb = workers;
-    let on_progress: rowforge_core::run::ProgressCallback = Box::new(move |ev| {
+    let on_progress: rowforge_core::run::ProgressCallback = Arc::new(move |ev| {
         let update_in_flight = |agg: &Arc<ProgressAggregator>, total: u64, processed: u64| {
             let remaining = total.saturating_sub(processed);
             let in_flight = (workers_for_cb as u64).min(remaining) as u32;

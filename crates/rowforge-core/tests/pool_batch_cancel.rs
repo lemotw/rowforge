@@ -115,6 +115,7 @@ async fn cancel_before_dispatch_aborts_run_leaving_unsent_rows_absent() {
         fsync_outcomes: false,
         stall_timeout: None,
         stall_poll_interval: None,
+        on_row_done: None,
     };
 
     // Pre-fire cancel before the run starts.
@@ -189,6 +190,7 @@ async fn cancel_mid_run_aborts_run_in_flight_batch_completes() {
         fsync_outcomes: false,
         stall_timeout: None,
         stall_poll_interval: None,
+        on_row_done: None,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());

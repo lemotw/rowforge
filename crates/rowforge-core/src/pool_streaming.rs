@@ -81,6 +81,11 @@ pub struct StreamingPoolConfig {
     /// Override stall poll interval (default: `STALL_POLL_INTERVAL_SECS`).
     /// `None` uses the default. Used by tests to get sub-second polling.
     pub stall_poll_interval: Option<Duration>,
+    /// Optional per-row progress callback fired after each batch's outcomes
+    /// are appended to `outcomes.jsonl`. Cloned (Arc) into each worker.
+    /// Receives `(seq, success)`. Used by rowforge-studio's progress tracker;
+    /// the CLI leaves this `None`.
+    pub on_row_done: Option<Arc<dyn Fn(u64, bool) + Send + Sync>>,
 }
 
 /// Report returned by [`run_pool_streaming`].
@@ -204,6 +209,7 @@ pub async fn run_pool_streaming(
                 let grace = cfg.shutdown_grace;
                 let cancel_clone = cancel.clone();
                 let mode_clone = mode.clone();
+                let on_row_done_clone = cfg.on_row_done.clone();
 
                 let h = tokio::spawn(async move {
                     run_worker_loop(
@@ -214,6 +220,7 @@ pub async fn run_pool_streaming(
                         jsonl_clone,
                         grace,
                         Some(cancel_clone),
+                        on_row_done_clone,
                     )
                     .await
                 });
@@ -572,6 +579,7 @@ mod tests {
             fsync_outcomes: false,
             stall_timeout: None,
             stall_poll_interval: None,
+        on_row_done: None,
         }
     }
 

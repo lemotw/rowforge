@@ -120,6 +120,7 @@ async fn run_crash_test(idempotent: bool) -> Vec<BatchOutcome> {
         Arc::clone(&jsonl),
         Duration::from_secs(2),
         None::<CancellationToken>,
+        None,
     )
     .await
     .expect("run_worker_loop returned Err");
