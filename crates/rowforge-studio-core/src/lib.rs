@@ -38,6 +38,86 @@ pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
 pub use workspace::{OpenOpts, Workspace};
 
+// ---------------------------------------------------------------------------
+// Orphan recovery (spec §3.7)
+// ---------------------------------------------------------------------------
+
+/// Threshold beyond which a non-terminal attempt is considered orphaned.
+const ORPHAN_MTIME_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// Scan all attempts whose state is `running`; mark those whose
+/// `outcomes.jsonl` mtime (or `started_at` when the file is absent)
+/// is more than `ORPHAN_MTIME_THRESHOLD` ago as `aborted`.
+///
+/// Returns the count of attempts marked. Never fails open — callers
+/// should warn-and-continue if this returns an error.
+fn scan_for_orphans(
+    store: &mut rowforge_core::execution_store::ExecutionStore,
+    _workspace_root: &std::path::Path,
+) -> Result<u32, rowforge_core::error::CoreError> {
+    use rowforge_core::execution_store::{AttemptState, FinishAttempt};
+    use std::time::SystemTime;
+
+    let executions = store.list_executions()?;
+    let mut marked = 0u32;
+    let now = SystemTime::now();
+
+    for exec in executions {
+        let attempts = store.list_attempts_for_execution(&exec.id)?;
+        for attempt in attempts {
+            // Only non-terminal (running) attempts need checking.
+            if attempt.state != AttemptState::Running {
+                continue;
+            }
+
+            // Derive staleness from outcomes.jsonl mtime, falling back to
+            // started_at when the file has not been written yet.
+            let outcomes_path = exec
+                .dir
+                .join("attempts")
+                .join(&attempt.id)
+                .join("outcomes.jsonl");
+
+            let stale = match outcomes_path.metadata().and_then(|m| m.modified()) {
+                Ok(mtime) => now
+                    .duration_since(mtime)
+                    .map(|d| d > ORPHAN_MTIME_THRESHOLD)
+                    .unwrap_or(false),
+                Err(_) => {
+                    // File absent — use started_at as the fallback clock.
+                    let started_sys = std::time::UNIX_EPOCH
+                        + std::time::Duration::from_secs(
+                            attempt.started_at.timestamp() as u64,
+                        );
+                    now.duration_since(started_sys)
+                        .map(|d| d > ORPHAN_MTIME_THRESHOLD)
+                        .unwrap_or(false)
+                }
+            };
+
+            if stale {
+                store.finish_attempt(
+                    &attempt.id,
+                    FinishAttempt {
+                        success_count: 0,
+                        failed_count: 0,
+                        aborted: true,
+                        aborted_reason: Some("orphaned_on_restart".into()),
+                    },
+                )?;
+                marked += 1;
+                tracing::warn!(
+                    attempt_id = %attempt.id,
+                    execution_id = %exec.id,
+                    "marked orphan attempt as aborted (mtime > 5 min)"
+                );
+            }
+        }
+    }
+
+    Ok(marked)
+}
+
 /// Top-level handle returned by `StudioCore::open`.
 ///
 /// Plan 1 ships only `open` and `list`. Later plans add `show`, `attempt`,
@@ -66,10 +146,20 @@ impl StudioCore {
         let store = rowforge_core::execution_store::ExecutionStore::open(&root)
             .map_err(|e| UiError::WorkspaceLocked(e.to_string()))?;
         let workspace = Workspace {
-            root,
+            root: root.clone(),
             schema_version: store.schema_version(),
         };
         let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+
+        // Orphan recovery: mark stale running attempts as aborted.
+        // Never fails open — log and continue on error.
+        {
+            let mut store_guard = store.lock().unwrap_or_else(|p| p.into_inner());
+            if let Err(e) = scan_for_orphans(&mut store_guard, &root) {
+                tracing::warn!("orphan scan failed: {e}");
+            }
+        }
+
         Ok(Self {
             workspace,
             store,
