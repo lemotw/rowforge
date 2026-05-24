@@ -10,12 +10,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("@/ipc/client", () => ({
   ipc: {
     exec_start: vi.fn().mockResolvedValue("e_01TEST"),
-    manifest_validate: vi.fn().mockResolvedValue({
-      manifest: { name: "h", version: "1.0", language: "go", entry_cmd: ["./bin/handler"], entry_build: null },
-      errors: [],
-      warnings: [],
-    }),
-    run_start: vi.fn(),
     workspace_current: vi.fn().mockResolvedValue(null),
   },
 }));
@@ -36,15 +30,19 @@ function renderWizard() {
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("NewExecutionWizard", () => {
-  it("step 1 → Next is disabled without name and input", () => {
+  it("Create button is disabled without name and input", () => {
     renderWizard();
-    const next = screen.getByRole("button", { name: /next/i });
-    expect((next as HTMLButtonElement).disabled).toBe(true);
+    const create = screen.getByRole("button", { name: /create execution/i });
+    expect((create as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("renders step 1 fields", () => {
+  it("renders name + input file fields (no handler picker)", () => {
     renderWizard();
     expect(screen.getByLabelText(/name/i)).toBeTruthy();
-    expect(screen.getByText(/input file/i)).toBeTruthy();
+    // "Input file" label (not the inline help text mentioning it)
+    expect(screen.getAllByText(/input file/i).length).toBeGreaterThan(0);
+    // Wizard no longer collects handler dir — handler is per-Run on ExecDetail.
+    expect(screen.queryByText(/handler directory/i)).toBeNull();
+    expect(screen.queryByText(/start a run immediately/i)).toBeNull();
   });
 });
