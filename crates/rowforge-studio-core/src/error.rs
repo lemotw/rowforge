@@ -114,6 +114,10 @@ pub enum UiError {
     /// Attempted to build a handler whose manifest has no entry.build.
     #[error("handler '{name}' has no entry.build in its manifest")]
     NoBuildCommand { name: String },
+
+    /// Execution has an active run; must cancel the run before deleting.
+    #[error("execution '{exec_id}' has an active run; cancel it first")]
+    ExecutionInUse { exec_id: String },
 }
 
 impl From<std::io::Error> for UiError {

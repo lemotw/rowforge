@@ -655,6 +655,25 @@ impl ExecutionStore {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows.into_iter().map(Ok).collect()
     }
+
+    /// Hard-delete an execution and all its child rows in a single transaction.
+    ///
+    /// The schema has no `ON DELETE CASCADE` on the `attempts.execution_id` FK
+    /// (MIGRATION_V2), so we delete children manually before the parent.
+    ///
+    /// Cascade order: `attempts` → `executions`.
+    ///
+    /// Returns `Ok(true)` when the execution was deleted, `Ok(false)` when it
+    /// did not exist (caller decides whether that is an error).
+    pub fn delete_execution(&mut self, exec_id: &str) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        // 1. Delete child rows first (no ON DELETE CASCADE configured).
+        tx.execute("DELETE FROM attempts WHERE execution_id = ?1", params![exec_id])?;
+        // 2. Delete the execution itself; rows_affected == 0 means not found.
+        let rows = tx.execute("DELETE FROM executions WHERE id = ?1", params![exec_id])?;
+        tx.commit()?;
+        Ok(rows > 0)
+    }
 }
 
 const MIGRATION_V1: &str = r#"

@@ -2484,3 +2484,142 @@ fn studio_core_capture_raw_stdout_reflects_set_value() {
         "capture_raw_stdout should be false after reset"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 10 T1 — execution_delete
+// ---------------------------------------------------------------------------
+
+/// Seed a single execution (with a CSV file) into `tmp`'s workspace and
+/// return the exec id string. Mirrors `create_execution_with_csv` but with a
+/// unique name so multiple calls within one test don't collide.
+fn seed_exec(tmp: &tempfile::TempDir, name: &str) -> String {
+    use rowforge_core::execution_store::NewExecution;
+    let csv = tmp.path().join(format!("{name}.csv"));
+    std::fs::write(&csv, "id\nr1\nr2\n").unwrap();
+    let mut store = rowforge_core::execution_store::ExecutionStore::open(tmp.path()).unwrap();
+    store
+        .create_execution(NewExecution {
+            name: Some(name.into()),
+            input_csv_id: "csv1".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        })
+        .unwrap()
+        .id
+}
+
+/// Happy-path: delete removes the sqlite row, child attempts, and the
+/// on-disk execution directory.
+#[test]
+fn execution_delete_removes_row_attempts_and_dir() {
+    let tmp = empty_workspace();
+    let exec_id = seed_exec(&tmp, "exec-delete-happy");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // The exec dir is created by ExecutionStore::create_execution.
+    let exec_dir = tmp.path().join("executions").join(&exec_id);
+    assert!(exec_dir.exists(), "exec dir must exist before delete");
+
+    core.execution_delete(&exec_id).expect("delete should succeed");
+
+    // Sqlite row should be gone — show() returns NotFound.
+    let id = rowforge_studio_core::ExecutionId::new(exec_id.clone());
+    assert!(
+        matches!(core.show(&id), Err(rowforge_studio_core::UiError::NotFound(_))),
+        "expected NotFound after delete"
+    );
+    // On-disk dir should be gone.
+    assert!(!exec_dir.exists(), "exec dir should have been removed");
+}
+
+/// Active-run gate: execution_delete must refuse when a session is registered
+/// for that exec_id, returning UiError::ExecutionInUse.
+#[test]
+fn execution_delete_refuses_when_active_run() {
+    let tmp = empty_workspace();
+    let exec_id = seed_exec(&tmp, "exec-delete-active");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Inject a fake session via the test helper on SessionRegistry.
+    // Session is #[non_exhaustive] so we cannot construct it cross-crate.
+    core.sessions().register_fake_session_for_test(&exec_id);
+
+    let err = core.execution_delete(&exec_id).unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::ExecutionInUse { .. }),
+        "expected ExecutionInUse, got: {:?}", err
+    );
+}
+
+/// Idempotent NotFound: deleting an execution that doesn't exist returns
+/// UiError::NotFound (not a panic or internal error).
+#[test]
+fn execution_delete_idempotent_returns_not_found() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let err = core.execution_delete("e_nonexistent").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::NotFound(_)),
+        "expected NotFound, got: {:?}", err
+    );
+}
+
+/// Traversal rejection: IDs containing `..` or `/` must be rejected with
+/// UiError::Io before any sqlite or fs access.
+#[test]
+fn execution_delete_rejects_traversal_id() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    for bad_id in &["../etc", "../../etc/passwd", "/etc/passwd", ""] {
+        let err = core.execution_delete(bad_id).unwrap_err();
+        assert!(
+            matches!(err, rowforge_studio_core::UiError::Io(_)),
+            "expected UiError::Io for id {:?}, got: {:?}", bad_id, err
+        );
+    }
+}
+
+/// Dir-already-missing: if the on-disk dir is gone before deletion (e.g.
+/// externally rm'd), execution_delete should still succeed — sqlite is
+/// authoritative.
+#[test]
+fn execution_delete_succeeds_when_dir_already_missing() {
+    let tmp = empty_workspace();
+    let exec_id = seed_exec(&tmp, "exec-delete-dir-missing");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Externally remove the directory before calling delete.
+    let exec_dir = tmp.path().join("executions").join(&exec_id);
+    std::fs::remove_dir_all(&exec_dir).unwrap();
+    assert!(!exec_dir.exists());
+
+    // Delete should succeed (sqlite cascade works; missing dir is tolerated).
+    core.execution_delete(&exec_id).expect("delete should succeed even if dir missing");
+
+    // Sqlite row must be gone.
+    let id = rowforge_studio_core::ExecutionId::new(exec_id.clone());
+    assert!(
+        matches!(core.show(&id), Err(rowforge_studio_core::UiError::NotFound(_))),
+        "expected NotFound after delete"
+    );
+}

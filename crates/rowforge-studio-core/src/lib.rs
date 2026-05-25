@@ -796,6 +796,62 @@ impl StudioCore {
     }
 
     // -------------------------------------------------------------------------
+    // Plan 10 — execution delete
+    // -------------------------------------------------------------------------
+
+    /// Hard-delete a single execution by id.
+    ///
+    /// Operations in order:
+    /// 1. Validate `exec_id` format via `is_valid_id_component` (traversal defense).
+    /// 2. Refuse with `UiError::ExecutionInUse` if `SessionRegistry` reports an
+    ///    active run for this execution.
+    /// 3. Sqlite cascade in a transaction via `ExecutionStore::delete_execution`:
+    ///    DELETE attempts → DELETE executions (manual cascade; schema has no
+    ///    `ON DELETE CASCADE` on `attempts.execution_id`).
+    ///    Returns `UiError::NotFound` when the execution row didn't exist.
+    /// 4. `fs::remove_dir_all` on `<workspace>/executions/<exec_id>/` — best-effort.
+    ///    Missing directory is silently ignored. Any other I/O error is logged via
+    ///    `tracing::warn` but does **not** propagate — sqlite is authoritative.
+    pub fn execution_delete(&self, exec_id: &str) -> Result<(), UiError> {
+        // Step 1: reject malformed IDs before any fs or db operation.
+        if !is_valid_id_component(exec_id) {
+            return Err(UiError::Io(format!("invalid exec_id: {}", exec_id)));
+        }
+
+        // Step 2: active-run gate.
+        if self.sessions.has_active_run_for_exec(exec_id) {
+            return Err(UiError::ExecutionInUse { exec_id: exec_id.to_string() });
+        }
+
+        // Step 3: sqlite cascade (manual; no ON DELETE CASCADE in schema).
+        let found = {
+            let mut store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            store
+                .delete_execution(exec_id)
+                .map_err(|e| UiError::Internal(e.to_string()))?
+        };
+        if !found {
+            return Err(UiError::NotFound(format!("execution '{}' not found", exec_id)));
+        }
+
+        // Step 4: best-effort dir removal; never propagate this error.
+        let exec_dir = self.workspace.root.as_path()
+            .join("executions")
+            .join(exec_id);
+        if exec_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&exec_dir) {
+                tracing::warn!(
+                    exec_id = %exec_id,
+                    error = %e,
+                    "execution_delete: fs::remove_dir_all failed (dir orphaned; sqlite already authoritative)"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
     // Plan 9 — handler log API
     // -------------------------------------------------------------------------
 
