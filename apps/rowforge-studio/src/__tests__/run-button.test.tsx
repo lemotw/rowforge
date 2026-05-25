@@ -38,7 +38,9 @@ describe("RunButton", () => {
     // openDialog should have been called with directory: true.
     await new Promise((r) => setTimeout(r, 10));
     expect(openDialog).toHaveBeenCalledWith({ directory: true, multiple: false });
-    expect(invoke).not.toHaveBeenCalled(); // user cancelled — no invoke
+    // run_start must not fire when user cancels; handler_list may have been
+    // called on mount (Plan 7 workspace handler dropdown).
+    expect(invoke).not.toHaveBeenCalledWith("run_start", expect.anything());
   });
 
   it("clicking Run with lastHandlerDir skips picker + invokes run_start", async () => {
@@ -97,6 +99,77 @@ describe("RunButton", () => {
       rowLimit: 2,
       skipAttempted: true,
     }));
+  });
+
+  it("workspace handler dropdown sets handlerDir and Start run uses it", async () => {
+    (invoke as any).mockImplementation((cmd: string) => {
+      if (cmd === "handler_list") {
+        return Promise.resolve([
+          {
+            name: "alpha",
+            path: "/ws/handlers/alpha",
+            manifest_status: "valid",
+            last_modified: "2026-05-25T00:00:00Z",
+            version: "0.1.0",
+            language: "go",
+          },
+          {
+            name: "broken",
+            path: "/ws/handlers/broken",
+            manifest_status: "invalid",
+            last_modified: "2026-05-25T00:00:00Z",
+            version: null,
+            language: null,
+          },
+        ]);
+      }
+      if (cmd === "run_start") {
+        return Promise.resolve({ handle: "run-abc", attempt_id: "att-1" });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(wrap(<RunButton executionId="e1" />));
+    fireEvent.click(screen.getByRole("button", { name: /Run options/i }));
+
+    // Wait for handler_list query to settle so the dropdown renders.
+    await new Promise((r) => setTimeout(r, 10));
+
+    const select = screen.getByLabelText(/Workspace handler/i) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "alpha" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Start run$/i }));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(invoke).toHaveBeenCalledWith("run_start", expect.objectContaining({
+      executionId: "e1",
+      handlerDir: "/ws/handlers/alpha",
+    }));
+  });
+
+  it("invalid workspace handlers are not selectable", async () => {
+    (invoke as any).mockImplementation((cmd: string) => {
+      if (cmd === "handler_list") {
+        return Promise.resolve([
+          {
+            name: "broken",
+            path: "/ws/handlers/broken",
+            manifest_status: "invalid",
+            last_modified: "2026-05-25T00:00:00Z",
+            version: null,
+            language: null,
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    render(wrap(<RunButton executionId="e1" />));
+    fireEvent.click(screen.getByRole("button", { name: /Run options/i }));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const broken = screen.getByRole("option", { name: /broken \(invalid\)/i }) as HTMLOptionElement;
+    expect(broken.disabled).toBe(true);
   });
 
   it("navigates to Live tab after successful run_start", async () => {
