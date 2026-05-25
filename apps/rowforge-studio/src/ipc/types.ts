@@ -12,6 +12,7 @@ export interface ExecSummary {
   name: string;
   created_at: string; // ISO 8601 UTC
   input_rows: number | null;
+  size_bytes: number | null; // Plan 10: total bytes of execution data on disk
   attempts_count: number;
   last_attempt_state: string | null;
   last_attempt_counts: AttemptCountsStub | null;
@@ -49,6 +50,18 @@ export interface Settings {
   handler_log_capture_raw_stdout: boolean;
 }
 
+// ===== Plan 10 exec delete =====
+
+export interface ExecDeleteFailure {
+  exec_id: string;
+  reason: string;
+}
+
+export interface ExecDeleteBulkResult {
+  deleted: string[];
+  failed: ExecDeleteFailure[];
+}
+
 export type UiErrorKind =
   | "workspace_locked"
   | "not_found"
@@ -68,7 +81,8 @@ export type UiErrorKind =
   | "handler_exists"
   | "invalid_handler_name"
   | "build_failed"
-  | "no_build_command";
+  | "no_build_command"
+  | "execution_in_use";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shapes (confirmed by ipc_contract tests):
@@ -109,7 +123,9 @@ export type UiError =
   | { kind: "invalid_handler_name"; message: { name: string } }
   // Plan 8 build variants.
   | { kind: "build_failed"; message: { name: string; exit_code: number } | null }
-  | { kind: "no_build_command"; message: { name: string } | null };
+  | { kind: "no_build_command"; message: { name: string } | null }
+  // Plan 10: returned when trying to delete an execution that has an active run.
+  | { kind: "execution_in_use"; message: { exec_id: string } | null };
 
 function isUiError(e: unknown): e is UiError {
   return !!e && typeof e === "object" && "kind" in e && "message" in e;
@@ -155,6 +171,8 @@ export function uiErrorMessage(e: unknown): string {
       return `Build failed for "${e.message?.name ?? "handler"}" (exit ${e.message?.exit_code ?? "?"}). See the Last build section for details.`;
     case "no_build_command":
       return `Handler "${e.message?.name ?? "?"}" has no entry.build command in rowforge.yaml.`;
+    case "execution_in_use":
+      return `Execution "${e.message?.exec_id ?? "?"}" has an active run. Cancel the run first.`;
   }
 }
 

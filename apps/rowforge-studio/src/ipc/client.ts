@@ -4,6 +4,7 @@ import type {
   AttemptId,
   BuildOutcome,
   CancelMode,
+  ExecDeleteBulkResult,
   ExecDetail,
   ExecRollup,
   ExecSummary,
@@ -106,4 +107,11 @@ export const ipc = {
     invoke<void>("handler_log_subscribe", args),
   handler_log_unsubscribe: (args: { attemptId: string }) =>
     invoke<void>("handler_log_unsubscribe", args),
+
+  // ===== Plan 10 exec delete =====
+
+  execution_delete: (args: { execId: string }) =>
+    invoke<void>("execution_delete", args),
+  execution_delete_bulk: (args: { execIds: string[] }) =>
+    invoke<ExecDeleteBulkResult>("execution_delete_bulk", args),
 };
