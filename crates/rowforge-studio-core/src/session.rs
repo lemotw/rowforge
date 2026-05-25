@@ -326,4 +326,20 @@ mod tests {
         let tick = reg.rollup_tick();
         assert_eq!(tick.slowest_run, None);
     }
+
+    #[test]
+    fn rollup_tick_slowest_run_with_single_positive_session() {
+        // Edge case: only one session has a positive rate (the other is
+        // warming up). slowest_run should still resolve to the positive
+        // one — there's nothing else to compare against, but a min over
+        // a 1-element set is well-defined.
+        let reg = SessionRegistry::new(3, 1);
+        let working = fake_session_with_rate("e_work", 30.0);
+        let warming = fake_session_with_rate("e_warm", 0.0);
+        reg.register(working.clone());
+        reg.register(warming.clone());
+
+        let tick = reg.rollup_tick();
+        assert_eq!(tick.slowest_run, Some(working.handle.clone()));
+    }
 }
