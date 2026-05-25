@@ -299,6 +299,14 @@ impl StudioCore {
         self.capture_raw_stdout = enabled;
     }
 
+    /// Return the current value of the raw-stdout capture flag.
+    ///
+    /// Used by tests and callers that need to verify the flag was applied
+    /// without requiring a full run.
+    pub fn capture_raw_stdout(&self) -> bool {
+        self.capture_raw_stdout
+    }
+
     /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.
     /// Returns empty list when the dir doesn't exist (not an error).
     pub fn handler_list(&self) -> Result<Vec<HandlerSummary>, UiError> {
@@ -808,6 +816,16 @@ impl StudioCore {
     ) -> Result<Vec<rowforge_core::handler_log::HandlerLogLine>, UiError> {
         use rowforge_core::handler_log::{handler_log_path, parse_line};
 
+        // BLOCKER fix: validate IDs BEFORE any path construction so that
+        // user-controlled strings like "../etc/passwd" never trigger a
+        // filesystem probe (even path.exists() counts as a probe).
+        if !is_valid_id_component(exec_id) {
+            return Err(UiError::Io(format!("invalid exec_id: {}", exec_id)));
+        }
+        if !is_valid_id_component(attempt_id) {
+            return Err(UiError::Io(format!("invalid attempt_id: {}", attempt_id)));
+        }
+
         let attempt_dir = self.workspace.root.as_path()
             .join("executions").join(exec_id)
             .join("attempts").join(attempt_id);
@@ -819,7 +837,8 @@ impl StudioCore {
             return Ok(vec![]);
         }
 
-        // Boundary check: reject path-traversal inputs.
+        // Boundary check: belt-and-suspenders canonicalize check in addition
+        // to the ID validation above.
         let workspace_root = self.workspace.root.as_path()
             .canonicalize()
             .map_err(|e| UiError::Io(format!("canonicalize workspace: {}", e)))?;
@@ -829,17 +848,14 @@ impl StudioCore {
             }
         }
 
-        let content = std::fs::read_to_string(&path)
+        // MINOR fix: byte-seek to the tail of large files rather than reading
+        // the entire file into memory before trimming.
+        let raw_lines = read_tail_lines(&path, max_lines)
             .map_err(|e| UiError::Io(format!("read handler log: {}", e)))?;
-
-        let mut lines: Vec<rowforge_core::handler_log::HandlerLogLine> = content
-            .lines()
-            .filter_map(parse_line)
+        let lines: Vec<rowforge_core::handler_log::HandlerLogLine> = raw_lines
+            .iter()
+            .filter_map(|l| parse_line(l))
             .collect();
-
-        if lines.len() > max_lines {
-            lines.drain(..lines.len() - max_lines);
-        }
 
         Ok(lines)
     }
@@ -858,6 +874,11 @@ impl StudioCore {
         attempt_id: &str,
     ) -> Result<tokio::sync::broadcast::Receiver<rowforge_core::handler_log::HandlerLogLine>, UiError>
     {
+        // Defense in depth: validate the attempt_id before looking it up in
+        // SessionRegistry, even though subscribe only does an in-memory lookup.
+        if !is_valid_id_component(attempt_id) {
+            return Err(UiError::Io(format!("invalid attempt_id: {}", attempt_id)));
+        }
         self.sessions
             .handler_log_subscribe(attempt_id)
             .ok_or_else(|| UiError::Io(format!(
@@ -865,6 +886,54 @@ impl StudioCore {
                 attempt_id,
             )))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Plan 9 — ID validation + tail helpers
+// ---------------------------------------------------------------------------
+
+/// Return `true` iff `s` is a safe path-component for exec/attempt IDs.
+///
+/// Rejects: empty, containing `/`, `\`, or the substring `..`. Only
+/// ASCII alphanumerics, `_`, and `-` are permitted. This is intentionally
+/// strict — real IDs are `e_<ULID>` / `r_<ULID>` / `a_<ULID>` which
+/// trivially pass. The check runs BEFORE any path join so that a caller
+/// passing `"../etc/passwd"` never touches the filesystem at all.
+fn is_valid_id_component(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains("..")
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Read the last `max_lines` lines from `path` using a byte-seek heuristic.
+///
+/// Assumes an average line length of 200 bytes (handler log lines are
+/// typically 100–300 bytes). Seeks to `max_lines * 1000` bytes from the
+/// end (capped at file length) to load only the relevant tail, then drops
+/// a potentially-partial first line when the seek didn't land at offset 0.
+fn read_tail_lines(path: &std::path::Path, max_lines: usize) -> std::io::Result<Vec<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    // Heuristic: 1000 bytes per line covers the realistic maximum.
+    let target = (max_lines as u64).saturating_mul(1000).min(len);
+    file.seek(SeekFrom::Start(len.saturating_sub(target)))?;
+    let mut buf = Vec::with_capacity(target as usize);
+    file.read_to_end(&mut buf)?;
+    let s = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<String> = s.lines().map(|l| l.to_string()).collect();
+    // If we started mid-file the very first element may be a partial line — drop it.
+    if target < len && !lines.is_empty() {
+        lines.remove(0);
+    }
+    if lines.len() > max_lines {
+        let start = lines.len() - max_lines;
+        lines.drain(..start);
+    }
+    Ok(lines)
 }
 
 // ---------------------------------------------------------------------------

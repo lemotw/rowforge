@@ -236,6 +236,11 @@ pub async fn run_pool_streaming(
                 });
                 // Attach sink so Worker::recv() can tee stdout non-protocol lines.
                 worker.log_sink = sink.clone();
+                // Flush any pre-ready stdout lines buffered during the handshake.
+                // These are handler boot lines emitted before `ready`; they were
+                // captured in worker.pre_ready_log_lines because log_sink wasn't
+                // available yet. Flushing here ensures they land in handler_log.log.
+                worker.flush_pre_ready_lines().await;
 
                 // ----------------------------------------------------------
                 // Drain stderr in a background task. Tee each line to:

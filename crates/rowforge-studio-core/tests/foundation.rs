@@ -2386,3 +2386,101 @@ fn handler_log_subscribe_fails_for_inactive_attempt() {
         "expected Err for inactive attempt, got Ok"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 9 review round-1 — ID validation regression tests (BLOCKER fix)
+// ---------------------------------------------------------------------------
+
+/// Regression: `../etc` in exec_id must be rejected before any filesystem probe.
+#[test]
+fn handler_log_tail_rejects_traversal_exec_id() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core.handler_log_tail("../etc", "att_x", 100).unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io, got: {:?}", err
+    );
+}
+
+/// Regression: `../../etc/passwd` in attempt_id must be rejected.
+#[test]
+fn handler_log_tail_rejects_traversal_attempt_id() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core
+        .handler_log_tail("e_test", "../../etc/passwd", 100)
+        .unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io, got: {:?}", err
+    );
+}
+
+/// Regression: an absolute path in exec_id (`/etc/passwd`) must be rejected.
+#[test]
+fn handler_log_tail_rejects_absolute_exec_id() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core
+        .handler_log_tail("/etc/passwd", "att_x", 100)
+        .unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io, got: {:?}", err
+    );
+}
+
+/// Regression: an empty exec_id must be rejected.
+#[test]
+fn handler_log_tail_rejects_empty_id() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core.handler_log_tail("", "att_x", 100).unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io, got: {:?}", err
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plan 9 review round-1 — capture_raw_stdout setter regression test
+// ---------------------------------------------------------------------------
+
+/// Regression: set_handler_log_capture_raw_stdout must update the in-memory flag
+/// so the next start_run call picks up the new value without a workspace re-open.
+#[test]
+fn studio_core_capture_raw_stdout_reflects_set_value() {
+    let tmp = empty_workspace();
+    let mut core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    // Default is false (Settings::default).
+    assert!(
+        !core.capture_raw_stdout(),
+        "default capture_raw_stdout should be false"
+    );
+    core.set_handler_log_capture_raw_stdout(true);
+    assert!(
+        core.capture_raw_stdout(),
+        "capture_raw_stdout should be true after set"
+    );
+    core.set_handler_log_capture_raw_stdout(false);
+    assert!(
+        !core.capture_raw_stdout(),
+        "capture_raw_stdout should be false after reset"
+    );
+}

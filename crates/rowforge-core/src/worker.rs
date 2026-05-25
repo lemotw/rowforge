@@ -66,6 +66,11 @@ pub struct Worker {
     pub handler_version: String,
     /// Optional log sink — set by `pool_streaming` after spawn.
     pub log_sink: Option<HandlerLogSink>,
+    /// Non-protocol stdout lines emitted before `ready` (boot log lines).
+    /// Buffered during handshake because `log_sink` is not yet available at
+    /// that point. `pool_streaming` calls `flush_pre_ready_lines` immediately
+    /// after attaching the sink so these lines appear in handler_log.log.
+    pub pre_ready_log_lines: Vec<String>,
 }
 
 impl Worker {
@@ -107,6 +112,7 @@ impl Worker {
             stdout,
             handler_version: String::new(),
             log_sink: None,
+            pre_ready_log_lines: Vec::new(),
         };
 
         // send init
@@ -162,12 +168,41 @@ impl Worker {
                 }
                 Err(_) => {
                     // Non-protocol line during startup: treat as log, keep waiting for ready.
-                    // No log_sink yet (it's set after spawn), so just eprintln for CLI back-compat.
+                    // log_sink is not attached yet (set by pool_streaming after spawn returns),
+                    // so buffer the line for flush_pre_ready_lines. Also eprintln for CLI
+                    // back-compat so these lines still appear on stderr in non-Studio runs.
                     eprintln!("[handler#{}] {}", id, trimmed);
+                    w.pre_ready_log_lines.push(trimmed.to_string());
                 }
             }
         }
         Ok(w)
+    }
+
+    /// Flush buffered pre-ready stdout lines through `log_sink`.
+    ///
+    /// Call this IMMEDIATELY after attaching `worker.log_sink` in
+    /// `pool_streaming` so that handler boot lines (emitted before `ready`)
+    /// appear in `handler_log.log`. No-op if `log_sink` is `None` or the
+    /// buffer is empty. The buffer is drained after the flush.
+    pub async fn flush_pre_ready_lines(&mut self) {
+        let sink = match &self.log_sink {
+            Some(s) => s.clone(),
+            None => {
+                self.pre_ready_log_lines.clear();
+                return;
+            }
+        };
+        let lines = std::mem::take(&mut self.pre_ready_log_lines);
+        for line in lines {
+            let entry = HandlerLogLine {
+                timestamp: Utc::now(),
+                worker_id: self.id as usize,
+                stream: HandlerStream::Stdout,
+                line,
+            };
+            sink.write(&entry).await;
+        }
     }
 
     pub async fn send_row(&mut self, msg: &Outbound) -> Result<(), CoreError> {

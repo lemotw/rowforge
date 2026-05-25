@@ -35,9 +35,11 @@ pub fn workspace_open(
     };
     // Plan 6 T9: size SessionRegistry from Settings.max_concurrent_runs.
     // Plan 7 T15: seed StudioCore.preferred_editor from Settings.preferred_editor.
+    // Plan 9 T5: seed capture_raw_stdout from Settings.handler_log_capture_raw_stdout.
     let opts = opts
         .with_max_concurrent_runs(prev.max_concurrent_runs)
-        .with_preferred_editor(prev.preferred_editor.clone());
+        .with_preferred_editor(prev.preferred_editor.clone())
+        .with_handler_log_capture_raw_stdout(prev.handler_log_capture_raw_stdout);
     let core = StudioCore::open(opts)?;
     let workspace = core.workspace().clone();
 
@@ -92,9 +94,11 @@ pub fn workspace_settings_save(
     // Plan 7 T15: refresh preferred_editor in the live StudioCore so the
     // next handler_open_editor call uses the new value without requiring a
     // workspace re-open.
+    // Plan 9 T5: refresh capture_raw_stdout so the next start_run picks it up.
     let mut guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(core) = guard.as_mut() {
         core.set_preferred_editor(settings.preferred_editor.clone());
+        core.set_handler_log_capture_raw_stdout(settings.handler_log_capture_raw_stdout);
     }
     Ok(())
 }

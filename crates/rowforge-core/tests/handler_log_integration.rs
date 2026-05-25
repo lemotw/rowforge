@@ -304,3 +304,74 @@ async fn raw_stdout_flag_captures_valid_outcome_json() {
         log_content
     );
 }
+
+// ---------------------------------------------------------------------------
+// Test 4: pre-ready stdout lines (boot lines) appear in handler_log.log
+// ---------------------------------------------------------------------------
+//
+// Uses the `echo-noisy` handler, which emits several plain-text (non-protocol)
+// lines to STDOUT BEFORE sending `ready`. These boot lines were previously
+// discarded (only eprintln'd) because log_sink was not attached during the
+// handshake. After the fix, they are buffered in `worker.pre_ready_log_lines`
+// and flushed through the sink once pool_streaming attaches it.
+//
+// After the run, `handler_log.log` must contain at least one stdout line
+// whose content matches the boot-time text ("starting up", "loaded config",
+// or "this is plain text").
+#[tokio::test]
+async fn pool_streaming_captures_handler_boot_lines_before_handshake() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut csv = "n\n".to_string();
+    for i in 0..2 {
+        csv.push_str(&format!("{}\n", i));
+    }
+    let csv_path = write_csv(&dir, "input.csv", &csv);
+
+    // echo-noisy emits "starting up", "loaded config v0.0.0", and
+    // "this is plain text, not JSON" to STDOUT before sending `ready`.
+    let manifest = make_manifest("echo-noisy");
+    let cfg = make_cfg(&dir, manifest, None, false);
+
+    let attempt_dir = dir.path().to_path_buf();
+    let log_path = handler_log_path(&attempt_dir);
+
+    let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());
+    let report = run_pool_streaming(
+        input,
+        HashSet::new(),
+        None,
+        BTreeMap::new(),
+        false,
+        cfg,
+    )
+    .await
+    .unwrap();
+
+    assert!(!report.aborted, "expected not aborted: {:?}", report.abort_reason);
+
+    assert!(
+        log_path.exists(),
+        "handler_log.log not found at {:?}",
+        log_path
+    );
+
+    let log_content = std::fs::read_to_string(&log_path).unwrap();
+
+    // At least one of the echo-noisy boot lines must be in the log.
+    let has_boot_line = log_content.lines().any(|l| {
+        if let Some(entry) = parse_line(l) {
+            entry.stream == HandlerStream::Stdout
+                && (entry.line.contains("starting up")
+                    || entry.line.contains("loaded config")
+                    || entry.line.contains("this is plain text"))
+        } else {
+            false
+        }
+    });
+
+    assert!(
+        has_boot_line,
+        "handler_log.log must contain pre-ready stdout boot lines; content:\n{}",
+        log_content
+    );
+}
