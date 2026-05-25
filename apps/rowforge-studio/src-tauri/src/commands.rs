@@ -7,11 +7,11 @@
 use std::path::PathBuf;
 
 use rowforge_studio_core::{
-    AttemptDetail, AttemptId, BuildOutcome, CancelMode, ExecDetail, ExecRollup, ExecSummary,
-    ExecutionId, ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, HandlerDetail,
-    HandlerLogLine, HandlerSummary, ListFilter, ManifestReport, ManifestSource, OpenOpts,
-    ProgressSnapshot, RowHistory, RunHandle, RunOpts, RunStartedHandle, RunStatus, ScaffoldArgs,
-    Settings, StartExecArgs, StudioCore, UiError, Workspace,
+    AttemptDetail, AttemptId, BuildOutcome, CancelMode, ExecDeleteBulkResult, ExecDetail,
+    ExecRollup, ExecSummary, ExecutionId, ExportOpts, ExportReport, FailedPageQuery, FailedRowPage,
+    HandlerDetail, HandlerLogLine, HandlerSummary, ListFilter, ManifestReport, ManifestSource,
+    OpenOpts, ProgressSnapshot, RowHistory, RunHandle, RunOpts, RunStartedHandle, RunStatus,
+    ScaffoldArgs, Settings, StartExecArgs, StudioCore, UiError, Workspace,
 };
 use tauri::Emitter;
 use tauri::State;
@@ -564,5 +564,45 @@ pub fn handler_log_unsubscribe(
         token.cancel();
     }
     Ok(())
+}
+
+// ===== Plan 10 — execution delete commands =====
+
+#[tauri::command]
+pub fn execution_delete(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    exec_id: String,
+) -> Result<(), UiError> {
+    let result = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.execution_delete(&exec_id)
+    };
+    if result.is_ok() {
+        let _ = app.emit("exec_list:refresh", ());
+    }
+    result
+}
+
+#[tauri::command]
+pub fn execution_delete_bulk(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    exec_ids: Vec<String>,
+) -> Result<ExecDeleteBulkResult, UiError> {
+    let result = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.execution_delete_bulk(&exec_ids)
+    };
+    if !result.deleted.is_empty() {
+        let _ = app.emit("exec_list:refresh", ());
+    }
+    Ok(result)
 }
 
