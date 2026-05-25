@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/ipc/client";
@@ -25,7 +26,15 @@ export function SettingsForm() {
   const save = useMutation({
     mutationFn: (settings: Settings) =>
       ipc.workspace_settings_save({ settings }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      // Without an explicit confirmation, users can't tell whether
+      // Save actually wrote — the form just bounces back from
+      // "Saving…" to "Save". Toast is the cheapest unambiguous
+      // feedback (sonner already mounted in App.tsx for Plan 5
+      // ExportDialog).
+      toast.success("Settings saved");
+    },
   });
 
   const [form, setForm] = useState<Settings | null>(null);
