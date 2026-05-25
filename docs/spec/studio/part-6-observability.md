@@ -230,6 +230,13 @@ session's aggregator snapshot — strictly a counters view, no per-row
 data crosses runs. Used by the global header / dock badge and the
 "running" dropdown.
 
+`slowest_run`: the `RunHandle` of the active session with the lowest
+positive `rate_10s` (rows per second over the most recent 10 seconds).
+Sessions with `rate_10s == 0` are excluded — those are still warming
+up the sliding window (< ~10s since start) and would otherwise
+false-positively land at "slowest". `None` when all sessions are
+warming up OR when no sessions are active.
+
 What we explicitly do **not** offer:
 - Cross-run merged timeline / comparison views (out of scope; BI
   territory).

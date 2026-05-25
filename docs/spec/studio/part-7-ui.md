@@ -101,7 +101,25 @@ different lib is not a breaking spec change.
   state. Calls `run_start`.
 - **Export dialog** — constructs `ExportOpts`, calls `exec_export`.
 - **Settings** `/settings` — entity: `Settings`. Calls:
-  `workspace_settings_load`, `workspace_settings_save`.
+  `workspace_settings_load`, `workspace_settings_save`, `run_active`
+  (via the workspace switch button), `workspace_open` (when switching).
+
+  Layout: three sections in a single-column form.
+  1. **Workspace** — current `workspace_root` shown as read-only mono
+     text; **Switch workspace…** button opens a directory picker.
+     Button is disabled with an amber warning when `run_active().len()
+     > 0` (refresh interval 2s while the page is mounted) — switching
+     would orphan in-flight runs.
+  2. **Concurrency** — `default_workers` + `max_concurrent_runs`
+     number inputs. A blue "Will apply on next workspace open" banner
+     appears below `max_concurrent_runs` when its value differs from
+     the loaded server value, since the field is only consumed at
+     `workspace_open` time (Part 5 §5.6).
+  3. **Telemetry** — `telemetry_opt_in` checkbox.
+
+  Save / Cancel buttons at the bottom. Save persists via
+  `workspace_settings_save` and invalidates the cached query; Cancel
+  restores from the loaded value.
 
 ### Anchored, not built in v1
 
