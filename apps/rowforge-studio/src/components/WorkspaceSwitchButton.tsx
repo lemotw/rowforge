@@ -34,15 +34,38 @@ export function WorkspaceSwitchButton() {
   const switchMut = useMutation({
     mutationFn: async (newRoot: string) => {
       const prev = await ipc.workspace_settings_load();
-      await ipc.workspace_settings_save({
-        settings: { ...prev, workspace_root: newRoot },
-      });
-      await ipc.workspace_open({ path: newRoot });
+      const newSettings = { ...prev, workspace_root: newRoot };
+      await ipc.workspace_settings_save({ settings: newSettings });
+      const newWorkspace = await ipc.workspace_open({ path: newRoot });
+      return { newSettings, newWorkspace };
     },
-    onSuccess: () => {
-      // Bust everything — the new workspace has different execs,
-      // active runs, settings, …
-      qc.invalidateQueries();
+    onSuccess: ({ newSettings, newWorkspace }) => {
+      // Cache-coherence rules for workspace swap, in order:
+      //
+      // 1. Prime the foundational caches (settings + workspace) with
+      //    the NEW values BEFORE navigate. BootGate on "/" reads
+      //    settings.workspace_root to decide autoload; if we left the
+      //    stale value in place, BootGate could autoload the OLD
+      //    workspace and undo the switch we just performed.
+      qc.setQueryData(["settings"], newSettings);
+      qc.setQueryData(["workspace"], newWorkspace);
+      //
+      // 2. Drop every other cached query — they all refer to data
+      //    scoped to the OLD workspace (exec_list, exec_show,
+      //    attempt_show, exec_rollup, attempt_failed_page,
+      //    attempt_row_history, run_active, attempt_active_handle).
+      //    Using removeQueries (not invalidateQueries) so consumers
+      //    don't briefly render stale rows during the refetch window.
+      //    Predicate keeps only the two keys we just primed.
+      qc.removeQueries({
+        predicate: (q) =>
+          q.queryKey[0] !== "settings" && q.queryKey[0] !== "workspace",
+      });
+      //
+      // 3. Navigate to "/" — by now, every reader of every query key
+      //    is either hitting the primed value (settings, workspace)
+      //    or a clean miss that triggers a fresh fetch against the
+      //    NEW workspace.
       navigate("/");
     },
     onError: (e) => setError(uiErrorMessage(e)),
