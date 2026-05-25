@@ -11,6 +11,7 @@ pub mod events;
 pub mod exec_detail;
 pub mod exec_view;
 pub mod failed;
+pub mod handler;
 pub mod ids;
 pub mod manifest;
 pub mod rollup;
@@ -24,6 +25,10 @@ pub mod workspace;
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use aggregator::{ProgressAggregator, ProgressSnapshot};
+pub use handler::{
+    HandlerSummary, HandlerDetail, SourceFileSummary,
+    ManifestStatus, ScaffoldArgs, ScaffoldTemplate,
+};
 pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
 pub use error::{BusyScope, UiError};
 pub use events::{AbortReason, Phase, ProgressEvent, RunReport, WorkerCrashRecord};
