@@ -111,14 +111,7 @@ export function SettingsForm() {
         </div>
       )}
 
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="ghost"
-          onClick={() => setForm(original)}
-          disabled={save.isPending}
-        >
-          Cancel
-        </Button>
+      <div className="flex justify-end">
         <Button onClick={() => save.mutate(form)} disabled={save.isPending}>
           {save.isPending ? "Saving…" : "Save"}
         </Button>
