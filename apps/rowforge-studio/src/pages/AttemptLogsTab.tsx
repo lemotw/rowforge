@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { toast } from "sonner";
 import { useHandlerLogTail, useHandlerLogLive } from "@/ipc/use-handler-log";
 import { LogsToolbar } from "@/components/LogsToolbar";
 import { LogsVirtualList } from "@/components/LogsVirtualList";
@@ -65,11 +66,15 @@ export function AttemptLogsTab({ execId, attemptId, isLive, logFilePath }: Props
   }, [visibleSource, workerFilter, streamFilter, searchTerm]);
 
   const onReveal = () => {
-    if (logFilePath) {
-      shellOpen(logFilePath).catch(() => {});
+    if (!logFilePath) {
+      toast.error("Workspace not loaded yet — try again in a moment");
+      return;
     }
-    // TODO(T8.5): if logFilePath is absent, plumb handler_log_path via
-    // AttemptDetail.paths once T9 adds that field to the Rust type.
+    shellOpen(logFilePath).catch((err) => {
+      // Most likely: file doesn't exist on disk yet (handler hasn't emitted
+      // anything) or the OS can't open .log in any default app.
+      toast.error(`Couldn't open log file: ${err?.message ?? err}`);
+    });
   };
 
   if (tail.isLoading) {
