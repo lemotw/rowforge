@@ -120,6 +120,9 @@ export function reduceRun(state: RunState, event: RunReducerAction): RunState {
         in_flight: s.in_flight,
         queue_depth: s.queue_depth,
         phase: s.phase,
+        // Plan 6 T5 (review fix): also bootstrap the rate so a late
+        // subscriber doesn't see 0 until the next Tick lands.
+        rate_10s: s.rate_10s,
         status,
       };
     }

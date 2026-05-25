@@ -99,7 +99,7 @@ describe("reduceRun", () => {
     expect(after.in_flight).toBe(0);
   });
 
-  it("_bootstrap fills counter + phase fields from snapshot", () => {
+  it("_bootstrap fills counter + phase + rate fields from snapshot", () => {
     const after = reduceRun(initialRunState, {
       type: "_bootstrap",
       snapshot: {
@@ -111,6 +111,7 @@ describe("reduceRun", () => {
         in_flight: 4,
         queue_depth: 16,
         phase: "running",
+        rate_10s: 12.5,
       },
     });
     expect(after.processed).toBe(50);
@@ -120,6 +121,8 @@ describe("reduceRun", () => {
     expect(after.in_flight).toBe(4);
     expect(after.queue_depth).toBe(16);
     expect(after.phase).toBe("running");
+    // Plan 6 (review fix): rate also bootstrapped.
+    expect(after.rate_10s).toBe(12.5);
     // Status derived from phase per the phase_changed logic.
     expect(after.status).toBe("running");
   });
@@ -134,7 +137,7 @@ describe("reduceRun", () => {
       type: "_bootstrap",
       snapshot: {
         processed: 100, total: 100, success: 95, failed: 5, crashed: 0,
-        in_flight: 0, queue_depth: 0, phase: null,
+        in_flight: 0, queue_depth: 0, phase: null, rate_10s: 0,
       },
     });
     // recentSamples survives the bootstrap.
