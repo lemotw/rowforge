@@ -732,12 +732,18 @@ impl StudioCore {
         let executions = store
             .list_executions()
             .map_err(|e| UiError::Internal(e.to_string()))?;
-        let summaries: Vec<ExecSummary> = executions
+        let mut summaries: Vec<ExecSummary> = executions
             .iter()
             .map(|e| ExecSummary::from_execution(e, &store))
             .collect::<Result<_, _>>()
             .map_err(|e: rowforge_core::error::CoreError| UiError::Internal(e.to_string()))?;
         drop(store);
+        // Populate size_bytes lazily by walking each execution directory.
+        let exec_root = self.workspace.root.as_path().join("executions");
+        for summary in &mut summaries {
+            let dir = exec_root.join(summary.id.as_str());
+            summary.size_bytes = crate::exec_view::dir_size_bytes(&dir);
+        }
         self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
         Ok(summaries)
     }

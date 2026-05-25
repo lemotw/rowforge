@@ -39,5 +39,6 @@ dashmap = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ulid = "1"
+walkdir = "2"
 which = "6"
 zip = "2"

@@ -31,6 +31,12 @@ pub struct ExecSummary {
     pub last_attempt_state: Option<String>,
     pub last_attempt_counts: Option<AttemptCountsStub>,
     pub last_handler_dir: Option<std::path::PathBuf>,
+
+    /// Total on-disk size of the execution directory, in bytes.
+    ///
+    /// Populated lazily by `exec_list`; `None` when the directory is absent
+    /// (e.g. the exec was deleted externally or size was not computed yet).
+    pub size_bytes: Option<u64>,
 }
 
 /// Placeholder for Plan 3's full `AttemptCounts`. Kept as its own type
@@ -80,8 +86,33 @@ impl ExecSummary {
             last_attempt_state,
             last_attempt_counts,
             last_handler_dir: e.last_handler_dir.clone(),
+            size_bytes: None,
         })
     }
+}
+
+/// Walk `dir` and sum all regular-file sizes.
+///
+/// Returns `None` if `dir` does not exist; `Some(0)` for an existing but
+/// empty directory. Uses `saturating_add` to avoid overflow on pathological
+/// inputs.
+pub(crate) fn dir_size_bytes(dir: &std::path::Path) -> Option<u64> {
+    if !dir.exists() {
+        return None;
+    }
+    let mut total: u64 = 0;
+    for entry in walkdir::WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.file_type().is_file() {
+            if let Ok(meta) = entry.metadata() {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    Some(total)
 }
 
 fn read_meta_counts(path: &std::path::Path) -> Option<AttemptCountsStub> {

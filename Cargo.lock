@@ -3442,6 +3442,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "ulid",
+ "walkdir",
  "which",
 ]
 

@@ -2692,3 +2692,73 @@ fn execution_delete_bulk_empty_input_returns_empty_result() {
     assert!(result.deleted.is_empty(), "expected no deleted, got: {:?}", result.deleted);
     assert!(result.failed.is_empty(), "expected no failed, got: {:?}", result.failed);
 }
+
+// ---------------------------------------------------------------------------
+// T3 — ExecSummary.size_bytes
+// ---------------------------------------------------------------------------
+
+/// `exec_list` populates `size_bytes >= 1024` for an execution whose
+/// on-disk directory contains a 1 KB file.
+#[test]
+fn exec_list_includes_size_bytes() {
+    let tmp = empty_workspace();
+    let exec_id = seed_exec(&tmp, "size-bytes-happy");
+
+    // The exec dir is created by seed_exec → create_execution.
+    // Write a 1 KB file into it so we have a measurable size.
+    let exec_dir = tmp.path().join("executions").join(&exec_id);
+    std::fs::create_dir_all(&exec_dir).unwrap();
+    std::fs::write(exec_dir.join("data.bin"), vec![0u8; 1024]).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let summaries = core.list(rowforge_studio_core::ListFilter::default()).unwrap();
+    let summary = summaries
+        .iter()
+        .find(|s| s.id.as_str() == exec_id)
+        .expect("exec not found in list");
+
+    assert!(
+        summary.size_bytes.is_some(),
+        "size_bytes should be Some when dir exists"
+    );
+    assert!(
+        summary.size_bytes.unwrap() >= 1024,
+        "size_bytes should be >= 1024, got {:?}",
+        summary.size_bytes
+    );
+}
+
+/// `exec_list` returns `size_bytes: None` for an execution whose directory
+/// has been removed externally.
+#[test]
+fn exec_list_size_bytes_none_when_dir_missing() {
+    let tmp = empty_workspace();
+    let exec_id = seed_exec(&tmp, "size-bytes-dir-missing");
+
+    // Remove the execution directory to simulate external deletion.
+    let exec_dir = tmp.path().join("executions").join(&exec_id);
+    if exec_dir.exists() {
+        std::fs::remove_dir_all(&exec_dir).unwrap();
+    }
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let summaries = core.list(rowforge_studio_core::ListFilter::default()).unwrap();
+    let summary = summaries
+        .iter()
+        .find(|s| s.id.as_str() == exec_id)
+        .expect("exec not found in list");
+
+    assert!(
+        summary.size_bytes.is_none(),
+        "size_bytes should be None when dir is missing, got {:?}",
+        summary.size_bytes
+    );
+}
