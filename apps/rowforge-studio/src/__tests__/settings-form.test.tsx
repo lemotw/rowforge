@@ -21,6 +21,7 @@ vi.mock("@/ipc/client", () => ({
       max_concurrent_runs: 3,
       telemetry_opt_in: false,
       preferred_editor: null,
+      handler_log_capture_raw_stdout: false,
     }),
     workspace_settings_save: vi.fn().mockResolvedValue(undefined),
     run_active: vi.fn().mockResolvedValue([]),
@@ -114,6 +115,33 @@ describe("SettingsForm", () => {
     await waitFor(async () => {
       const { toast } = await import("sonner");
       expect(toast.success).toHaveBeenCalledWith("Settings saved");
+    });
+  });
+
+  it("renders raw stdout capture toggle unchecked by default", async () => {
+    render(wrap(<SettingsForm />));
+    // Wait for the form to mount and load settings.
+    await screen.findByText(/^logs$/i);
+    const checkbox = screen.getByRole("checkbox", {
+      name: /capture raw stdout in handler log/i,
+    });
+    expect(checkbox).toBeInTheDocument();
+    expect((checkbox as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("save sends handler_log_capture_raw_stdout flag when toggled on", async () => {
+    render(wrap(<SettingsForm />));
+    await screen.findByText(/^logs$/i);
+    const checkbox = screen.getByRole("checkbox", {
+      name: /capture raw stdout in handler log/i,
+    });
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+    await waitFor(async () => {
+      const { ipc } = await import("@/ipc/client");
+      expect(ipc.workspace_settings_save).toHaveBeenCalledWith({
+        settings: expect.objectContaining({ handler_log_capture_raw_stdout: true }),
+      });
     });
   });
 });

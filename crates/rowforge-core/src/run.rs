@@ -80,6 +80,12 @@ pub struct RunRequest {
     pub config_overrides: BTreeMap<String, serde_json::Value>,
     pub shutdown_grace: Duration,
     pub on_progress: Option<ProgressCallback>,
+    /// Optional live-broadcast callback for handler log lines.
+    /// When set, every captured stderr/stdout line is forwarded to this callback
+    /// in addition to being written to `handler_log.log`. Used by Studio's
+    /// SessionRegistry to stream log lines to the Logs tab in real time.
+    /// The CLI leaves this `None`.
+    pub on_handler_log: Option<crate::pool_streaming::HandlerLogCallback>,
     /// Optional cancellation. If Some and the token fires, the run aborts
     /// cleanly: pool stops dispatching, in-flight workers receive shutdown,
     /// remaining queued rows are NOT processed (do not become STARTUP_FAILED;
@@ -93,6 +99,12 @@ pub struct RunRequest {
     /// When true, call sync_data after every outcomes.jsonl append for
     /// increased durability at the cost of throughput (P10 wire-up).
     pub fsync_outcomes: bool,
+    /// When true, valid outcome JSON stdout lines are also written to
+    /// `handler_log.log` (in addition to `outcomes.jsonl`). Controlled by
+    /// `Settings.handler_log_capture_raw_stdout`; default false.
+    /// Useful for diagnosing protocol issues — normal operation should leave
+    /// this off to avoid duplicating outcome data in the log.
+    pub capture_raw_stdout: bool,
 }
 
 pub struct RunReport {
@@ -220,6 +232,8 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
         stall_timeout: None,
         stall_poll_interval: None,
         on_row_done,
+        on_handler_log: req.on_handler_log.clone(),
+        capture_raw_stdout: req.capture_raw_stdout,
     };
 
     let pool_report = run_pool_streaming(

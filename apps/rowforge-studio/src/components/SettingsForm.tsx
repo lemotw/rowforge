@@ -124,6 +124,26 @@ export function SettingsForm() {
         </label>
       </Section>
 
+      <Section title="Logs">
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.handler_log_capture_raw_stdout}
+            onChange={(e) =>
+              setForm({ ...form, handler_log_capture_raw_stdout: e.target.checked })
+            }
+            className="mt-1"
+          />
+          <div>
+            <div>Capture raw stdout in handler log</div>
+            <div className="text-xs text-muted-foreground">
+              Default off — only non-outcome stdout is logged, since outcomes
+              already go to outcomes.jsonl. Turn on to debug protocol issues.
+            </div>
+          </div>
+        </label>
+      </Section>
+
       {save.isError && (
         <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
           Save failed: {uiErrorMessage(save.error)}

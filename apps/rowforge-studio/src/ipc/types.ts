@@ -41,6 +41,12 @@ export interface Settings {
    * null means fall through to the 4-tier resolver.
    */
   preferred_editor: string | null;
+  /**
+   * Plan 9 T5: when true, valid outcome JSON stdout lines are duplicated
+   * into handler_log.log (in addition to outcomes.jsonl). Default false.
+   * Turn on to debug protocol issues; leave off for normal operation.
+   */
+  handler_log_capture_raw_stdout: boolean;
 }
 
 export type UiErrorKind =
@@ -472,4 +478,15 @@ export interface ScaffoldArgs {
   name: string;
   template: ScaffoldTemplate;
   primary_field: string;
+}
+
+// ===== Plan 9 handler logs =====
+
+export type HandlerStream = "stdout" | "stderr";
+
+export interface HandlerLogLine {
+  timestamp: string; // ISO 8601
+  worker_id: number;
+  stream: HandlerStream;
+  line: string;
 }

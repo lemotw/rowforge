@@ -13,6 +13,7 @@ import type {
   FailedPageQuery,
   FailedRowPage,
   HandlerDetail,
+  HandlerLogLine,
   HandlerSummary,
   ManifestReport,
   ManifestSource,
@@ -96,4 +97,13 @@ export const ipc = {
     invoke<void>("handler_rename", args),
   handler_build: (args: { name: string }) =>
     invoke<BuildOutcome>("handler_build", args),
+
+  // ===== Plan 9 handler logs =====
+
+  handler_log_tail: (args: { execId: string; attemptId: string; maxLines?: number }) =>
+    invoke<HandlerLogLine[]>("handler_log_tail", args),
+  handler_log_subscribe: (args: { execId: string; attemptId: string }) =>
+    invoke<void>("handler_log_subscribe", args),
+  handler_log_unsubscribe: (args: { attemptId: string }) =>
+    invoke<void>("handler_log_unsubscribe", args),
 };

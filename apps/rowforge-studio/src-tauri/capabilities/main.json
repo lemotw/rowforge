@@ -6,8 +6,19 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "shell:default",
-    "shell:allow-open",
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.*/**" },
+        { "path": "$HOME/.rowforge/**" },
+        { "path": "/tmp/**" },
+        { "path": "/private/tmp/**" },
+        { "path": "/Volumes/**" }
+      ]
+    },
+    "opener:allow-open-url",
     "dialog:default",
     "dialog:allow-open"
   ]

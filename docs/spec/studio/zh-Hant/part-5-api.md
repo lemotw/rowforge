@@ -42,6 +42,13 @@ impl StudioCore {
     pub fn open(opts: OpenOpts) -> Result<Self, UiError>;
     pub fn workspace(&self) -> &Workspace;
 
+    // Handler 記錄（Plan 9；見第 3 部分 §3.9）
+    pub fn handler_log_tail(&self, exec: &ExecutionId, attempt: &AttemptId, max_lines: Option<usize>)
+        -> Result<Vec<HandlerLogLine>, UiError>;
+    pub fn handler_log_subscribe(&self, attempt: &AttemptId)
+        -> Result<broadcast::Receiver<HandlerLogLine>, UiError>;  // attempt 非 active 時 Err
+    pub fn set_handler_log_capture_raw_stdout(&self, v: bool);
+
     // 讀投影（第 2 部分）
     pub fn list(&self, filter: ListFilter) -> Result<Vec<ExecSummary>, UiError>;
     pub fn show(&self, id: &ExecutionId) -> Result<ExecDetail, UiError>;
@@ -282,6 +289,16 @@ handler_rename(old, new)              -> ()
 
 // Plan 8 — 建置 command（詳見第 8 部分 §8.5.3）
 handler_build(name: String)           -> BuildOutcome    // async；emit handlers:list
+
+// Plan 9 — handler 記錄 commands（見第 3 部分 §3.9）
+handler_log_tail(exec_id, attempt_id, max_lines?)   -> Vec<HandlerLogLine>
+    // 從 handler_log.log 讀取至多 max_lines（預設 5000）行。
+    // 檔案不存在（Plan 9 之前的 attempt）時回傳空 vec。
+handler_log_subscribe(exec_id, attempt_id)          -> ()
+    // Async。啟動批次泵，以 handler_log:<attempt_id> 事件（100 ms /
+    // 64 行批次）發送行。attempt 非 active 時回傳錯誤。
+handler_log_unsubscribe(attempt_id)                 -> ()
+    // 取消由 handler_log_subscribe 啟動的泵。
 ```
 
 `handler_build` 說明：此 command 宣告為 `async` 但目前在建置期間
@@ -327,6 +344,41 @@ Run 生命週期指令說明（Plan 5）：
 run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (第 6 部分 §6.6)
 handlers:list                         ()                      // Plan 7：scaffold/delete/rename 後 emit 的粗粒度 refresh 提示
+handler_log:<attempt_id>              HandlerLogBatch payload // Plan 9：批次 100 ms / 64 行
+```
+
+`HandlerLogBatch` payload：
+```typescript
+interface HandlerLogBatch {
+  lines: HandlerLogLine[];
+  dropped: number;          // 自上批次以來因 broadcast 背壓而丟失的行數
+}
+```
+
+**`HandlerLogLine` 與 `HandlerStream` 型別（Plan 9）：**
+
+```typescript
+type HandlerStream = "stdout" | "stderr";
+
+interface HandlerLogLine {
+  timestamp: string;         // RFC 3339，例如 "2026-05-25T14:32:01.423Z"
+  worker_id: number;
+  stream: HandlerStream;
+  line: string;
+}
+```
+
+Rust 端對應型別：
+
+```rust
+// rowforge_core::handler_log
+pub enum HandlerStream { Stdout, Stderr }
+pub struct HandlerLogLine {
+    pub timestamp: DateTime<Utc>,
+    pub worker_id: u32,
+    pub stream: HandlerStream,
+    pub line: String,
+}
 ```
 
 ## 5.6 設定

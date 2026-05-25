@@ -2,7 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { useOpenWorkspace } from "@/ipc/queries";
 
 export function WorkspaceMenu({
@@ -18,7 +18,7 @@ export function WorkspaceMenu({
   const openMut = useOpenWorkspace();
 
   const reveal = () => {
-    shellOpen(workspaceRoot);
+    openPath(workspaceRoot);
     onOpenChange(false);
   };
 

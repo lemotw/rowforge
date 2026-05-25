@@ -31,6 +31,7 @@ use tokio::sync::mpsc;
 
 use crate::accumulator::{accumulator_task, Batch, JOB_CHANNEL_CAP};
 use crate::cancel::CancellationToken;
+use crate::handler_log::{handler_log_path, HandlerLogLine, HandlerStream};
 use crate::reader::FieldMap;
 use crate::error::CoreError;
 use crate::input_stream::InputStream;
@@ -41,12 +42,15 @@ use crate::manifest::Manifest;
 use crate::pool::RowJob;
 use crate::reader::{reader_task, ReaderConfig, ROW_CHANNEL_CAP};
 use crate::runtime::Runtime;
-use crate::worker::Worker;
+use crate::worker::{HandlerLogSink, Worker};
 use crate::worker_loop::run_worker_loop;
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+// Re-export so callers (studio-core, CLI) can refer to it from pool_streaming.
+pub use crate::worker::HandlerLogCallback;
 
 /// Configuration for [`run_pool_streaming`].
 pub struct StreamingPoolConfig {
@@ -86,6 +90,16 @@ pub struct StreamingPoolConfig {
     /// Receives `(seq, success)`. Used by rowforge-studio's progress tracker;
     /// the CLI leaves this `None`.
     pub on_row_done: Option<Arc<dyn Fn(u64, bool) + Send + Sync>>,
+    /// Optional live-broadcast callback for handler log lines. Invoked for every
+    /// captured stderr line and every non-JSON stdout line (plus valid JSON if
+    /// `capture_raw_stdout` is `true`). Studio's SessionRegistry subscribes here
+    /// to stream lines to the Logs tab in real time. The CLI leaves this `None`.
+    pub on_handler_log: Option<HandlerLogCallback>,
+    /// When `true`, valid outcome-JSON lines on stdout are ALSO written to
+    /// `handler_log.log` (and broadcast via `on_handler_log`). Default `false`
+    /// avoids duplicating outcomes that already live in `outcomes.jsonl`.
+    /// Set to `true` for protocol debugging.
+    pub capture_raw_stdout: bool,
 }
 
 /// Report returned by [`run_pool_streaming`].
@@ -140,6 +154,31 @@ pub async fn run_pool_streaming(
         Arc::new(SharedJsonlWriter::open(&cfg.jsonl_path, cfg.fsync_outcomes).await?);
 
     // ------------------------------------------------------------------
+    // 2b. Open handler_log.log (sibling to outcomes.jsonl) — shared by
+    //     all workers via Arc<Mutex<File>>.
+    // ------------------------------------------------------------------
+    let log_file_shared: Option<Arc<tokio::sync::Mutex<tokio::fs::File>>> = {
+        // Derive attempt_dir from the parent of jsonl_path.
+        if let Some(attempt_dir) = cfg.jsonl_path.parent() {
+            let log_path = handler_log_path(attempt_dir);
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+                .await
+            {
+                Ok(f) => Some(Arc::new(tokio::sync::Mutex::new(f))),
+                Err(e) => {
+                    tracing::warn!(path = %log_path.display(), error = %e, "handler_log: failed to open log file; handler output will not be persisted");
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
+    // ------------------------------------------------------------------
     // 3. Worker count
     // ------------------------------------------------------------------
     let effective_workers = if cfg.runtime.stateful {
@@ -185,15 +224,52 @@ pub async fn run_pool_streaming(
 
         match worker_result {
             Ok(mut worker) => {
-                // Drain stderr in a background task (same as legacy pool.rs).
+                // ----------------------------------------------------------
+                // Build HandlerLogSink for this worker (shared file handle).
+                // ----------------------------------------------------------
+                let sink: Option<HandlerLogSink> = log_file_shared.as_ref().map(|file_arc| {
+                    HandlerLogSink {
+                        file: file_arc.clone(),
+                        callback: cfg.on_handler_log.clone(),
+                        capture_raw_stdout: cfg.capture_raw_stdout,
+                    }
+                });
+                // Attach sink so Worker::recv() can tee stdout non-protocol lines.
+                worker.log_sink = sink.clone();
+                // Flush any pre-ready stdout lines buffered during the handshake.
+                // These are handler boot lines emitted before `ready`; they were
+                // captured in worker.pre_ready_log_lines because log_sink wasn't
+                // available yet. Flushing here ensures they land in handler_log.log.
+                worker.flush_pre_ready_lines().await;
+
+                // ----------------------------------------------------------
+                // Drain stderr in a background task. Tee each line to:
+                //   1. The log file (via HandlerLogSink)
+                //   2. The broadcast callback (via HandlerLogSink)
+                //   3. eprintln! for CLI back-compat (unchanged)
+                // ----------------------------------------------------------
                 if let Some(stderr) = worker.take_stderr() {
-                    let wid = worker.id;
+                    let wid = worker.id as usize;
+                    let stderr_sink = sink.clone();
                     tokio::spawn(async move {
                         use tokio::io::AsyncBufReadExt;
                         let mut reader = tokio::io::BufReader::new(stderr).lines();
                         loop {
                             match reader.next_line().await {
-                                Ok(Some(line)) => eprintln!("[handler#{}] {}", wid, line),
+                                Ok(Some(line)) => {
+                                    // CLI back-compat: eprintln as before.
+                                    eprintln!("[handler#{}] {}", wid, line);
+                                    // Tee to log file + callback.
+                                    if let Some(ref sink) = stderr_sink {
+                                        let entry = HandlerLogLine {
+                                            timestamp: chrono::Utc::now(),
+                                            worker_id: wid,
+                                            stream: HandlerStream::Stderr,
+                                            line: line.clone(),
+                                        };
+                                        sink.write(&entry).await;
+                                    }
+                                }
                                 Ok(None) => break,
                                 Err(e) => {
                                     tracing::warn!(worker = wid, error = %e, "stderr_drainer.error");
@@ -579,7 +655,9 @@ mod tests {
             fsync_outcomes: false,
             stall_timeout: None,
             stall_poll_interval: None,
-        on_row_done: None,
+            on_row_done: None,
+            on_handler_log: None,
+            capture_raw_stdout: false,
         }
     }
 

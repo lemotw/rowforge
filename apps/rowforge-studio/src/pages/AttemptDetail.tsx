@@ -5,7 +5,7 @@ import { ipc } from "@/ipc/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { AppShell } from "@/layout/AppShell";
 import { useAttemptDetail, useExecDetail, useWorkspace } from "@/ipc/queries";
 import { uiErrorMessage } from "@/ipc/types";
@@ -17,6 +17,7 @@ import { PhaseChipBar } from "@/components/PhaseChipBar";
 import { LifecycleBanners } from "@/components/LifecycleBanner";
 import { CancelDialog } from "@/components/CancelDialog";
 import { useRun } from "@/ipc/use-run";
+import { AttemptLogsTab } from "@/pages/AttemptLogsTab";
 
 export function AttemptDetailPage() {
   const { id, aid } = useParams<{ id: string; aid: string }>();
@@ -168,6 +169,7 @@ export function AttemptDetailPage() {
                 <TabsTrigger value="summary">Summary</TabsTrigger>
                 <TabsTrigger value="failed">Failed rows</TabsTrigger>
                 <TabsTrigger value="errors">Errors by code</TabsTrigger>
+                <TabsTrigger value="logs">Logs</TabsTrigger>
                 <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
               </TabsList>
 
@@ -200,13 +202,26 @@ export function AttemptDetailPage() {
                 <ErrorsByCodeList data={detail.data.by_error_code} />
               </TabsContent>
 
+              <TabsContent value="logs">
+                <AttemptLogsTab
+                  execId={id!}
+                  attemptId={aid!}
+                  isLive={!isTerminal}
+                  logFilePath={
+                    workspace
+                      ? `${workspace.root}/executions/${id}/attempts/${aid}/handler_log.log`
+                      : undefined
+                  }
+                />
+              </TabsContent>
+
               <TabsContent value="artifacts">
                 <ul className="space-y-2 text-sm">
                   {Object.entries(detail.data.paths).map(([k, v]) => (
                     <li key={k} className="flex items-center gap-2">
                       <span className="font-mono text-muted-foreground">{k}:</span>
                       <span className="font-mono">{v}</span>
-                      <Button size="sm" variant="ghost" onClick={() => shellOpen(v)}>
+                      <Button size="sm" variant="ghost" onClick={() => openPath(v)}>
                         Reveal
                       </Button>
                     </li>

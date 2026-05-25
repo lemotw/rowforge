@@ -81,9 +81,11 @@ async fn skip_seqs_applies_before_row_limit() {
         config_overrides: BTreeMap::new(),
         shutdown_grace: Duration::from_secs(2),
         on_progress: None,
+        on_handler_log: None,
         cancel: None,
         input_format: None,
         fsync_outcomes: false,
+        capture_raw_stdout: false,
     };
 
     let report = execute(req).await.expect("execute should succeed");

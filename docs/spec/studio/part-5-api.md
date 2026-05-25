@@ -44,6 +44,13 @@ impl StudioCore {
     pub fn open(opts: OpenOpts) -> Result<Self, UiError>;
     pub fn workspace(&self) -> &Workspace;
 
+    // Handler log (Plan 9; see Part 3 §3.9)
+    pub fn handler_log_tail(&self, exec: &ExecutionId, attempt: &AttemptId, max_lines: Option<usize>)
+        -> Result<Vec<HandlerLogLine>, UiError>;
+    pub fn handler_log_subscribe(&self, attempt: &AttemptId)
+        -> Result<broadcast::Receiver<HandlerLogLine>, UiError>;  // Err if attempt not active
+    pub fn set_handler_log_capture_raw_stdout(&self, v: bool);
+
     // Read projections (Part 2)
     pub fn list(&self, filter: ListFilter) -> Result<Vec<ExecSummary>, UiError>;
     pub fn show(&self, id: &ExecutionId) -> Result<ExecDetail, UiError>;
@@ -290,6 +297,16 @@ handler_rename(old, new)              -> ()
 
 // Plan 8 — build command (see Part 8 §8.5.3 for details)
 handler_build(name: String)           -> BuildOutcome    // async; emits handlers:list
+
+// Plan 9 — handler log commands (see Part 3 §3.9)
+handler_log_tail(exec_id, attempt_id, max_lines?)   -> Vec<HandlerLogLine>
+    // Reads up to max_lines (default 5000) from handler_log.log on disk.
+    // Returns empty vec if the file does not exist (pre-Plan-9 attempt).
+handler_log_subscribe(exec_id, attempt_id)          -> ()
+    // Async. Spawns a batching pump that emits handler_log:<attempt_id>
+    // events (100 ms / 64-line batch). Errors if attempt is not active.
+handler_log_unsubscribe(attempt_id)                 -> ()
+    // Cancels the pump started by handler_log_subscribe.
 ```
 
 `handler_build` note: the command is declared `async` but currently
@@ -341,6 +358,41 @@ Events (one-way, core → UI):
 run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (Part 6 §6.6)
 handlers:list                         ()                      // Plan 7: coarse refresh hint emitted after scaffold/delete/rename
+handler_log:<attempt_id>              HandlerLogBatch payload // Plan 9: batched 100 ms / 64-line
+```
+
+`HandlerLogBatch` payload:
+```typescript
+interface HandlerLogBatch {
+  lines: HandlerLogLine[];
+  dropped: number;          // lines lost due to broadcast backpressure since last batch
+}
+```
+
+**`HandlerLogLine` and `HandlerStream` types (Plan 9):**
+
+```typescript
+type HandlerStream = "stdout" | "stderr";
+
+interface HandlerLogLine {
+  timestamp: string;         // RFC 3339, e.g. "2026-05-25T14:32:01.423Z"
+  worker_id: number;
+  stream: HandlerStream;
+  line: string;
+}
+```
+
+These types are mirrored in Rust as:
+
+```rust
+// rowforge_core::handler_log
+pub enum HandlerStream { Stdout, Stderr }
+pub struct HandlerLogLine {
+    pub timestamp: DateTime<Utc>,
+    pub worker_id: u32,
+    pub stream: HandlerStream,
+    pub line: String,
+}
 ```
 
 ## 5.6 Settings

@@ -50,6 +50,9 @@ pub use rowforge_core::export::{ExportFormat, ExportOpts, ExportReport, ExportWa
 // Re-export build types (Plan 8 T7) so the Tauri shell and ipc_contract tests
 // can reference BuildOutcome without a direct rowforge-core dependency.
 pub use rowforge_core::build::BuildOutcome;
+// Re-export handler log types (Plan 9 T6) so the Tauri shell and ipc_contract
+// tests can reference HandlerLogLine without a direct rowforge-core dependency.
+pub use rowforge_core::handler_log::HandlerLogLine;
 
 // StartExecArgs is defined below (inline in lib.rs) and exported here.
 // Re-export is done at the bottom of the `pub use` section for discoverability.
@@ -198,6 +201,11 @@ pub struct StudioCore {
     /// loads from Settings before calling `open()`. None → resolver
     /// falls through to $VISUAL / $EDITOR / probes.
     preferred_editor: Option<String>,
+    /// Plan 9 T5: mirrors `Settings.handler_log_capture_raw_stdout`.
+    /// Read once per attempt at start_run time; threaded into
+    /// `RunRequest.capture_raw_stdout`. Updated by `set_handler_log_capture_raw_stdout`
+    /// after each `workspace_settings_save` in the Tauri layer.
+    capture_raw_stdout: bool,
     /// Plan 8 T6: in-memory build cache. Keys are handler names; values are
     /// the most recent BuildOutcome (success OR failure). Dies on Drop.
     /// Lock is held only briefly — never across the subprocess spawn.
@@ -267,6 +275,8 @@ impl StudioCore {
             preferred_editor: opts.preferred_editor,
             // Plan 8 T6: empty build cache; populated by handler_build.
             build_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            // Plan 9 T5: sourced from Settings.handler_log_capture_raw_stdout via OpenOpts.
+            capture_raw_stdout: opts.handler_log_capture_raw_stdout,
         })
     }
 
@@ -279,6 +289,22 @@ impl StudioCore {
     /// requiring a workspace re-open.
     pub fn set_preferred_editor(&mut self, editor: Option<String>) {
         self.preferred_editor = editor;
+    }
+
+    /// Plan 9 T5: update the raw-stdout capture flag in-place after a
+    /// settings_save so the next start_run call picks up the new value.
+    /// Changes don't affect already-running attempts (intentional — the
+    /// flag is snapshotted into `RunRequest` at attempt-start).
+    pub fn set_handler_log_capture_raw_stdout(&mut self, enabled: bool) {
+        self.capture_raw_stdout = enabled;
+    }
+
+    /// Return the current value of the raw-stdout capture flag.
+    ///
+    /// Used by tests and callers that need to verify the flag was applied
+    /// without requiring a full run.
+    pub fn capture_raw_stdout(&self) -> bool {
+        self.capture_raw_stdout
     }
 
     /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.
@@ -768,6 +794,146 @@ impl StudioCore {
             .map_err(|e| UiError::Internal(e.to_string()))?;
         Ok(ExecutionId::new(exec.id))
     }
+
+    // -------------------------------------------------------------------------
+    // Plan 9 — handler log API
+    // -------------------------------------------------------------------------
+
+    /// Tail the on-disk `handler_log.log` for a completed (or live) attempt.
+    ///
+    /// Returns up to `max_lines` parsed lines in chronological order (oldest
+    /// first). Returns an empty `Vec` when the file doesn't exist — e.g. the
+    /// attempt predates Plan 9 or hasn't started running yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns `UiError::Io` for read failures or path-traversal attempts.
+    pub fn handler_log_tail(
+        &self,
+        exec_id: &str,
+        attempt_id: &str,
+        max_lines: usize,
+    ) -> Result<Vec<rowforge_core::handler_log::HandlerLogLine>, UiError> {
+        use rowforge_core::handler_log::{handler_log_path, parse_line};
+
+        // BLOCKER fix: validate IDs BEFORE any path construction so that
+        // user-controlled strings like "../etc/passwd" never trigger a
+        // filesystem probe (even path.exists() counts as a probe).
+        if !is_valid_id_component(exec_id) {
+            return Err(UiError::Io(format!("invalid exec_id: {}", exec_id)));
+        }
+        if !is_valid_id_component(attempt_id) {
+            return Err(UiError::Io(format!("invalid attempt_id: {}", attempt_id)));
+        }
+
+        let attempt_dir = self.workspace.root.as_path()
+            .join("executions").join(exec_id)
+            .join("attempts").join(attempt_id);
+
+        let path = handler_log_path(&attempt_dir);
+
+        // Fast path: file absent (common for pre-Plan-9 attempts or first run).
+        if !path.exists() {
+            return Ok(vec![]);
+        }
+
+        // Boundary check: belt-and-suspenders canonicalize check in addition
+        // to the ID validation above.
+        let workspace_root = self.workspace.root.as_path()
+            .canonicalize()
+            .map_err(|e| UiError::Io(format!("canonicalize workspace: {}", e)))?;
+        if let Ok(canon) = attempt_dir.canonicalize() {
+            if !canon.starts_with(&workspace_root) {
+                return Err(UiError::Io("attempt path outside workspace".into()));
+            }
+        }
+
+        // MINOR fix: byte-seek to the tail of large files rather than reading
+        // the entire file into memory before trimming.
+        let raw_lines = read_tail_lines(&path, max_lines)
+            .map_err(|e| UiError::Io(format!("read handler log: {}", e)))?;
+        let lines: Vec<rowforge_core::handler_log::HandlerLogLine> = raw_lines
+            .iter()
+            .filter_map(|l| parse_line(l))
+            .collect();
+
+        Ok(lines)
+    }
+
+    /// Subscribe to the live handler-log broadcast for a currently-active attempt.
+    ///
+    /// Returns a `broadcast::Receiver` that yields `HandlerLogLine`s in real
+    /// time as the pipeline emits them. The channel capacity is 4096; the oldest
+    /// lines are silently dropped if the consumer falls behind.
+    ///
+    /// Returns `Err(UiError::Io)` when the attempt is not currently active (not
+    /// in the `SessionRegistry`). The UI should fall back to
+    /// `handler_log_tail` for the static file view in that case.
+    pub fn handler_log_subscribe(
+        &self,
+        attempt_id: &str,
+    ) -> Result<tokio::sync::broadcast::Receiver<rowforge_core::handler_log::HandlerLogLine>, UiError>
+    {
+        // Defense in depth: validate the attempt_id before looking it up in
+        // SessionRegistry, even though subscribe only does an in-memory lookup.
+        if !is_valid_id_component(attempt_id) {
+            return Err(UiError::Io(format!("invalid attempt_id: {}", attempt_id)));
+        }
+        self.sessions
+            .handler_log_subscribe(attempt_id)
+            .ok_or_else(|| UiError::Io(format!(
+                "attempt {} is not active (subscribe to a running attempt or use handler_log_tail)",
+                attempt_id,
+            )))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plan 9 — ID validation + tail helpers
+// ---------------------------------------------------------------------------
+
+/// Return `true` iff `s` is a safe path-component for exec/attempt IDs.
+///
+/// Rejects: empty, containing `/`, `\`, or the substring `..`. Only
+/// ASCII alphanumerics, `_`, and `-` are permitted. This is intentionally
+/// strict — real IDs are `e_<ULID>` / `r_<ULID>` / `a_<ULID>` which
+/// trivially pass. The check runs BEFORE any path join so that a caller
+/// passing `"../etc/passwd"` never touches the filesystem at all.
+fn is_valid_id_component(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains("..")
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Read the last `max_lines` lines from `path` using a byte-seek heuristic.
+///
+/// Assumes an average line length of 200 bytes (handler log lines are
+/// typically 100–300 bytes). Seeks to `max_lines * 1000` bytes from the
+/// end (capped at file length) to load only the relevant tail, then drops
+/// a potentially-partial first line when the seek didn't land at offset 0.
+fn read_tail_lines(path: &std::path::Path, max_lines: usize) -> std::io::Result<Vec<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    // Heuristic: 1000 bytes per line covers the realistic maximum.
+    let target = (max_lines as u64).saturating_mul(1000).min(len);
+    file.seek(SeekFrom::Start(len.saturating_sub(target)))?;
+    let mut buf = Vec::with_capacity(target as usize);
+    file.read_to_end(&mut buf)?;
+    let s = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<String> = s.lines().map(|l| l.to_string()).collect();
+    // If we started mid-file the very first element may be a partial line — drop it.
+    if target < len && !lines.is_empty() {
+        lines.remove(0);
+    }
+    if lines.len() > max_lines {
+        let start = lines.len() - max_lines;
+        lines.drain(..start);
+    }
+    Ok(lines)
 }
 
 // ---------------------------------------------------------------------------

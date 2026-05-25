@@ -21,4 +21,9 @@ pub struct AppState {
     /// can abort the prior forwarder before starting a new one, instead
     /// of leaving stale forwarders alive emitting from old registries.
     pub active_runs_task: Mutex<Option<JoinHandle<()>>>,
+    /// Map of `attempt_id → CancellationToken` for active handler-log
+    /// subscriber tasks. Allows `handler_log_unsubscribe` (and a second
+    /// subscribe for the same attempt) to cancel the pump task. DashMap
+    /// is lock-free for concurrent insert/remove from multiple threads.
+    pub handler_log_cancels: dashmap::DashMap<String, tokio_util::sync::CancellationToken>,
 }

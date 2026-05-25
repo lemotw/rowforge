@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +41,7 @@ export function ExportDialog({
         {
           action: {
             label: "Reveal",
-            onClick: () => { shellOpen(report.output_dir); },
+            onClick: () => { openPath(report.output_dir); },
           },
         },
       );

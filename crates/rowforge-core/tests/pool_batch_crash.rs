@@ -109,6 +109,8 @@ async fn batch_crash_idempotent_true_yields_worker_crash() {
         stall_timeout: Some(Duration::from_secs(5)),
         stall_poll_interval: Some(Duration::from_millis(100)),
         on_row_done: None,
+        on_handler_log: None,
+        capture_raw_stdout: false,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());
@@ -168,6 +170,8 @@ async fn batch_crash_idempotent_false_yields_worker_crash_unsafe() {
         stall_timeout: Some(Duration::from_secs(5)),
         stall_poll_interval: Some(Duration::from_millis(100)),
         on_row_done: None,
+        on_handler_log: None,
+        capture_raw_stdout: false,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());

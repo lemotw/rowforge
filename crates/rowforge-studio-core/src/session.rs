@@ -4,11 +4,17 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
+
+use rowforge_core::handler_log::HandlerLogLine;
 
 use crate::aggregator::ProgressAggregator;
 use crate::run_handle::{RunHandle, RunStatus};
+
+/// Capacity of the per-attempt handler-log broadcast channel.
+/// Oldest lines are dropped when all receivers are slow (backpressure).
+pub(crate) const HANDLER_LOG_CHANNEL_CAP: usize = 4096;
 
 #[non_exhaustive]
 pub struct Session {
@@ -25,6 +31,10 @@ pub struct Session {
     pub tick_stop: watch::Sender<bool>,
     pub status: Mutex<RunStatus>,
     pub started_at: Instant,
+    /// Broadcast channel for live handler log lines. Capacity = 4096;
+    /// oldest lines are dropped under backpressure. Subscribers call
+    /// `handler_log_tx.subscribe()` via `SessionRegistry::handler_log_subscribe`.
+    pub handler_log_tx: broadcast::Sender<HandlerLogLine>,
 }
 
 pub struct SessionRegistry {
@@ -118,6 +128,25 @@ impl SessionRegistry {
             .collect()
     }
 
+    /// Subscribe to the live handler-log broadcast for a given attempt.
+    ///
+    /// Returns `Some(Receiver)` when the attempt is currently active (in the
+    /// registry). Returns `None` if the attempt is not running — the caller
+    /// should fall back to `StudioCore::handler_log_tail` for static file view.
+    ///
+    /// The returned receiver uses the same capacity-4096 channel as the sender;
+    /// oldest lines are silently dropped if the consumer falls behind.
+    pub fn handler_log_subscribe(
+        &self,
+        attempt_id: &str,
+    ) -> Option<broadcast::Receiver<HandlerLogLine>> {
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        inner
+            .values()
+            .find(|s| s.attempt_id == attempt_id)
+            .map(|s| s.handler_log_tx.subscribe())
+    }
+
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap_or_else(|p| p.into_inner()).len()
     }
@@ -193,6 +222,7 @@ mod tests {
 
     fn fake_session(exec: &str) -> Arc<Session> {
         let (tick_stop, _) = watch::channel(false);
+        let (handler_log_tx, _) = broadcast::channel(HANDLER_LOG_CHANNEL_CAP);
         Arc::new(Session {
             handle: RunHandle::new(),
             execution_id: exec.into(),
@@ -202,11 +232,13 @@ mod tests {
             tick_stop,
             status: Mutex::new(RunStatus::Running),
             started_at: Instant::now(),
+            handler_log_tx,
         })
     }
 
     fn fake_session_with_rate(exec: &str, rate_10s: f32) -> Arc<Session> {
         let (tick_stop, _) = watch::channel(false);
+        let (handler_log_tx, _) = broadcast::channel(HANDLER_LOG_CHANNEL_CAP);
         let agg = Arc::new(ProgressAggregator::new());
         agg.set_rate_for_test(rate_10s);
         Arc::new(Session {
@@ -218,6 +250,7 @@ mod tests {
             tick_stop,
             status: Mutex::new(RunStatus::Running),
             started_at: Instant::now(),
+            handler_log_tx,
         })
     }
 

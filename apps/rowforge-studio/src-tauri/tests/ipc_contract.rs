@@ -290,3 +290,39 @@ fn plan8_build_outcome_json_shape() {
     assert!(v.get("finished_at").is_some(), "finished_at key missing: {v:?}");
     assert!(v.get("stderr").is_some(), "stderr key missing: {v:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Plan 9 T6 — handler_log Tauri commands
+// ---------------------------------------------------------------------------
+
+/// Compile-time symbol check: all three Plan 9 T6 handler_log commands exist
+/// and are callable (the compiler will error if any are missing or renamed).
+#[test]
+fn plan9_handler_log_commands_registered() {
+    let _ = rowforge_studio_lib::commands::handler_log_tail;
+    let _ = rowforge_studio_lib::commands::handler_log_subscribe;
+    let _ = rowforge_studio_lib::commands::handler_log_unsubscribe;
+}
+
+/// HandlerLogLine is the element type in handler_log_tail's return value and
+/// in the event payload. Verify the JSON shape the TS mirror will depend on.
+#[test]
+fn plan9_handler_log_line_json_shape() {
+    let json = serde_json::json!({
+        "timestamp": "2026-05-25T10:00:00+00:00",
+        "worker_id": 3,
+        "stream": "stderr",
+        "line": "hello",
+    });
+    let parsed: rowforge_studio_core::HandlerLogLine =
+        serde_json::from_value(json).expect("deserialize HandlerLogLine");
+    assert_eq!(parsed.worker_id, 3);
+    assert_eq!(parsed.line, "hello");
+
+    // Round-trip — verify serialized keys.
+    let v = serde_json::to_value(&parsed).unwrap();
+    assert!(v.get("timestamp").is_some(), "timestamp key missing: {v:?}");
+    assert_eq!(v["worker_id"], 3, "worker_id key: {v:?}");
+    assert_eq!(v["stream"], "stderr", "stream must be snake_case: {v:?}");
+    assert_eq!(v["line"], "hello", "line key: {v:?}");
+}
