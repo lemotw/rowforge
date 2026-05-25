@@ -5,7 +5,7 @@
 //! `rowforge-studio-core`.
 
 mod state;
-mod commands;
+pub mod commands;
 mod events;
 mod settings;
 
@@ -43,6 +43,9 @@ pub fn run() {
             commands::handler_delete,
             commands::handler_rename,
             commands::handler_build,    // Plan 8 T7
+            commands::handler_log_tail,         // Plan 9 T6
+            commands::handler_log_subscribe,    // Plan 9 T6
+            commands::handler_log_unsubscribe,  // Plan 9 T6
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

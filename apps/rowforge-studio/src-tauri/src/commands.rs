@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use rowforge_studio_core::{
     AttemptDetail, AttemptId, BuildOutcome, CancelMode, ExecDetail, ExecRollup, ExecSummary,
     ExecutionId, ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, HandlerDetail,
-    HandlerSummary, ListFilter, ManifestReport, ManifestSource, OpenOpts, ProgressSnapshot,
-    RowHistory, RunHandle, RunOpts, RunStartedHandle, RunStatus, ScaffoldArgs, Settings,
-    StartExecArgs, StudioCore, UiError, Workspace,
+    HandlerLogLine, HandlerSummary, ListFilter, ManifestReport, ManifestSource, OpenOpts,
+    ProgressSnapshot, RowHistory, RunHandle, RunOpts, RunStartedHandle, RunStatus, ScaffoldArgs,
+    Settings, StartExecArgs, StudioCore, UiError, Workspace,
 };
 use tauri::Emitter;
 use tauri::State;
@@ -456,5 +456,109 @@ pub async fn handler_build(
     let _ = app.emit("handlers:list", ());
 
     result
+}
+
+// ===== Plan 9 T6 — handler log commands =====
+
+#[tauri::command]
+pub fn handler_log_tail(
+    state: State<'_, AppState>,
+    exec_id: String,
+    attempt_id: String,
+    max_lines: Option<usize>,
+) -> Result<Vec<HandlerLogLine>, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.handler_log_tail(&exec_id, &attempt_id, max_lines.unwrap_or(5000))
+}
+
+#[tauri::command]
+pub async fn handler_log_subscribe(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    exec_id: String,
+    attempt_id: String,
+) -> Result<(), UiError> {
+    let _ = exec_id; // not currently needed by subscribe; included for future symmetry
+    let rx_result = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_log_subscribe(&attempt_id)
+    };
+    let mut rx = rx_result?;
+    let event_name = format!("handler_log:{}", attempt_id);
+
+    // Cancel any stale subscription for this attempt before starting a new one
+    // to avoid orphaned pump tasks.
+    if let Some((_, old)) = state.handler_log_cancels.remove(&attempt_id) {
+        old.cancel();
+    }
+
+    // Track the new task so unsubscribe can stop it.
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    state
+        .handler_log_cancels
+        .insert(attempt_id.clone(), cancel_token.clone());
+
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        use tauri::Emitter;
+        use tokio::sync::broadcast::error::RecvError;
+        let mut batch = Vec::<HandlerLogLine>::with_capacity(64);
+        let mut dropped: u64 = 0;
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_millis(100));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                msg = rx.recv() => match msg {
+                    Ok(line) => {
+                        batch.push(line);
+                        if batch.len() >= 64 {
+                            let payload = serde_json::json!({
+                                "lines": &batch,
+                                "dropped": dropped,
+                            });
+                            let _ = app_clone.emit(&event_name, payload);
+                            batch.clear();
+                            dropped = 0;
+                        }
+                    }
+                    Err(RecvError::Lagged(n)) => { dropped += n; }
+                    Err(RecvError::Closed) => break,
+                },
+                _ = interval.tick() => {
+                    if !batch.is_empty() || dropped > 0 {
+                        let payload = serde_json::json!({
+                            "lines": &batch,
+                            "dropped": dropped,
+                        });
+                        let _ = app_clone.emit(&event_name, payload);
+                        batch.clear();
+                        dropped = 0;
+                    }
+                },
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn handler_log_unsubscribe(
+    state: State<'_, AppState>,
+    attempt_id: String,
+) -> Result<(), UiError> {
+    if let Some((_, token)) = state.handler_log_cancels.remove(&attempt_id) {
+        token.cancel();
+    }
+    Ok(())
 }
 

@@ -22,5 +22,7 @@ rowforge-studio-core = { path = "../../../crates/rowforge-studio-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
+dashmap = { workspace = true }
 futures = "0.3"
 tracing = { workspace = true }

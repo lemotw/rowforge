@@ -50,6 +50,9 @@ pub use rowforge_core::export::{ExportFormat, ExportOpts, ExportReport, ExportWa
 // Re-export build types (Plan 8 T7) so the Tauri shell and ipc_contract tests
 // can reference BuildOutcome without a direct rowforge-core dependency.
 pub use rowforge_core::build::BuildOutcome;
+// Re-export handler log types (Plan 9 T6) so the Tauri shell and ipc_contract
+// tests can reference HandlerLogLine without a direct rowforge-core dependency.
+pub use rowforge_core::handler_log::HandlerLogLine;
 
 // StartExecArgs is defined below (inline in lib.rs) and exported here.
 // Re-export is done at the bottom of the `pub use` section for discoverability.
