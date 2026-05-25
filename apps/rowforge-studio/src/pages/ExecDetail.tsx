@@ -29,9 +29,26 @@ export function ExecDetailPage() {
     <AppShell workspace={workspace} crumbs={crumbs}>
       <div className="p-6">
         {detail.isLoading && <Skeleton className="h-32 w-full" />}
-        {detail.isError && (
-          <div className="text-red-300">{uiErrorMessage(detail.error)}</div>
-        )}
+        {detail.isError && (() => {
+          const msg = uiErrorMessage(detail.error);
+          const isNotFound =
+            typeof detail.error === "object" &&
+            detail.error !== null &&
+            "kind" in detail.error &&
+            (detail.error as { kind: string }).kind === "not_found";
+          return isNotFound ? (
+            <div className="space-y-3">
+              <div className="text-red-300">
+                This execution has been deleted or is unavailable.
+              </div>
+              <Link to="/" className="text-blue-400 hover:underline">
+                ← Back to executions
+              </Link>
+            </div>
+          ) : (
+            <div className="text-red-300">{msg}</div>
+          );
+        })()}
         {detail.data && (
           <>
             <header className="mb-6 flex items-start justify-between">
