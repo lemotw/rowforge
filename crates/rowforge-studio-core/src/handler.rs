@@ -324,17 +324,23 @@ pub fn reveal_path(workspace_root: &Path, name: &str) -> Result<PathBuf, crate::
 // 3 templates embedded at compile time via include_str!. Variables
 // {{name}} and {{primary_field}} are replaced by simple string substitute
 // — no Tera/Handlebars dep. T6 (handler_scaffold) consumes these.
+//
+// Source files use a `.tpl` suffix so language servers (gopls, yaml-language-server)
+// don't try to validate them as real Go / YAML — `module {{name}}` isn't a
+// valid module path, and gopls would otherwise emit diagnostics. The output
+// filenames (returned by `template_files()`) remain canonical:
+// rowforge.yaml / handler.go / go.mod.
 
-const TPL_GO_STDIO_YAML: &str = include_str!("handler_templates/go_stdio/rowforge.yaml");
-const TPL_GO_STDIO_GO: &str = include_str!("handler_templates/go_stdio/handler.go");
-const TPL_GO_STDIO_MOD: &str = include_str!("handler_templates/go_stdio/go.mod");
+const TPL_GO_STDIO_YAML: &str = include_str!("handler_templates/go_stdio/rowforge.yaml.tpl");
+const TPL_GO_STDIO_GO: &str = include_str!("handler_templates/go_stdio/handler.go.tpl");
+const TPL_GO_STDIO_MOD: &str = include_str!("handler_templates/go_stdio/go.mod.tpl");
 
-const TPL_GO_BATCH_YAML: &str = include_str!("handler_templates/go_batch/rowforge.yaml");
-const TPL_GO_BATCH_GO: &str = include_str!("handler_templates/go_batch/handler.go");
-const TPL_GO_BATCH_MOD: &str = include_str!("handler_templates/go_batch/go.mod");
+const TPL_GO_BATCH_YAML: &str = include_str!("handler_templates/go_batch/rowforge.yaml.tpl");
+const TPL_GO_BATCH_GO: &str = include_str!("handler_templates/go_batch/handler.go.tpl");
+const TPL_GO_BATCH_MOD: &str = include_str!("handler_templates/go_batch/go.mod.tpl");
 
-const TPL_EMPTY_YAML: &str = include_str!("handler_templates/empty/rowforge.yaml");
-const TPL_EMPTY_GO: &str = include_str!("handler_templates/empty/handler.go");
+const TPL_EMPTY_YAML: &str = include_str!("handler_templates/empty/rowforge.yaml.tpl");
+const TPL_EMPTY_GO: &str = include_str!("handler_templates/empty/handler.go.tpl");
 
 /// Maps a template kind to its (filename, contents) tuples. Variables
 /// are NOT yet replaced — call `render` per file.
