@@ -11,6 +11,11 @@ use std::path::PathBuf;
 #[non_exhaustive]
 pub struct OpenOpts {
     pub workspace: Option<PathBuf>,
+    /// Maximum concurrent runs allowed across the whole workspace.
+    /// When `None`, `StudioCore::open` falls back to the spec default (3).
+    /// Plan 6 T9: threaded from `Settings.max_concurrent_runs` by the
+    /// Tauri `workspace_open` command; studio-core stays filesystem-policy-free.
+    pub max_concurrent_runs: Option<u32>,
 }
 
 impl OpenOpts {
@@ -19,6 +24,11 @@ impl OpenOpts {
     }
     pub fn with_workspace(mut self, p: PathBuf) -> Self {
         self.workspace = Some(p);
+        self
+    }
+    /// Set the workspace-level concurrency limit for `SessionRegistry`.
+    pub fn with_max_concurrent_runs(mut self, n: Option<u32>) -> Self {
+        self.max_concurrent_runs = n;
         self
     }
 }
