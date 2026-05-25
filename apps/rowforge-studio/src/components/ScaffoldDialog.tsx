@@ -18,6 +18,7 @@ interface Props {
 }
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+const PRIMARY_FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 const TEMPLATES: { value: ScaffoldTemplate; label: string; hint: string }[] = [
   {
@@ -33,7 +34,7 @@ const TEMPLATES: { value: ScaffoldTemplate; label: string; hint: string }[] = [
   {
     value: "empty",
     label: "Empty",
-    hint: "Bare rowforge.yaml only",
+    hint: "Minimal skeleton: rowforge.yaml + empty handler.go",
   },
 ];
 
@@ -52,7 +53,12 @@ export function ScaffoldDialog({ open, onOpenChange }: Props) {
         ? "Lowercase letters, numbers, and hyphens; must start with a letter or number"
         : null;
 
-  const primaryError = primaryField === "" ? "Primary field is required" : null;
+  const primaryError =
+    primaryField === ""
+      ? "Primary field is required"
+      : !PRIMARY_FIELD_RE.test(primaryField)
+        ? "Must be a valid identifier: letters, digits, underscores; cannot start with a digit"
+        : null;
 
   const canSubmit =
     name !== "" && nameError === null && primaryError === null && !scaffold.isPending;

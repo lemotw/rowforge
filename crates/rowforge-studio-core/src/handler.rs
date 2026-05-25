@@ -123,10 +123,21 @@ fn build_summary(path: &Path, name: String) -> Result<HandlerSummary, UiError> {
         }
     };
     let metadata = std::fs::metadata(path).map_err(|e| UiError::Io(e.to_string()))?;
-    let last_modified: chrono::DateTime<chrono::Utc> = metadata
+    let dir_mtime = metadata
         .modified()
-        .map_err(|e| UiError::Io(e.to_string()))?
-        .into();
+        .map_err(|e| UiError::Io(e.to_string()))?;
+    // Spec §8.3: last_modified is max(dir mtime, max entry mtime). This reflects
+    // changes to files inside the dir, which don't update the dir's own mtime on
+    // all platforms. One level deep — no subdirectory recursion.
+    let max_mtime = std::fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.metadata().ok())
+        .filter_map(|m| m.modified().ok())
+        .fold(dir_mtime, |acc, t| if t > acc { t } else { acc });
+    let last_modified: chrono::DateTime<chrono::Utc> = max_mtime.into();
     Ok(HandlerSummary {
         name,
         path: path.to_path_buf(),
@@ -207,16 +218,19 @@ pub fn show(workspace_root: &Path, name: &str) -> Result<HandlerDetail, UiError>
     })
 }
 
-/// Validates that `name` matches `[a-z0-9-]+`. Called by every fs-touching
-/// op (scaffold / delete / rename) BEFORE any path operation, so a
-/// malicious `name` like `../etc` is rejected before it can join into a
-/// path. First line of three-layer defense (canonicalize + parent-check
-/// follow in T7).
+/// Validates that `name` matches `[a-z0-9][a-z0-9-]*`. Called by every
+/// fs-touching op (scaffold / delete / rename) BEFORE any path operation,
+/// so a malicious `name` like `../etc` is rejected before it can join into
+/// a path. First line of three-layer defense (canonicalize + parent-check
+/// follow in T7). Requires first char to be alphanumeric (no leading hyphen).
 pub(crate) fn validate_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    let mut chars = name.chars();
+    match chars.next() {
+        None => return false,
+        Some(c) if !c.is_ascii_lowercase() && !c.is_ascii_digit() => return false,
+        _ => {}
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +315,7 @@ pub fn open_editor(
         settings_preferred,
         visual.as_deref(),
         editor.as_deref(),
-        &["code", "cursor", "subl", "zed"],
+        &["code", "cursor", "nvim", "vim", "nano"],
     )?;
     let (cmd, args) = argv
         .split_first()
@@ -403,9 +417,29 @@ pub(crate) fn render(template: &str, name: &str, primary_field: &str) -> String 
 ///
 /// Writes each template file with `{{name}}` / `{{primary_field}}`
 /// substitution. Returns the canonical name (same as input).
+/// Validates that `primary_field` is a safe identifier: `[a-zA-Z_][a-zA-Z0-9_]*`.
+/// This is the subset that is safe to substitute into YAML values and Go identifiers
+/// without quoting or escaping. Rejects empty strings, leading digits, and any
+/// punctuation (quotes, newlines, slashes, hyphens, etc.) that could corrupt the
+/// generated files.
+pub(crate) fn validate_primary_field(field: &str) -> bool {
+    let mut chars = field.chars();
+    match chars.next() {
+        None => return false,
+        Some(c) if !c.is_ascii_alphabetic() && c != '_' => return false,
+        _ => {}
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 pub fn scaffold(workspace_root: &Path, args: ScaffoldArgs) -> Result<String, crate::UiError> {
     if !validate_name(&args.name) {
         return Err(crate::UiError::InvalidHandlerName { name: args.name });
+    }
+    if !validate_primary_field(&args.primary_field) {
+        return Err(crate::UiError::InvalidArg(
+            "primary_field must be a valid identifier (letters, digits, underscores; cannot start with a digit)".to_string(),
+        ));
     }
     let dir = workspace_root.join("handlers").join(&args.name);
     if dir.exists() {
@@ -564,6 +598,32 @@ mod tests {
         assert!(!validate_name("a/b"));
         assert!(!validate_name("with_underscore"));
         assert!(!validate_name("foo.bar"));
+    }
+
+    #[test]
+    fn name_validator_rejects_leading_hyphen() {
+        // Tightened regex: first char must be [a-z0-9], not '-'.
+        assert!(!validate_name("-foo"), "leading hyphen must be rejected");
+        assert!(!validate_name("-"), "bare hyphen must be rejected");
+    }
+
+    #[test]
+    fn primary_field_validator_accepts_valid_identifiers() {
+        assert!(validate_primary_field("id"));
+        assert!(validate_primary_field("order_id"));
+        assert!(validate_primary_field("_private"));
+        assert!(validate_primary_field("MyField"));
+        assert!(validate_primary_field("field2"));
+    }
+
+    #[test]
+    fn primary_field_validator_rejects_unsafe_inputs() {
+        assert!(!validate_primary_field(""), "empty should be rejected");
+        assert!(!validate_primary_field("2fast"), "leading digit should be rejected");
+        assert!(!validate_primary_field("id\""), "quote should be rejected");
+        assert!(!validate_primary_field("id\nnewline"), "newline should be rejected");
+        assert!(!validate_primary_field("my-field"), "hyphen should be rejected");
+        assert!(!validate_primary_field("my field"), "space should be rejected");
     }
 
     #[test]

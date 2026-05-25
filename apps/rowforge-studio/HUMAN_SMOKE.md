@@ -368,7 +368,7 @@ echo "// notes" > "$WS/handlers/no-manifest/notes.txt"
    Open in editor / Reveal / Rename… / Delete…
 6. **Manifest** section: green "valid" badge + key-value table
    (kind, primary_field, entry.cmd).
-7. **Files** section: lists `rowforge.yaml`, `handler.go` with byte sizes.
+7. **Files** section: lists `handler.go` with byte size (`rowforge.yaml` appears in the Manifest section above, not here).
 8. Back to list → click `broken` → red error list shows manifest parse
    errors.
 9. Back to list → click `no-manifest` → "No rowforge.yaml in this handler

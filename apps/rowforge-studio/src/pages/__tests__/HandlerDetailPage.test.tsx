@@ -69,7 +69,6 @@ describe("HandlerDetailPage", () => {
     manifest_warnings: [],
     source_files: [
       { name: "main.go", size_bytes: 4096, is_directory: false },
-      { name: "rowforge.yaml", size_bytes: 512, is_directory: false },
       { name: "fixtures", size_bytes: 0, is_directory: true },
     ],
     has_fixtures_dir: true,
@@ -234,9 +233,10 @@ describe("HandlerDetailPage", () => {
     expect(await screen.findByText("main.go")).toBeInTheDocument();
     expect(await screen.findByText("4.0 KB")).toBeInTheDocument();
 
-    // rowforge.yaml: 512 bytes → 512 B (less than 1 KB threshold)
-    expect(await screen.findByText("rowforge.yaml")).toBeInTheDocument();
-    expect(await screen.findByText("512 B")).toBeInTheDocument();
+    // rowforge.yaml is excluded from source_files (it appears in the Manifest
+    // section instead) — assert it does NOT appear in the Files list.
+    await screen.findByText("main.go"); // wait for render
+    expect(screen.queryByText("rowforge.yaml")).not.toBeInTheDocument();
 
     // fixtures directory: shown with trailing slash, size is —
     expect(await screen.findByText("fixtures/")).toBeInTheDocument();
@@ -251,8 +251,8 @@ describe("HandlerDetailPage", () => {
     mockInvoke(validDetail);
     render(wrap(<HandlerDetailPage />, "alpha"));
 
-    // 3 source files
-    expect(await screen.findByText(/Files \(3\)/i)).toBeInTheDocument();
+    // 2 source files (rowforge.yaml is in the Manifest section, not here)
+    expect(await screen.findByText(/Files \(2\)/i)).toBeInTheDocument();
   });
 
   it("renders warnings list when manifest_warnings is non-empty", async () => {

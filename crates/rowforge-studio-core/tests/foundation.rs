@@ -1711,6 +1711,78 @@ fn scaffold_errors_when_name_already_exists() {
 }
 
 #[test]
+fn scaffold_rejects_leading_hyphen_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-lh").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    // Leading hyphen — must be rejected by the tightened validate_name regex.
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "-foo",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "id",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "leading-hyphen name should be rejected; got: {:?}", err);
+
+    let err2 = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "-",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "id",
+        ))
+        .unwrap_err();
+    assert!(matches!(err2, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "bare hyphen name should be rejected; got: {:?}", err2);
+}
+
+#[test]
+fn scaffold_rejects_unsafe_primary_field() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-pf").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    // primary_field with a quote (YAML / Go injection risk).
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "my-handler",
+            rowforge_studio_core::ScaffoldTemplate::GoStdio,
+            "id\"",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidArg(_)),
+        "primary_field with quote should return InvalidArg; got: {:?}", err);
+
+    // primary_field with embedded newline.
+    let err2 = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "my-handler2",
+            rowforge_studio_core::ScaffoldTemplate::GoStdio,
+            "id\nentry:\n  cmd: [\"rm\", \"-rf\"]",
+        ))
+        .unwrap_err();
+    assert!(matches!(err2, rowforge_studio_core::UiError::InvalidArg(_)),
+        "primary_field with newline should return InvalidArg; got: {:?}", err2);
+}
+
+#[test]
+fn scaffold_accepts_valid_primary_field() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-pfok").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "good-handler",
+        rowforge_studio_core::ScaffoldTemplate::GoStdio,
+        "order_id",
+    )).expect("valid identifier primary_field should be accepted");
+}
+
+#[test]
 fn delete_removes_handler_dir() {
     let tmp = tempfile::Builder::new().prefix("rfs-plan7-del").tempdir().unwrap();
     let dir = tmp.path().join("handlers").join("doomed");
@@ -1778,21 +1850,26 @@ fn delete_rejects_symlinked_dir_pointing_outside_workspace() {
     ).unwrap();
     let result = core.handler_delete("evil");
 
-    // Two acceptable outcomes:
-    // (a) Err with UiError::InvalidArg or similar — we refused to follow
-    //     the symlink because canonicalize() resolved to outside the
-    //     workspace. The symlink and victim both remain untouched.
-    // (b) Ok — the symlink itself was removed (NOT followed), and the
-    //     victim dir is untouched.
-    //
-    // BOTH options preserve the victim. Assert the victim wasn't recursed.
+    // The canonicalize() check MUST reject this: the symlink resolves
+    // outside the workspace's handlers/ dir, so layer 3 fires.
+    assert!(
+        matches!(result, Err(_)),
+        "delete of a symlink pointing outside the workspace must return Err; got: {:?}",
+        result
+    );
+
+    // Verify the symlink entry itself is still intact (not removed as a
+    // side-effect of the rejection). Use symlink_metadata so we detect the
+    // link itself rather than following it to the (still-existing) target.
+    assert!(
+        std::fs::symlink_metadata(tmp.path().join("handlers").join("evil")).is_ok(),
+        "the symlink entry should still exist after rejection"
+    );
+
+    // The victim dir and its contents must be untouched.
     assert!(victim.is_dir(), "victim dir should NOT have been deleted");
     assert!(victim.join("important.txt").is_file(),
         "victim's contents should NOT have been removed");
-
-    // Whatever outcome handler_delete chose, the symlink should not be
-    // resolved as the canonical target for remove_dir_all.
-    let _ = result;
 }
 
 #[test]
@@ -1875,6 +1952,63 @@ fn rename_rejects_invalid_new_name() {
         "got: {:?}", err);
     // Source still intact — pre-flight regex blocked anything from happening.
     assert!(tmp.path().join("handlers").join("ok").is_dir());
+}
+
+/// Renaming a handler dir is a pure `fs::rename` — sqlite is NOT updated.
+/// Existing executions whose `last_handler_dir` pointed at the old path
+/// must still see the old path after the rename (lazy / content-addressed
+/// semantics from spec part-2 footnote).
+#[test]
+fn rename_preserves_executions_last_handler_dir() {
+    use rowforge_core::execution_store::{ExecutionStore, NewExecution};
+
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-lazy").tempdir().unwrap();
+
+    // 1. Create the handler dir via scaffold.
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "old-name",
+        rowforge_studio_core::ScaffoldTemplate::Empty,
+        "id",
+    )).unwrap();
+    let handler_abs = tmp.path().join("handlers").join("old-name");
+
+    // 2. Insert an execution row with last_handler_dir pointing at the handler dir.
+    let exec_id = {
+        let csv = tmp.path().join("input.csv");
+        std::fs::write(&csv, "id\nr1\n").unwrap();
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store.create_execution(NewExecution {
+            name: Some("lazy-rename-test".into()),
+            input_csv_id: "csv-lazy".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        }).unwrap();
+        store.set_last_handler_dir(&exec.id, &handler_abs).unwrap();
+        exec.id
+    };
+
+    // 3. Rename the handler.
+    core.handler_rename("old-name", "new-name").unwrap();
+
+    // 4. Assert new dir exists, old dir is gone.
+    assert!(!tmp.path().join("handlers").join("old-name").is_dir(),
+        "old handler dir should be gone after rename");
+    assert!(tmp.path().join("handlers").join("new-name").is_dir(),
+        "new handler dir should exist after rename");
+
+    // 5. Assert last_handler_dir in sqlite is UNCHANGED (still the old path).
+    let store = ExecutionStore::open(tmp.path()).unwrap();
+    let exec = store.get_execution(&exec_id).unwrap()
+        .expect("execution should still exist");
+    assert_eq!(
+        exec.last_handler_dir.as_deref(),
+        Some(handler_abs.as_path()),
+        "rename must NOT update last_handler_dir in sqlite; got: {:?}",
+        exec.last_handler_dir,
+    );
 }
 
 // ============================================================

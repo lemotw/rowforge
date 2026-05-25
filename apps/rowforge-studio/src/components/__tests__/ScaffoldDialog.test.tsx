@@ -177,6 +177,26 @@ describe("ScaffoldDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
+  // 7c. Invalid primary_field: Create button disabled
+  it("disables Create button when primary_field contains invalid characters (e.g. a quote)", () => {
+    render(wrap(<ScaffoldDialog open={true} onOpenChange={noop} />));
+
+    // Set a valid name first so name validation passes.
+    fireEvent.change(screen.getByLabelText(/^Name$/i), { target: { value: "my-handler" } });
+
+    // Enter a primary_field with a quote — not a valid identifier.
+    const primaryInput = screen.getByLabelText(/^Primary field$/i);
+    fireEvent.change(primaryInput, { target: { value: 'id"' } });
+
+    const createBtn = screen.getByRole("button", { name: /^Create$/i });
+    expect(createBtn).toBeDisabled();
+
+    // Inline error message should appear.
+    expect(
+      screen.getByText(/Must be a valid identifier/i)
+    ).toBeInTheDocument();
+  });
+
   // 7b. Error path: InvalidHandlerName shows inline banner
   it("shows inline error banner on InvalidHandlerName", async () => {
     const { ipc } = await import("@/ipc/client");
