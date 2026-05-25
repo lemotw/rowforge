@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
@@ -7,6 +7,7 @@ import { AppShell } from "@/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
+import { ScaffoldDialog } from "@/components/ScaffoldDialog";
 import { useWorkspace } from "@/ipc/queries";
 import {
   useHandlerList,
@@ -20,6 +21,7 @@ export function HandlersPage() {
   const qc = useQueryClient();
   const ws = useWorkspace();
   const { data, isLoading, isError, error } = useHandlerList();
+  const [scaffoldOpen, setScaffoldOpen] = useState(false);
 
   // Coarse refresh on backend mutation event (T9).
   useEffect(() => {
@@ -44,10 +46,7 @@ export function HandlersPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              // TODO(T13): open ScaffoldDialog
-              console.warn("ScaffoldDialog not yet wired (Plan 7 T13)");
-            }}
+            onClick={() => setScaffoldOpen(true)}
           >
             <FileCode2 className="mr-1.5 h-4 w-4" />
             New Handler
@@ -100,6 +99,8 @@ export function HandlersPage() {
           </Table>
         )}
       </div>
+
+      <ScaffoldDialog open={scaffoldOpen} onOpenChange={setScaffoldOpen} />
     </AppShell>
   );
 }
