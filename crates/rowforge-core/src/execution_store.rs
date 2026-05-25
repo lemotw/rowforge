@@ -68,6 +68,7 @@ pub struct Execution {
     pub abandoned_at: Option<DateTime<Utc>>,
     pub abandoned_reason: Option<String>,
     pub dir: PathBuf,
+    pub last_handler_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +315,7 @@ impl ExecutionStore {
             abandoned_at: None,
             abandoned_reason: None,
             dir: dir.clone(),
+            last_handler_dir: None,
         };
 
         let tx = self.conn.transaction()?;
@@ -350,7 +352,8 @@ impl ExecutionStore {
             .query_row(
                 "SELECT id, name, input_csv_id, input_csv_hash, input_row_count,
                         current_handler_instance_id, state, created_at,
-                        settled_at, closed_at, abandoned_at, abandoned_reason
+                        settled_at, closed_at, abandoned_at, abandoned_reason,
+                        last_handler_dir
                  FROM executions WHERE id = ?1",
                 params![id],
                 |r| row_to_execution(r, &home),
@@ -364,7 +367,8 @@ impl ExecutionStore {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, input_csv_id, input_csv_hash, input_row_count,
                     current_handler_instance_id, state, created_at,
-                    settled_at, closed_at, abandoned_at, abandoned_reason
+                    settled_at, closed_at, abandoned_at, abandoned_reason,
+                    last_handler_dir
              FROM executions ORDER BY created_at DESC",
         )?;
         let rows = stmt
@@ -412,6 +416,26 @@ impl ExecutionStore {
             .ok_or_else(|| CoreError::Store(format!("execution vanished mid-update: {id}")))?;
         write_manifest(&exec.dir, &exec)?;
         Ok(exec)
+    }
+
+    /// Persist the handler directory most recently used for a run of
+    /// this execution. Called from `studio-core::start_run` after the
+    /// new attempt is created. Idempotent — overwrites any previous
+    /// value. Returns `CoreError::Store` if `id` doesn't exist.
+    pub fn set_last_handler_dir(
+        &mut self,
+        id: &str,
+        dir: &std::path::Path,
+    ) -> Result<()> {
+        let s = dir.to_string_lossy().into_owned();
+        let n = self.conn.execute(
+            "UPDATE executions SET last_handler_dir = ?1 WHERE id = ?2",
+            params![s, id],
+        )?;
+        if n == 0 {
+            return Err(CoreError::Store(format!("execution {} not found", id)));
+        }
+        Ok(())
     }
 
     pub fn register_handler_instance(
@@ -697,6 +721,8 @@ fn row_to_execution(r: &rusqlite::Row<'_>, home: &Path) -> rusqlite::Result<Exec
             Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
         )
     })?;
+    let last_handler_dir: Option<String> = r.get(12)?;
+    let last_handler_dir = last_handler_dir.map(PathBuf::from);
     Ok(Execution {
         id,
         name: r.get(1)?,
@@ -711,6 +737,7 @@ fn row_to_execution(r: &rusqlite::Row<'_>, home: &Path) -> rusqlite::Result<Exec
         abandoned_at: r.get::<_, Option<String>>(10)?.map(parse_rfc3339).transpose()?,
         abandoned_reason: r.get(11)?,
         dir,
+        last_handler_dir,
     })
 }
 
@@ -1137,5 +1164,46 @@ mod tests {
             .prepare("SELECT last_handler_dir FROM executions WHERE 1=0")
             .unwrap();
         let _ = stmt.query([]).unwrap();
+    }
+
+    #[test]
+    fn set_and_read_last_handler_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let csv_path = tmp.path().join("in.csv");
+        std::fs::write(&csv_path, "row_id\nr1\n").unwrap();
+
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store.create_execution(NewExecution {
+            name: Some("test-lhd".into()),
+            input_csv_id: "test".into(),
+            input_csv_path: csv_path,
+            current_handler_instance_id: None,
+        }).unwrap();
+
+        // Fresh exec → None.
+        let loaded = store.get_execution(&exec.id).unwrap().unwrap();
+        assert_eq!(loaded.last_handler_dir, None);
+
+        // Set, then re-read.
+        store
+            .set_last_handler_dir(&exec.id, std::path::Path::new("/tmp/hh"))
+            .unwrap();
+        let loaded = store.get_execution(&exec.id).unwrap().unwrap();
+        assert_eq!(
+            loaded.last_handler_dir.as_deref().and_then(|p| p.to_str()),
+            Some("/tmp/hh"),
+        );
+
+        // list_executions also sees it.
+        let all = store.list_executions().unwrap();
+        let e = all.iter().find(|e| e.id == exec.id).unwrap();
+        assert_eq!(
+            e.last_handler_dir.as_deref().and_then(|p| p.to_str()),
+            Some("/tmp/hh"),
+        );
+
+        // Setting on a nonexistent id errors.
+        let err = store.set_last_handler_dir("nope", std::path::Path::new("/x"));
+        assert!(err.is_err());
     }
 }
