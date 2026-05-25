@@ -96,10 +96,13 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
      **Switch workspace…** 按鈕開啟目錄選取器。當 `run_active().len()
      > 0` 時按鈕停用並顯示琥珀色警告（頁面掛載時每 2 秒刷新）
      — 切換會使進行中的 run 成為孤兒。
-  2. **Concurrency** — `default_workers` 與 `max_concurrent_runs`
-     數字輸入框。當 `max_concurrent_runs` 的值與已載入伺服器值不同時，
-     輸入框下方顯示藍色「Will apply on next workspace open」banner，
-     因為此欄位僅在 `workspace_open` 時才會被讀取（第 5 部分 §5.6）。
+  2. **Concurrency** — `max_concurrent_runs` 數字輸入框。當值與已載入
+     伺服器值不同時，輸入框下方顯示藍色「Will apply on next workspace
+     open」banner，因為此欄位僅在 `workspace_open` 時才會被讀取
+     （第 5 部分 §5.6）。
+     （Per-run worker 數量在 RunButton 選項面板裡指定，不在 Settings;
+     `Settings.default_workers` 是 dead code,studio-core 的 `start_run`
+     從來沒讀過,已移除。）
   3. **Telemetry** — `telemetry_opt_in` 核取方塊。
 
   底部有 Save / Cancel 按鈕。Save 透過 `workspace_settings_save` 持久化
@@ -406,10 +409,13 @@ vs `actual` digest;`MissingRequiredInput` 列出欄位）。
 Settings 頁逐欄位暴露 `Settings`(第 2 部分 §2.2.9）。
 
 - `workspace_root` — 唯讀顯示;「Switch workspace」開啟 picker。
-- `default_workers` — 數字輸入,選填;placeholder 顯示 core 預設。
 - `max_concurrent_runs` — 數字輸入,預設 3（第 3 部分 §3.4）。
   降至低於目前 active 數時顯示確認警告。
 - `telemetry_opt_in` — switch,預設關;tooltip 註明 v1 不收集。
+
+注意:`default_workers` **不是** Settings 欄位。Per-run worker 數
+在 RunButton 選項面板配置;studio-core 的 `start_run` 從來沒讀過
+workspace 全域預設,因此移除。
 
 v1 無進階 JSON 編輯器。路徑解析住在 Tauri 層（第 5 部分 §5.6）。
 

@@ -22,7 +22,6 @@ const CURRENT_SCHEMA_VERSION: u8 = 1;
 pub struct Settings {
     pub schema_version: u8,
     pub workspace_root: Option<PathBuf>,
-    pub default_workers: Option<u32>,
     pub max_concurrent_runs: Option<u32>,
     pub telemetry_opt_in: bool,
 }
@@ -32,7 +31,6 @@ impl Default for Settings {
         Settings {
             schema_version: CURRENT_SCHEMA_VERSION,
             workspace_root: None,
-            default_workers: None,
             max_concurrent_runs: None,
             telemetry_opt_in: false,
         }

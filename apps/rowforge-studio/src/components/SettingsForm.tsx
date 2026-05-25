@@ -68,23 +68,6 @@ export function SettingsForm() {
       </Section>
 
       <Section title="Concurrency">
-        <Field label="Default workers" htmlFor="default-workers">
-          <Input
-            id="default-workers"
-            type="number"
-            min={1}
-            value={form.default_workers ?? ""}
-            onChange={(e) =>
-              setForm({
-                ...form,
-                default_workers:
-                  e.target.value === ""
-                    ? null
-                    : Math.max(1, parseInt(e.target.value, 10) || 1),
-              })
-            }
-          />
-        </Field>
         <Field label="Max concurrent runs" htmlFor="max-concurrent-runs">
           <Input
             id="max-concurrent-runs"

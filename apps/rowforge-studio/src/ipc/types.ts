@@ -27,7 +27,11 @@ export interface AttemptCountsStub {
 export interface Settings {
   schema_version: number;
   workspace_root: string | null;
-  default_workers: number | null;
+  /**
+   * Workspace-scoped concurrency limit enforced at SessionRegistry. Reads at
+   * workspace_open; surfaced via the "Will apply on next workspace open"
+   * banner in the Settings form. Default 3 when null (spec §3.4).
+   */
   max_concurrent_runs: number | null;
   telemetry_opt_in: boolean;
 }

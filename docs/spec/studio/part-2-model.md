@@ -149,7 +149,6 @@ enum RunStatus { Pending, Starting, Running, Cancelling, Done, Aborted, Crashed 
 struct Settings {
     schema_version: u8,                  // = 1 in v1
     workspace_root: Option<PathBuf>,
-    default_workers: Option<u32>,
     max_concurrent_runs: Option<u32>,    // default 3
     telemetry_opt_in: bool,              // default false; not collected in v1
 }

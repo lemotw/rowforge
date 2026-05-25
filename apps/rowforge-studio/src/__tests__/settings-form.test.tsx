@@ -18,7 +18,6 @@ vi.mock("@/ipc/client", () => ({
     workspace_settings_load: vi.fn().mockResolvedValue({
       schema_version: 1,
       workspace_root: "/tmp/ws",
-      default_workers: 2,
       max_concurrent_runs: 3,
       telemetry_opt_in: false,
     }),
@@ -42,12 +41,13 @@ function wrap(node: React.ReactNode) {
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("SettingsForm", () => {
-  it("loads + renders the four sections", async () => {
+  it("loads + renders the three sections", async () => {
     render(wrap(<SettingsForm />));
     expect(await screen.findByText(/^workspace$/i)).toBeInTheDocument();
-    expect(await screen.findByDisplayValue("2")).toBeInTheDocument();   // default_workers
     expect(await screen.findByDisplayValue("3")).toBeInTheDocument();   // max_concurrent_runs
     expect(screen.getByText(/telemetry/i)).toBeInTheDocument();
+    // default_workers dropped — workers is per-Run, not a Settings default.
+    expect(screen.queryByLabelText(/default workers/i)).toBeNull();
   });
 
   it("shows the dirty banner when max_concurrent_runs differs from loaded value", async () => {

@@ -110,11 +110,13 @@ different lib is not a breaking spec change.
      Button is disabled with an amber warning when `run_active().len()
      > 0` (refresh interval 2s while the page is mounted) — switching
      would orphan in-flight runs.
-  2. **Concurrency** — `default_workers` + `max_concurrent_runs`
-     number inputs. A blue "Will apply on next workspace open" banner
-     appears below `max_concurrent_runs` when its value differs from
-     the loaded server value, since the field is only consumed at
-     `workspace_open` time (Part 5 §5.6).
+  2. **Concurrency** — `max_concurrent_runs` number input. A blue
+     "Will apply on next workspace open" banner appears below it when
+     its value differs from the loaded server value, since the field
+     is only consumed at `workspace_open` time (Part 5 §5.6).
+     (Per-run worker count is set in the RunButton options panel,
+     not here — `Settings.default_workers` was removed as dead code:
+     nothing in studio-core's `start_run` ever read it.)
   3. **Telemetry** — `telemetry_opt_in` checkbox.
 
   Save / Cancel buttons at the bottom. Save persists via
@@ -439,12 +441,15 @@ no matter how reasonable they sound to a designer.
 The Settings page exposes `Settings` (Part 2 §2.2.9) one field per row.
 
 - `workspace_root` — read-only display; "Switch workspace" opens picker.
-- `default_workers` — number input, optional; placeholder shows core
-  default.
 - `max_concurrent_runs` — number input, default 3 (Part 3 §3.4).
   Lowering below current active count shows a confirmation warning.
 - `telemetry_opt_in` — switch, default off; tooltip notes telemetry is
   not collected in v1.
+
+Note: `default_workers` is **not** a Settings field. Per-run worker
+count is configured in the RunButton options panel; nothing in
+studio-core's `start_run` ever consumed a workspace-global default,
+so the field was removed.
 
 No advanced JSON editor in v1. Path resolution is in the Tauri layer
 (Part 5 §5.6).
