@@ -258,3 +258,66 @@ The handler is **not** picked here — it is selected per-Run on ExecDetail
 - **Hard cancel still degrades to soft cancel** — needs rowforge-core process-kill API
 - **Export blocks UI** — no streaming progress, no cancel during export, no per-file granularity
 - **`total_rate` / `slowest_run` still placeholder** — `RunRollupTick` returns `0.0` / `null` for these fields
+
+## Plan 06 additions
+
+### Settings page
+
+1. Click **Settings** in the left sidebar → lands on `/settings`
+2. Confirm the 4 sections render:
+   - **Workspace** — current path + Switch workspace… button
+   - **Concurrency** — Default workers + Max concurrent runs inputs
+   - **Telemetry** — Opt-in checkbox
+3. Edit **Max concurrent runs** from 3 to 5
+4. Confirm the blue banner "ℹ Changes to max concurrent runs apply on next workspace open" appears
+5. Click **Save** → no toast (silent success); form retains the new value
+6. Click **Cancel** after editing again → form snaps back to the saved value (3 or whatever the last save was)
+
+### Workspace switching — happy path
+
+1. From Settings, with no active runs (verify via header pill = empty), click **Switch workspace…**
+2. Pick a different directory (or a new empty one)
+3. App routes to `/` showing the new workspace's exec list (likely empty)
+4. Sidebar / header shows the new workspace path
+5. settings.json on disk now points to the new root
+
+### Workspace switching — blocked
+
+1. Start a long-running attempt (sample 10s sleep handler with ≥1 row)
+2. While running, open `/settings`
+3. Confirm **Switch workspace…** is disabled with tooltip "Cancel N active run first"
+4. Confirm the amber warning text "⚠ N active run — cancel to switch" appears below the button
+5. Cancel the run (via the active-runs pill or attempt page)
+6. Confirm within 2s the button becomes enabled (the 2s poll fires)
+
+### `last_handler_dir` persistence across restart
+
+1. Run an exec with a handler dir (via RunButton or the Wizard's "Start immediately")
+2. Quit Studio entirely (Cmd+Q on macOS / Alt+F4 on Windows / similar)
+3. Reopen Studio, navigate back to the same exec
+4. Click **Run** (the primary button, NOT the gear icon) → directory picker should NOT appear; the previous handler dir is auto-selected and the run starts directly
+5. Confirm via `sqlite3 <workspace>/executions.db "SELECT id, last_handler_dir FROM executions"` that the value is stored
+
+### `max_concurrent_runs` takes effect at next workspace_open
+
+1. Change Settings → Max concurrent runs → 1, Save
+2. With no workspace switch yet, try to start 2 concurrent runs on different execs (or two attempts of the same exec — Plan 4 limits are 1/exec / 3/workspace)
+3. The second run should NOT be rejected (old limit still in effect — banner said it would apply on next open)
+4. Switch workspace (or quit + reopen Studio) → re-enter same workspace
+5. Now try the 2 concurrent runs again → second should fail with `run_busy { scope: per_workspace, limit: 1 }`
+
+### `RunRollupTick` real numbers
+
+1. Start 2 concurrent runs with different speeds (e.g. one sleep 10s × 5 rows, one sleep 2s × 5 rows)
+2. Wait ~12 seconds (so both sliding windows fill)
+3. Open the active-runs pill in the header
+4. Confirm `total_rate` shows a non-zero number (sum of both runs' rates per second)
+5. Confirm `slowest_run` points to the slower handler's attempt (the 10s-sleep one)
+
+### Known Plan 6 limitations (deferred to Plan 7+)
+
+- Handler authoring panel (Part 8 entirely) → Plan 7
+- Hard cancel still degrades to soft cancel — needs rowforge-core process-kill API
+- No Settings hot-reload — `max_concurrent_runs` only takes effect on next workspace open (intentional; surfaced via dirty banner)
+- No multi-workspace recents / "Recently opened" picker
+- `slowest_run` heuristic is min positive rate_10s; ETA-based and stall-aware variants deferred
