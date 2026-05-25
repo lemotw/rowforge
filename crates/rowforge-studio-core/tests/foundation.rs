@@ -1505,6 +1505,54 @@ fn handler_list_returns_empty_when_handlers_dir_missing() {
     assert_eq!(core.handler_list().unwrap().len(), 0);
 }
 
+// Regression: last_modified must be the max of dir mtime AND every top-level
+// entry's mtime, because writing a file does not always update the parent
+// directory's own mtime (platform-dependent).
+//
+// Strategy: snapshot last_modified before a file write, sleep 1.1s (enough
+// to advance the filesystem clock), write a new file, snapshot again.
+// The second snapshot must be strictly later than the first. This avoids
+// adding a dep on filetime's set_file_mtime, which is unreliable on APFS.
+#[test]
+fn list_uses_max_mtime_over_dir_contents() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let h = tmp.path().join("handlers").join("zeta");
+    std::fs::create_dir_all(&h).unwrap();
+    std::fs::write(
+        h.join("rowforge.yaml"),
+        "name: zeta\nversion: 0.1.0\nentry:\n  cmd: [\"./zeta\"]\n",
+    ).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    // Baseline: last_modified before any file is written inside the handler dir
+    // (only rowforge.yaml exists at this point).
+    let list_before = core.handler_list().unwrap();
+    assert_eq!(list_before.len(), 1);
+    let before = list_before[0].last_modified;
+
+    // Sleep past filesystem clock resolution (1.1 s covers HFS+ 1-s and
+    // APFS sub-second granularity).
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    // Write a new file inside the handler dir. The file's mtime will be later
+    // than the dir's own mtime (which the OS may not update on file creation).
+    std::fs::write(h.join("handler.go"), "package main").unwrap();
+
+    let list_after = core.handler_list().unwrap();
+    assert_eq!(list_after.len(), 1);
+    let after = list_after[0].last_modified;
+
+    assert!(
+        after > before,
+        "last_modified should advance when a file inside the handler dir is \
+         written; before={before:?}, after={after:?}. The fold over dir entries \
+         is likely broken."
+    );
+}
+
 #[test]
 fn handler_show_returns_manifest_and_source_files() {
     let tmp = tempfile::TempDir::new().unwrap();

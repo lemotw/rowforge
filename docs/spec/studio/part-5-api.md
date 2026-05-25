@@ -193,6 +193,7 @@ Plan 7 variant details:
 | `HandlerNotFound { name }` | `handler_not_found` | `{ name }` | `handler_show`, `handler_open_editor`, `handler_reveal`, `handler_delete`, `handler_rename` when target dir is absent | Detail page: "Handler '<name>' not found. It may have been deleted or renamed." with back link to `/handlers` |
 | `HandlerExists { name }` | `handler_exists` | `{ name }` | `handler_scaffold` (target dir already exists), `handler_rename` (new name already taken) | Inline banner in the relevant dialog; submit stays disabled until name changes |
 | `InvalidHandlerName { name }` | `invalid_handler_name` | `{ name }` | `handler_scaffold`, `handler_rename` when name fails regex `/^[a-z0-9][a-z0-9-]*$/` | Inline field error; validated client-side during typing, server is authoritative |
+| `InvalidArg(String)` | `invalid_arg` | `{ message }` | `handler_scaffold` when `primary_field` fails identifier regex `^[a-zA-Z_][a-zA-Z0-9_]*$` | Inline field error on the primary_field input; prevents YAML/Go injection in scaffolded files |
 
 Composition rules:
 - No blanket `From<anyhow::Error> for UiError`.

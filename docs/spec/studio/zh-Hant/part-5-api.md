@@ -190,6 +190,7 @@ Plan 7 變體說明：
 | `HandlerNotFound { name }` | `handler_not_found` | `{ name }` | `handler_show`、`handler_open_editor`、`handler_reveal`、`handler_delete`、`handler_rename`，目標目錄不存在時 | 詳情頁：「Handler '<name>' not found. It may have been deleted or renamed.」加返回 `/handlers` 連結 |
 | `HandlerExists { name }` | `handler_exists` | `{ name }` | `handler_scaffold`（目標目錄已存在）、`handler_rename`（新名稱已被使用） | 對應 dialog 的 inline banner；名稱未修改前 submit 停用 |
 | `InvalidHandlerName { name }` | `invalid_handler_name` | `{ name }` | `handler_scaffold`、`handler_rename`，名稱未通過正則 `/^[a-z0-9][a-z0-9-]*$/` 時 | Inline 欄位錯誤；打字時即在前端驗證，後端為最終依據 |
+| `InvalidArg(String)` | `invalid_arg` | `{ message }` | `handler_scaffold`，`primary_field` 未通過識別碼正則 `^[a-zA-Z_][a-zA-Z0-9_]*$` 時 | primary_field 欄位 inline 錯誤；防止腳手架檔案中的 YAML/Go 注入 |
 
 組合規則：
 - 不提供 blanket `From<anyhow::Error> for UiError`。

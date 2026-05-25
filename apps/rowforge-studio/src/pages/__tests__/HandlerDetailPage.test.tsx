@@ -90,7 +90,7 @@ describe("HandlerDetailPage", () => {
     ],
     manifest_warnings: [],
     source_files: [
-      { name: "rowforge.yaml", size_bytes: 200, is_directory: false },
+      { name: "handler.go", size_bytes: 200, is_directory: false },
     ],
     has_fixtures_dir: false,
   };

@@ -89,7 +89,7 @@ pub enum UiError {
     ToolchainMissing { token: String },
 
     /// 4-tier editor resolution exhausted: Settings.preferred_editor →
-    /// $VISUAL → $EDITOR → probe (code/cursor/subl/zed) all missed.
+    /// $VISUAL → $EDITOR → probe (code/cursor/nvim/vim/nano) all missed.
     /// Plan 7 spec §8.5.4.
     #[error("editor not found")]
     EditorNotFound,

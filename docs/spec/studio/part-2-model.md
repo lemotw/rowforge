@@ -169,7 +169,7 @@ the Tauri layer (uses Tauri's `app_data_dir`).
 
 `preferred_editor` is tier-1 of the four-tier editor resolver used by
 `handler_open_editor` (Part 8 §8.4.1): preferred → `$VISUAL` → `$EDITOR`
-→ probe `code`/`cursor`/`subl`/`zed`. Stored in `settings.json` alongside
+→ probe `code`/`cursor`/`nvim`/`vim`/`nano`. Stored in `settings.json` alongside
 the other Settings fields; `schema_version` stays 1. Live-updated into
 `StudioCore` on `workspace_settings_save` — no workspace re-open required.
 

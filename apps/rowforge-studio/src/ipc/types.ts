@@ -131,13 +131,13 @@ export function uiErrorMessage(e: unknown): string {
     case "toolchain_missing":
       return `[toolchain_missing] '${e.message.token}' not on PATH`;
     case "editor_not_found":
-      return `[editor_not_found] No editor found — set Settings.preferred_editor, or VISUAL/EDITOR env, or install one of code/cursor/subl/zed`;
+      return `[editor_not_found] No editor found — set Settings.preferred_editor, or VISUAL/EDITOR env, or install code/cursor/nvim/vim/nano`;
     case "handler_not_found":
       return `[handler_not_found] '${e.message.name}' is not under <workspace>/handlers/`;
     case "handler_exists":
       return `[handler_exists] '${e.message.name}' already exists`;
     case "invalid_handler_name":
-      return `[invalid_handler_name] '${e.message.name}' must match [a-z0-9-]+`;
+      return `[invalid_handler_name] '${e.message.name}' must match ^[a-z0-9][a-z0-9-]*$`;
   }
 }
 

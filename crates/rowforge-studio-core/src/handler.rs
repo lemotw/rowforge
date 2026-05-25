@@ -394,10 +394,10 @@ pub(crate) fn template_files(template: ScaffoldTemplate) -> Vec<(&'static str, &
 
 /// Simple two-variable substitution. No quoting / escaping — the
 /// templates are designed so {{name}} and {{primary_field}} land in
-/// positions where bare YAML / Go literals are safe (validate_name
-/// already restricts to [a-z0-9-]+; primary_field will be similarly
-/// constrained at the scaffold UI level, though T6's contract is to
-/// accept it verbatim).
+/// positions where bare YAML / Go literals are safe. Both inputs are
+/// validated before reaching here: validate_name enforces
+/// ^[a-z0-9][a-z0-9-]*$ and validate_primary_field enforces
+/// ^[a-zA-Z_][a-zA-Z0-9_]*$.
 pub(crate) fn render(template: &str, name: &str, primary_field: &str) -> String {
     template
         .replace("{{name}}", name)
@@ -461,7 +461,7 @@ pub fn scaffold(workspace_root: &Path, args: ScaffoldArgs) -> Result<String, cra
 /// Remove a handler directory under `<workspace>/handlers/`.
 ///
 /// Three layers of defense protect against path traversal:
-/// 1. `validate_name([a-z0-9-]+)` — rejects `../etc`, `a/b`, leading
+/// 1. `validate_name(^[a-z0-9][a-z0-9-]*$)` — rejects `../etc`, `a/b`, leading
 ///    dots — before any path is constructed.
 /// 2. `canonicalize()` on the resolved path — follows symlinks. Catches
 ///    `<workspace>/handlers/evil` → `/etc`.

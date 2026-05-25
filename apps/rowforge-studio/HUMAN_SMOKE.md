@@ -396,14 +396,15 @@ echo "// notes" > "$WS/handlers/no-manifest/notes.txt"
 16. Click **Create** → toast "Handler 'gamma' created"; dialog closes;
     routes to `/handlers/gamma`.
 17. Verify the new handler shows: valid manifest, `primary_field: id`,
-    `kind: row`. Files section lists `rowforge.yaml`, `handler.go`,
-    `go.mod`.
+    `kind: row`. Files section lists `handler.go`, `go.mod` (rowforge.yaml
+    appears in the Manifest section, not Files).
 18. Open in editor on the new handler → confirm `{{name}}` /
     `{{primary_field}}` were substituted (no literal `{{` left in source).
 19. Repeat with **Go (batch mode)** → name it `delta` → manifest shows
     `batch_size: 5`.
 20. Repeat with **Empty** → name it `epsilon` → Files section shows only
-    `rowforge.yaml` (no .go or .mod).
+    `handler.go` (rowforge.yaml appears in the Manifest section, not Files;
+    no .mod for the empty template).
 21. Try scaffold a name that already exists (`alpha`) → `HandlerExists`
     inline error; dialog stays open.
 

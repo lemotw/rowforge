@@ -163,7 +163,7 @@ struct Settings {
 
 `preferred_editor` 為 `handler_open_editor` 四層編輯器解析器的第一層
 （見第 8 部分 §8.4.1）：preferred → `$VISUAL` → `$EDITOR` →
-探測 `code`/`cursor`/`subl`/`zed`。儲存於 `settings.json`，與其他
+探測 `code`/`cursor`/`nvim`/`vim`/`nano`。儲存於 `settings.json`，與其他
 Settings 欄位並列；`schema_version` 維持為 1。透過
 `workspace_settings_save` 即時更新至 `StudioCore` — 不需重新開啟
 workspace。

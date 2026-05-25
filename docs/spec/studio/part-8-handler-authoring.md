@@ -124,12 +124,21 @@ struct SmokeTestReport {
 }
 
 struct ScaffoldArgs {
-    name: String,                          // [a-z0-9-]+
+    name: String,                          // ^[a-z0-9][a-z0-9-]*$
     template: ScaffoldTemplate,
-    primary_field: String,                 // input column the example expects
+    primary_field: String,                 // ^[a-zA-Z_][a-zA-Z0-9_]*$ — input column the example expects
 }
 enum ScaffoldTemplate { GoStdio, GoBatch, Empty }
 ```
+
+**Scaffold field validation:**
+- `name` must match `^[a-z0-9][a-z0-9-]*$` — enforced server-side by
+  `handler_scaffold` and `handler_rename`; emits `InvalidHandlerName`
+  on failure.
+- `primary_field` must be a valid identifier: `^[a-zA-Z_][a-zA-Z0-9_]*$`
+  (letters, digits, underscores; cannot start with a digit) — enforced
+  server-side by `handler_scaffold`; emits `InvalidArg` on failure.
+  This constraint prevents YAML/Go injection in scaffolded files.
 
 Cost classes (Part 2 §2.1):
 
@@ -147,7 +156,7 @@ Cost classes (Part 2 §2.1):
 
 1. `Settings.preferred_editor` (§8.6.4).
 2. `$VISUAL`, then `$EDITOR`.
-3. Probe `code`, `cursor`, `subl`, `zed` in `PATH`.
+3. Probe `code`, `cursor`, `nvim`, `vim`, `nano` in `PATH`.
 4. Fail with `UiError::EditorNotFound`.
 
 The chosen command is spawned detached with the handler dir as the sole

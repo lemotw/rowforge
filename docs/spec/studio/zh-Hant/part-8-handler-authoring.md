@@ -119,12 +119,20 @@ struct SmokeTestReport {
 }
 
 struct ScaffoldArgs {
-    name: String,                          // [a-z0-9-]+
+    name: String,                          // ^[a-z0-9][a-z0-9-]*$
     template: ScaffoldTemplate,
-    primary_field: String,                 // 範例預期的輸入欄位名
+    primary_field: String,                 // ^[a-zA-Z_][a-zA-Z0-9_]*$ — 範例預期的輸入欄位名
 }
 enum ScaffoldTemplate { GoStdio, GoBatch, Empty }
 ```
+
+**Scaffold 欄位驗證：**
+- `name` 必須符合 `^[a-z0-9][a-z0-9-]*$` — 由伺服器端 `handler_scaffold`
+  與 `handler_rename` 強制執行；失敗時 emit `InvalidHandlerName`。
+- `primary_field` 必須為合法識別碼：`^[a-zA-Z_][a-zA-Z0-9_]*$`
+  （字母、數字、底線；不可以數字開頭）— 由伺服器端 `handler_scaffold`
+  強制執行；失敗時 emit `InvalidArg`。此限制防止腳手架檔案中的
+  YAML/Go 注入。
 
 成本級別(第 2 部分 §2.1):
 
@@ -142,7 +150,7 @@ enum ScaffoldTemplate { GoStdio, GoBatch, Empty }
 
 1. `Settings.preferred_editor`(§8.6.4)。
 2. `$VISUAL`、然後 `$EDITOR`。
-3. 在 `PATH` 中探測 `code`、`cursor`、`subl`、`zed`。
+3. 在 `PATH` 中探測 `code`、`cursor`、`nvim`、`vim`、`nano`。
 4. 失敗 → `UiError::EditorNotFound`。
 
 選定的命令以 handler 資料夾作為唯一引數,detached 模式 spawn。Studio
