@@ -561,6 +561,12 @@ impl StudioCore {
     ///
     /// The stream lives as long as the caller holds it; dropping it stops the
     /// 1 Hz interval. Spec §6.6.
+    ///
+    /// Delegates to [`SessionRegistry::rollup_tick`] for the actual
+    /// rollup computation — total_rate / slowest_run derivation lives
+    /// there since Plan 6 T6 (was hardcoded `0.0` / `None` here in
+    /// Plan 4). Keep one source of truth so the Tauri bridge and this
+    /// stream emit identical rollups.
     pub fn active_runs_stream(&self) -> impl futures::Stream<Item = RunRollupTick> + Send + 'static {
         let sessions = self.sessions.clone();
         async_stream::stream! {
@@ -568,27 +574,7 @@ impl StudioCore {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                let snapshots = sessions.snapshots();
-                let active = snapshots.len() as u32;
-                let total_processed: u64 = snapshots.iter().map(|(_, s)| s.processed).sum();
-                let total_failed: u64 = snapshots.iter().map(|(_, s)| s.failed + s.crashed).sum();
-                // total_rate: aggregate from per-session rate. ProgressSnapshot
-                // doesn't carry rate — that's only in Tick events. Plan 4 ships
-                // 0.0 for now; spec §6.6 is satisfied by counter aggregation.
-                // Future: SessionRegistry could cache last-Tick rate per session.
-                let total_rate = 0.0_f32;
-                // slowest_run: heuristic — the session with the lowest rate.
-                // Without per-session rate, pick the one with the longest
-                // started_at duration. Plan 4 ships None for simplicity.
-                let slowest_run = None;
-
-                yield RunRollupTick {
-                    active_runs: active,
-                    total_processed,
-                    total_failed,
-                    total_rate,
-                    slowest_run,
-                };
+                yield sessions.rollup_tick();
             }
         }
     }
