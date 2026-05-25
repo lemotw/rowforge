@@ -258,6 +258,18 @@ impl StudioCore {
         &self.workspace
     }
 
+    /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.
+    /// Returns empty list when the dir doesn't exist (not an error).
+    pub fn handler_list(&self) -> Result<Vec<HandlerSummary>, UiError> {
+        crate::handler::list(self.workspace.root.as_path())
+    }
+
+    /// Plan 7 T3: load a single handler's detail (manifest + source files).
+    /// Errors: `InvalidHandlerName` (regex fail), `HandlerNotFound` (dir missing).
+    pub fn handler_show(&self, name: &str) -> Result<HandlerDetail, UiError> {
+        crate::handler::show(self.workspace.root.as_path(), name)
+    }
+
     /// Return the Arc-wrapped session registry for this workspace.
     ///
     /// Used by the Tauri event bridge to spawn `forward_active_runs` with only

@@ -1448,3 +1448,110 @@ fn workspace_limit_defaults_to_three_when_unset() {
     .unwrap();
     assert_eq!(core.sessions().workspace_limit(), 3);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 7 T3 — handler_list + handler_show
+// ---------------------------------------------------------------------------
+
+#[test]
+fn handler_list_finds_dirs_under_workspace_handlers() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let handlers_dir = tmp.path().join("handlers");
+    std::fs::create_dir_all(&handlers_dir).unwrap();
+
+    // Three test handlers: valid manifest / no manifest / invalid manifest.
+    let valid = handlers_dir.join("alpha");
+    std::fs::create_dir_all(&valid).unwrap();
+    std::fs::write(
+        valid.join("rowforge.yaml"),
+        "name: alpha\nversion: 0.1.0\nlanguage: go\nentry:\n  cmd: [\"./alpha\"]\n",
+    ).unwrap();
+
+    let no_manifest = handlers_dir.join("bravo");
+    std::fs::create_dir_all(&no_manifest).unwrap();
+
+    let invalid = handlers_dir.join("charlie");
+    std::fs::create_dir_all(&invalid).unwrap();
+    std::fs::write(invalid.join("rowforge.yaml"), "this: is: bad: yaml: :::").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    let mut list = core.handler_list().unwrap();
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0].name, "alpha");
+    assert_eq!(list[0].manifest_status, rowforge_studio_core::ManifestStatus::Valid);
+    assert_eq!(list[0].version.as_deref(), Some("0.1.0"));
+    assert_eq!(list[0].language.as_deref(), Some("go"));
+
+    assert_eq!(list[1].name, "bravo");
+    assert_eq!(list[1].manifest_status, rowforge_studio_core::ManifestStatus::Missing);
+    assert_eq!(list[1].version, None);
+
+    assert_eq!(list[2].name, "charlie");
+    assert_eq!(list[2].manifest_status, rowforge_studio_core::ManifestStatus::Invalid);
+}
+
+#[test]
+fn handler_list_returns_empty_when_handlers_dir_missing() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // No handlers/ subdir at all.
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    assert_eq!(core.handler_list().unwrap().len(), 0);
+}
+
+#[test]
+fn handler_show_returns_manifest_and_source_files() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let h = tmp.path().join("handlers").join("alpha");
+    std::fs::create_dir_all(&h).unwrap();
+    std::fs::write(
+        h.join("rowforge.yaml"),
+        "name: alpha\nversion: 0.1.0\nentry:\n  cmd: [\"./alpha\"]\n",
+    ).unwrap();
+    std::fs::write(h.join("handler.go"), "package main").unwrap();
+    std::fs::write(h.join("go.mod"), "module alpha\ngo 1.22").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let detail = core.handler_show("alpha").unwrap();
+
+    assert_eq!(detail.summary.name, "alpha");
+    assert_eq!(detail.summary.manifest_status, rowforge_studio_core::ManifestStatus::Valid);
+    assert!(detail.manifest.is_some());
+    assert!(detail.manifest_errors.is_empty());
+
+    let names: Vec<&str> = detail.source_files.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"handler.go"), "got files: {:?}", names);
+    assert!(names.contains(&"go.mod"), "got files: {:?}", names);
+    // rowforge.yaml is the manifest, not "source" — must be excluded.
+    assert!(!names.contains(&"rowforge.yaml"));
+}
+
+#[test]
+fn handler_show_errors_on_unknown_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_show("ghost").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }),
+        "got: {:?}", err);
+}
+
+#[test]
+fn handler_show_rejects_invalid_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_show("Bad Name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+}
