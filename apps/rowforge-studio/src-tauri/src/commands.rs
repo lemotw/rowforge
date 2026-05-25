@@ -23,15 +23,21 @@ pub fn workspace_open(
     app: tauri::AppHandle,
     path: Option<PathBuf>,
 ) -> Result<Workspace, UiError> {
+    // Plan 6 T9: read Settings first so we can size SessionRegistry from
+    // max_concurrent_runs. Loaded settings may be defaulted (file not
+    // present yet — that's fine).
+    let prev = settings_io::load(&app)?;
     let opts = match path {
         Some(p) => OpenOpts::new().with_workspace(p),
         None => OpenOpts::new(),
     };
+    let opts = opts.with_max_concurrent_runs(prev.max_concurrent_runs);
     let core = StudioCore::open(opts)?;
     let workspace = core.workspace().clone();
 
     // Persist the chosen path to settings so next boot autoloads.
-    let mut s = settings_io::load(&app)?;
+    // Reuse the loaded `prev` — single load instead of two.
+    let mut s = prev;
     s.workspace_root = Some(workspace.root.clone());
     settings_io::save(&app, &s)?;
 

@@ -1422,3 +1422,29 @@ async fn start_run_persists_last_handler_dir() {
         "last_handler_dir should be the canonicalized handler dir",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 6 T9 — SessionRegistry workspace_limit sourced from OpenOpts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn workspace_limit_honors_max_concurrent_runs() {
+    let tmp = empty_workspace();
+    let core = StudioCore::open(
+        OpenOpts::new()
+            .with_workspace(tmp.path().to_path_buf())
+            .with_max_concurrent_runs(Some(7)),
+    )
+    .unwrap();
+    assert_eq!(core.sessions().workspace_limit(), 7);
+}
+
+#[test]
+fn workspace_limit_defaults_to_three_when_unset() {
+    let tmp = empty_workspace();
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    assert_eq!(core.sessions().workspace_limit(), 3);
+}

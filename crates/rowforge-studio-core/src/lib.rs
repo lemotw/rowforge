@@ -234,11 +234,18 @@ impl StudioCore {
             }
         }
 
+        // Plan 6 T9: workspace_limit sourced from Settings via OpenOpts;
+        // per_exec_limit stays hard-coded to spec default (§3.4). The Tauri
+        // workspace_open command loads Settings and threads max_concurrent_runs
+        // through; studio-core stays filesystem-policy-free.
+        let workspace_limit = opts.max_concurrent_runs.unwrap_or(3);
+        let sessions = std::sync::Arc::new(crate::session::SessionRegistry::new(workspace_limit, 1));
+
         Ok(Self {
             workspace,
             store,
             exec_list_cache: Cache::new(DEFAULT_TTL),
-            sessions: std::sync::Arc::new(crate::session::SessionRegistry::default()),
+            sessions,
         })
     }
 
