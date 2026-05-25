@@ -25,6 +25,23 @@ export function ExecListPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [bulkAlert, setBulkAlert] = useState<ExecDeleteFailure[] | null>(null);
+  const [createdSortDir, setCreatedSortDir] = useState<"desc" | "asc">("desc");
+
+  // Sorted view over the list. Selection / select-all logic uses the
+  // unsorted list.data (operations don't care about visual order),
+  // but rendering walks sortedList.
+  const sortedList = useMemo(() => {
+    const arr = list.data ? [...list.data] : [];
+    arr.sort((a, b) => {
+      const ta = new Date(a.created_at).getTime();
+      const tb = new Date(b.created_at).getTime();
+      return createdSortDir === "desc" ? tb - ta : ta - tb;
+    });
+    return arr;
+  }, [list.data, createdSortDir]);
+  const createdArrow = createdSortDir === "desc" ? "▼" : "▲";
+  const toggleCreatedSort = () =>
+    setCreatedSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
 
   const workspace = ws.data ?? null;
 
@@ -228,11 +245,20 @@ export function ExecListPage() {
                 <Th className="text-right">Rows</Th>
                 <Th className="text-right">Attempts</Th>
                 <Th className="text-right">Size</Th>
-                <Th>Created</Th>
+                <Th>
+                  <button
+                    type="button"
+                    onClick={toggleCreatedSort}
+                    className="inline-flex items-center gap-1 hover:text-foreground"
+                    aria-label={`Sort by Created ${createdSortDir === "desc" ? "ascending" : "descending"}`}
+                  >
+                    Created <span className="text-muted-foreground text-[10px]">{createdArrow}</span>
+                  </button>
+                </Th>
               </Tr>
             </Thead>
             <tbody>
-              {list.data.map((e) => {
+              {sortedList.map((e) => {
                 const isActive = activeExecIds.has(e.id);
                 const isSelected = selectedIds.has(e.id);
                 return (
