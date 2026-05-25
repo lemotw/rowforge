@@ -85,6 +85,7 @@ async fn skip_seqs_applies_before_row_limit() {
         cancel: None,
         input_format: None,
         fsync_outcomes: false,
+        capture_raw_stdout: false,
     };
 
     let report = execute(req).await.expect("execute should succeed");

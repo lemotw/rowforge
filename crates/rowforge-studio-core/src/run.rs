@@ -319,6 +319,10 @@ impl StudioCore {
         let opts_for_task = opts.clone();
         let attempt_id_for_task = attempt_id.clone();
         let started = Instant::now();
+        // Plan 9 T5: snapshot Settings.handler_log_capture_raw_stdout at
+        // attempt-start. Changes to the setting after this point do NOT affect
+        // the current attempt (intentional — snapshotted into RunRequest).
+        let capture_raw_stdout = self.capture_raw_stdout;
 
         tokio::spawn(async move {
             aggregator_for_task.set_phase(Phase::Starting);
@@ -332,6 +336,7 @@ impl StudioCore {
                 cancel_for_task.clone(),
                 skip_seqs,
                 handler_log_tx_for_pipeline,
+                capture_raw_stdout,
             )
             .await;
 
@@ -660,6 +665,7 @@ async fn run_pipeline_in_process(
     cancel: CancellationToken,
     skip_seqs: std::collections::HashSet<u64>,
     handler_log_tx: tokio::sync::broadcast::Sender<rowforge_core::handler_log::HandlerLogLine>,
+    capture_raw_stdout: bool,
 ) -> Result<rowforge_core::run::RunReport, RunFailure> {
     let handler_canon = match std::fs::canonicalize(&opts.handler_dir) {
         Ok(p) => p,
@@ -760,6 +766,7 @@ async fn run_pipeline_in_process(
         cancel: Some(cancel.clone()),
         input_format: None,
         fsync_outcomes: false,
+        capture_raw_stdout,
     };
 
     aggregator.set_phase(Phase::Snapshotting);

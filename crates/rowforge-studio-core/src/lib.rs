@@ -198,6 +198,11 @@ pub struct StudioCore {
     /// loads from Settings before calling `open()`. None → resolver
     /// falls through to $VISUAL / $EDITOR / probes.
     preferred_editor: Option<String>,
+    /// Plan 9 T5: mirrors `Settings.handler_log_capture_raw_stdout`.
+    /// Read once per attempt at start_run time; threaded into
+    /// `RunRequest.capture_raw_stdout`. Updated by `set_handler_log_capture_raw_stdout`
+    /// after each `workspace_settings_save` in the Tauri layer.
+    capture_raw_stdout: bool,
     /// Plan 8 T6: in-memory build cache. Keys are handler names; values are
     /// the most recent BuildOutcome (success OR failure). Dies on Drop.
     /// Lock is held only briefly — never across the subprocess spawn.
@@ -267,6 +272,8 @@ impl StudioCore {
             preferred_editor: opts.preferred_editor,
             // Plan 8 T6: empty build cache; populated by handler_build.
             build_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            // Plan 9 T5: sourced from Settings.handler_log_capture_raw_stdout via OpenOpts.
+            capture_raw_stdout: opts.handler_log_capture_raw_stdout,
         })
     }
 
@@ -279,6 +286,14 @@ impl StudioCore {
     /// requiring a workspace re-open.
     pub fn set_preferred_editor(&mut self, editor: Option<String>) {
         self.preferred_editor = editor;
+    }
+
+    /// Plan 9 T5: update the raw-stdout capture flag in-place after a
+    /// settings_save so the next start_run call picks up the new value.
+    /// Changes don't affect already-running attempts (intentional — the
+    /// flag is snapshotted into `RunRequest` at attempt-start).
+    pub fn set_handler_log_capture_raw_stdout(&mut self, enabled: bool) {
+        self.capture_raw_stdout = enabled;
     }
 
     /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.

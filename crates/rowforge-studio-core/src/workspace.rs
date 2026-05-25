@@ -21,6 +21,10 @@ pub struct OpenOpts {
     /// $VISUAL / $EDITOR / probe fallback in `resolve_editor`.
     /// `None` means fall through to the 4-tier resolver.
     pub preferred_editor: Option<String>,
+    /// Plan 9 T5: initial value of `Settings.handler_log_capture_raw_stdout`.
+    /// Threaded by the Tauri `workspace_open` command; studio-core stays
+    /// filesystem-policy-free.
+    pub handler_log_capture_raw_stdout: bool,
 }
 
 impl OpenOpts {
@@ -39,6 +43,11 @@ impl OpenOpts {
     /// Set the preferred editor command for `handler_open_editor`.
     pub fn with_preferred_editor(mut self, editor: Option<String>) -> Self {
         self.preferred_editor = editor;
+        self
+    }
+    /// Set the initial `handler_log_capture_raw_stdout` flag.
+    pub fn with_handler_log_capture_raw_stdout(mut self, enabled: bool) -> Self {
+        self.handler_log_capture_raw_stdout = enabled;
         self
     }
 }

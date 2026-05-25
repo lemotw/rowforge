@@ -30,6 +30,13 @@ pub struct Settings {
     /// works. `None` means fall through to the 4-tier resolver.
     #[serde(default)]
     pub preferred_editor: Option<String>,
+    /// Plan 9 T5: when true, valid outcome JSON stdout lines are duplicated
+    /// into `handler_log.log` in addition to `outcomes.jsonl`. Default false:
+    /// outcomes go only to outcomes.jsonl; turn on to debug protocol issues.
+    /// Read once at attempt-start into `StreamingPoolConfig.capture_raw_stdout`;
+    /// changes mid-run don't affect in-flight attempts (intentional).
+    #[serde(default)]
+    pub handler_log_capture_raw_stdout: bool,
 }
 
 impl Default for Settings {
@@ -40,6 +47,7 @@ impl Default for Settings {
             max_concurrent_runs: None,
             telemetry_opt_in: false,
             preferred_editor: None,
+            handler_log_capture_raw_stdout: false,
         }
     }
 }
@@ -83,6 +91,26 @@ mod tests {
         assert_eq!(parsed.workspace_root, None);
         assert!(!parsed.telemetry_opt_in);
         assert_eq!(parsed.preferred_editor, None);
+        assert!(!parsed.handler_log_capture_raw_stdout);
+    }
+
+    #[test]
+    fn roundtrip_handler_log_capture_raw_stdout() {
+        let mut s = Settings::default();
+        s.handler_log_capture_raw_stdout = true;
+        let mut buf = Vec::new();
+        s.save_to(&mut buf).unwrap();
+        let parsed = Settings::load_from(buf.as_slice()).unwrap();
+        assert!(parsed.handler_log_capture_raw_stdout);
+    }
+
+    #[test]
+    fn handler_log_capture_raw_stdout_defaults_false_on_old_json() {
+        // Settings files written before Plan 9 T5 omit the field — must
+        // deserialize to false (not an error).
+        let json = br#"{"schema_version": 1, "workspace_root": null}"#;
+        let parsed = Settings::load_from(json.as_slice()).unwrap();
+        assert!(!parsed.handler_log_capture_raw_stdout);
     }
 
     #[test]
