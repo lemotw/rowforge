@@ -139,12 +139,26 @@ impl SessionRegistry {
         let active = snaps.len() as u32;
         let total_processed: u64 = snaps.iter().map(|(_, s)| s.processed).sum();
         let total_failed: u64 = snaps.iter().map(|(_, s)| s.failed + s.crashed).sum();
+        let total_rate: f32 = snaps.iter().map(|(_, s)| s.rate_10s).sum();
+        // slowest_run: pick the session with the lowest positive rate_10s.
+        // Sessions with rate_10s == 0 are still warming up the sliding
+        // window (< ~10s since start) — exclude them so they're not
+        // false-positive flagged as slow.
+        let slowest_run = snaps
+            .iter()
+            .filter(|(_, s)| s.rate_10s > 0.0)
+            .min_by(|(_, a), (_, b)| {
+                a.rate_10s
+                    .partial_cmp(&b.rate_10s)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(h, _)| h.clone());
         crate::run::RunRollupTick {
             active_runs: active,
             total_processed,
             total_failed,
-            total_rate: 0.0,
-            slowest_run: None,
+            total_rate,
+            slowest_run,
         }
     }
 }
@@ -184,6 +198,22 @@ mod tests {
             execution_id: exec.into(),
             attempt_id: format!("a_{}", exec),
             aggregator: Arc::new(ProgressAggregator::new()),
+            cancel_token: CancellationToken::new(),
+            tick_stop,
+            status: Mutex::new(RunStatus::Running),
+            started_at: Instant::now(),
+        })
+    }
+
+    fn fake_session_with_rate(exec: &str, rate_10s: f32) -> Arc<Session> {
+        let (tick_stop, _) = watch::channel(false);
+        let agg = Arc::new(ProgressAggregator::new());
+        agg.set_rate_for_test(rate_10s);
+        Arc::new(Session {
+            handle: RunHandle::new(),
+            execution_id: exec.into(),
+            attempt_id: format!("a_{}", exec),
+            aggregator: agg,
             cancel_token: CancellationToken::new(),
             tick_stop,
             status: Mutex::new(RunStatus::Running),
@@ -240,5 +270,60 @@ mod tests {
         assert_eq!(r.handles().len(), 2);
         assert_eq!(r.snapshots().len(), 2);
         assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn rollup_tick_sums_rate_across_sessions() {
+        let reg = SessionRegistry::new(3, 1);
+        let s1 = fake_session_with_rate("e1", 100.0);
+        let s2 = fake_session_with_rate("e2", 50.0);
+        reg.register(s1.clone());
+        reg.register(s2.clone());
+
+        let tick = reg.rollup_tick();
+        assert_eq!(tick.active_runs, 2);
+        // Allow ±10 slack for set_rate_for_test integer-bucket rounding.
+        assert!(
+            (tick.total_rate - 150.0).abs() < 10.0,
+            "total_rate ≈ 150, got {}",
+            tick.total_rate,
+        );
+    }
+
+    #[test]
+    fn rollup_tick_slowest_run_is_min_positive_rate() {
+        let reg = SessionRegistry::new(3, 1);
+        let fast = fake_session_with_rate("e_fast", 100.0);
+        let slow = fake_session_with_rate("e_slow", 20.0);
+        reg.register(fast.clone());
+        reg.register(slow.clone());
+
+        let tick = reg.rollup_tick();
+        assert_eq!(tick.slowest_run, Some(slow.handle.clone()));
+    }
+
+    #[test]
+    fn rollup_tick_excludes_zero_rate_from_slowest() {
+        let reg = SessionRegistry::new(3, 1);
+        let working = fake_session_with_rate("e_work", 50.0);
+        let warming = fake_session_with_rate("e_warm", 0.0); // still warming up
+        reg.register(working.clone());
+        reg.register(warming.clone());
+
+        let tick = reg.rollup_tick();
+        // Warming-up session is NOT picked as slowest; the working one is.
+        assert_eq!(tick.slowest_run, Some(working.handle.clone()));
+    }
+
+    #[test]
+    fn rollup_tick_slowest_run_is_none_when_all_warming() {
+        let reg = SessionRegistry::new(3, 1);
+        let w1 = fake_session_with_rate("e1", 0.0);
+        let w2 = fake_session_with_rate("e2", 0.0);
+        reg.register(w1.clone());
+        reg.register(w2.clone());
+
+        let tick = reg.rollup_tick();
+        assert_eq!(tick.slowest_run, None);
     }
 }
