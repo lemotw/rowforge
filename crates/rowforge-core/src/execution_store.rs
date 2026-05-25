@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, CoreError>;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -227,6 +227,7 @@ impl ExecutionStore {
             None => {
                 self.conn.execute_batch(MIGRATION_V1)?;
                 self.conn.execute_batch(MIGRATION_V2)?;
+                self.conn.execute_batch(MIGRATION_V3)?;
                 self.conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?1)",
                     params![SCHEMA_VERSION],
@@ -234,6 +235,12 @@ impl ExecutionStore {
             }
             Some(1) => {
                 self.conn.execute_batch(MIGRATION_V2)?;
+                self.conn.execute_batch(MIGRATION_V3)?;
+                self.conn
+                    .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
+            }
+            Some(2) => {
+                self.conn.execute_batch(MIGRATION_V3)?;
                 self.conn
                     .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
             }
@@ -675,6 +682,10 @@ CREATE INDEX idx_attempts_execution ON attempts(execution_id);
 CREATE INDEX idx_attempts_started_at ON attempts(started_at);
 "#;
 
+const MIGRATION_V3: &str = "
+ALTER TABLE executions ADD COLUMN last_handler_dir TEXT;
+";
+
 fn row_to_execution(r: &rusqlite::Row<'_>, home: &Path) -> rusqlite::Result<Execution> {
     let id: String = r.get(0)?;
     let dir = home.join("executions").join(&id);
@@ -1097,5 +1108,34 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ExecutionStore::open(tmp.path()).unwrap();
         assert!(store.schema_version() >= 1);
+    }
+
+    #[test]
+    fn migrates_v2_to_v3_adds_last_handler_dir_column() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Manually create a v2 schema (mimics an existing workspace before
+        // the v3 bump).
+        {
+            let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+            conn.execute_batch(MIGRATION_V1).unwrap();
+            conn.execute_batch(MIGRATION_V2).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);",
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                rusqlite::params![2_i64],
+            ).unwrap();
+        }
+        // Re-open via ExecutionStore — should migrate v2 → v3.
+        let store = ExecutionStore::open(tmp.path()).unwrap();
+        assert_eq!(store.schema_version(), 3);
+
+        // Verify the new column exists by trying to SELECT it (zero rows is fine).
+        let mut stmt = store
+            .conn
+            .prepare("SELECT last_handler_dir FROM executions WHERE 1=0")
+            .unwrap();
+        let _ = stmt.query([]).unwrap();
     }
 }
