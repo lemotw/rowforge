@@ -138,6 +138,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<i32> {
         config_overrides: config,
         shutdown_grace: Duration::from_secs(5),
         on_progress: cb,
+        on_handler_log: None,
         cancel: None,
         input_format: None,
         fsync_outcomes: false,

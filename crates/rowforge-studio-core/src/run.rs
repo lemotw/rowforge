@@ -273,6 +273,14 @@ impl StudioCore {
 
         // 5. Register the session BEFORE spawning the pipeline so that
         //    subscribers can find it the instant start_run returns.
+        //    Allocate the handler-log broadcast channel here (cap 4096);
+        //    the sender is stashed on the session for `handler_log_subscribe`,
+        //    and a clone is forwarded into the pipeline as `on_handler_log`.
+        let (handler_log_tx, _) =
+            broadcast::channel::<rowforge_core::handler_log::HandlerLogLine>(
+                crate::session::HANDLER_LOG_CHANNEL_CAP,
+            );
+        let handler_log_tx_for_pipeline = handler_log_tx.clone();
         let session = Arc::new(Session {
             handle: handle.clone(),
             execution_id: execution_id.as_str().to_string(),
@@ -282,6 +290,7 @@ impl StudioCore {
             tick_stop: tick_stop_tx.clone(),
             status: Mutex::new(RunStatus::Starting),
             started_at: Instant::now(),
+            handler_log_tx,
         });
         self.sessions.register(session.clone());
 
@@ -322,6 +331,7 @@ impl StudioCore {
                 aggregator_for_task.clone(),
                 cancel_for_task.clone(),
                 skip_seqs,
+                handler_log_tx_for_pipeline,
             )
             .await;
 
@@ -649,6 +659,7 @@ async fn run_pipeline_in_process(
     aggregator: Arc<ProgressAggregator>,
     cancel: CancellationToken,
     skip_seqs: std::collections::HashSet<u64>,
+    handler_log_tx: tokio::sync::broadcast::Sender<rowforge_core::handler_log::HandlerLogLine>,
 ) -> Result<rowforge_core::run::RunReport, RunFailure> {
     let handler_canon = match std::fs::canonicalize(&opts.handler_dir) {
         Ok(p) => p,
@@ -742,6 +753,10 @@ async fn run_pipeline_in_process(
         config_overrides: BTreeMap::new(),
         shutdown_grace: Duration::from_secs(5),
         on_progress: Some(on_progress),
+        on_handler_log: Some(std::sync::Arc::new(move |line| {
+            // Ignore SendError when there are no active subscribers.
+            let _ = handler_log_tx.send(line);
+        })),
         cancel: Some(cancel.clone()),
         input_format: None,
         fsync_outcomes: false,

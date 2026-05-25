@@ -768,6 +768,85 @@ impl StudioCore {
             .map_err(|e| UiError::Internal(e.to_string()))?;
         Ok(ExecutionId::new(exec.id))
     }
+
+    // -------------------------------------------------------------------------
+    // Plan 9 — handler log API
+    // -------------------------------------------------------------------------
+
+    /// Tail the on-disk `handler_log.log` for a completed (or live) attempt.
+    ///
+    /// Returns up to `max_lines` parsed lines in chronological order (oldest
+    /// first). Returns an empty `Vec` when the file doesn't exist — e.g. the
+    /// attempt predates Plan 9 or hasn't started running yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns `UiError::Io` for read failures or path-traversal attempts.
+    pub fn handler_log_tail(
+        &self,
+        exec_id: &str,
+        attempt_id: &str,
+        max_lines: usize,
+    ) -> Result<Vec<rowforge_core::handler_log::HandlerLogLine>, UiError> {
+        use rowforge_core::handler_log::{handler_log_path, parse_line};
+
+        let attempt_dir = self.workspace.root.as_path()
+            .join("executions").join(exec_id)
+            .join("attempts").join(attempt_id);
+
+        let path = handler_log_path(&attempt_dir);
+
+        // Fast path: file absent (common for pre-Plan-9 attempts or first run).
+        if !path.exists() {
+            return Ok(vec![]);
+        }
+
+        // Boundary check: reject path-traversal inputs.
+        let workspace_root = self.workspace.root.as_path()
+            .canonicalize()
+            .map_err(|e| UiError::Io(format!("canonicalize workspace: {}", e)))?;
+        if let Ok(canon) = attempt_dir.canonicalize() {
+            if !canon.starts_with(&workspace_root) {
+                return Err(UiError::Io("attempt path outside workspace".into()));
+            }
+        }
+
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| UiError::Io(format!("read handler log: {}", e)))?;
+
+        let mut lines: Vec<rowforge_core::handler_log::HandlerLogLine> = content
+            .lines()
+            .filter_map(parse_line)
+            .collect();
+
+        if lines.len() > max_lines {
+            lines.drain(..lines.len() - max_lines);
+        }
+
+        Ok(lines)
+    }
+
+    /// Subscribe to the live handler-log broadcast for a currently-active attempt.
+    ///
+    /// Returns a `broadcast::Receiver` that yields `HandlerLogLine`s in real
+    /// time as the pipeline emits them. The channel capacity is 4096; the oldest
+    /// lines are silently dropped if the consumer falls behind.
+    ///
+    /// Returns `Err(UiError::Io)` when the attempt is not currently active (not
+    /// in the `SessionRegistry`). The UI should fall back to
+    /// `handler_log_tail` for the static file view in that case.
+    pub fn handler_log_subscribe(
+        &self,
+        attempt_id: &str,
+    ) -> Result<tokio::sync::broadcast::Receiver<rowforge_core::handler_log::HandlerLogLine>, UiError>
+    {
+        self.sessions
+            .handler_log_subscribe(attempt_id)
+            .ok_or_else(|| UiError::Io(format!(
+                "attempt {} is not active (subscribe to a running attempt or use handler_log_tail)",
+                attempt_id,
+            )))
+    }
 }
 
 // ---------------------------------------------------------------------------

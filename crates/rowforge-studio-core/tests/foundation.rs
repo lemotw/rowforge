@@ -2306,3 +2306,83 @@ fn handler_build_toolchain_missing_returns_error_without_cache_write() {
         "last_build must be None when ToolchainMissing (no outcome cached)"
     );
 }
+
+// ============================================================
+// Plan 9 T4 — handler_log_tail + handler_log_subscribe
+// ============================================================
+
+#[test]
+fn handler_log_tail_returns_empty_when_no_file() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let result = core
+        .handler_log_tail("e_nonexistent", "att_x", 100)
+        .unwrap();
+    assert!(result.is_empty(), "expected empty Vec, got {:?}", result);
+}
+
+#[test]
+fn handler_log_tail_parses_lines_from_disk() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let attempt_dir = tmp.path().join("executions/e_test/attempts/att_test");
+    std::fs::create_dir_all(&attempt_dir).unwrap();
+    let log = attempt_dir.join("handler_log.log");
+    std::fs::write(
+        &log,
+        "2026-05-25T10:00:00+00:00 [handler#0 stderr] hello\n\
+         2026-05-25T10:00:01+00:00 [handler#1 stdout] garbage\n",
+    )
+    .unwrap();
+    let lines = core
+        .handler_log_tail("e_test", "att_test", 100)
+        .unwrap();
+    assert_eq!(lines.len(), 2, "expected 2 lines, got {}", lines.len());
+    assert_eq!(lines[0].line, "hello");
+    assert_eq!(lines[1].line, "garbage");
+}
+
+#[test]
+fn handler_log_tail_caps_to_max_lines() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let attempt_dir = tmp.path().join("executions/e_test/attempts/att_cap");
+    std::fs::create_dir_all(&attempt_dir).unwrap();
+    let log = attempt_dir.join("handler_log.log");
+    let mut content = String::new();
+    for i in 0..20u32 {
+        content.push_str(&format!(
+            "2026-05-25T10:00:{:02}+00:00 [handler#0 stderr] line {}\n",
+            i, i,
+        ));
+    }
+    std::fs::write(&log, content).unwrap();
+    let lines = core.handler_log_tail("e_test", "att_cap", 5).unwrap();
+    assert_eq!(lines.len(), 5, "expected 5 lines, got {}", lines.len());
+    // Should be the LAST 5 lines, chronologically.
+    assert_eq!(lines[0].line, "line 15");
+    assert_eq!(lines[4].line, "line 19");
+}
+
+#[test]
+fn handler_log_subscribe_fails_for_inactive_attempt() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let result = core.handler_log_subscribe("att_not_running");
+    assert!(
+        result.is_err(),
+        "expected Err for inactive attempt, got Ok"
+    );
+}
