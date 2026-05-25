@@ -1876,3 +1876,85 @@ fn rename_rejects_invalid_new_name() {
     // Source still intact — pre-flight regex blocked anything from happening.
     assert!(tmp.path().join("handlers").join("ok").is_dir());
 }
+
+// ============================================================
+// Plan 7 T15 — Settings.preferred_editor roundtrip + plumbing
+// ============================================================
+
+/// Settings with preferred_editor = Some(...) survives a JSON roundtrip.
+#[test]
+fn settings_preferred_editor_roundtrip() {
+    let mut s = rowforge_studio_core::Settings::default();
+    s.preferred_editor = Some("code --wait".into());
+    let mut buf = Vec::new();
+    s.save_to(&mut buf).unwrap();
+    let loaded = rowforge_studio_core::Settings::load_from(buf.as_slice()).unwrap();
+    assert_eq!(loaded.preferred_editor, Some("code --wait".into()));
+}
+
+/// Settings parsed from JSON without the field defaults to None (backward compat).
+#[test]
+fn settings_preferred_editor_absent_defaults_to_none() {
+    let json = br#"{"schema_version": 1}"#;
+    let parsed = rowforge_studio_core::Settings::load_from(json.as_slice()).unwrap();
+    assert_eq!(parsed.preferred_editor, None);
+}
+
+/// OpenOpts.with_preferred_editor propagates into StudioCore.
+/// Verified via handler_open_editor — when no handler dir exists it returns
+/// HandlerNotFound (not EditorNotFound), confirming the editor value reached
+/// the resolver but the handler guard fired first.
+#[test]
+fn studio_core_preferred_editor_set_from_open_opts() {
+    let tmp = empty_workspace();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("my-handler")).unwrap();
+    // Write a minimal manifest so show() works.
+    std::fs::write(
+        tmp.path().join("handlers").join("my-handler").join("rowforge.yaml"),
+        "name: my-handler\nversion: 0.1.0\nentry:\n  cmd: [\"./my-handler\"]\n",
+    ).unwrap();
+
+    // Pass a deliberately bogus command so resolve_editor returns an error.
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new()
+            .with_workspace(tmp.path().into())
+            .with_preferred_editor(Some("__rowforge_t15_bogus_editor__".into())),
+    ).unwrap();
+
+    let err = core.handler_open_editor("my-handler").unwrap_err();
+    // The bogus preferred editor is tried first — the error should be
+    // EditorNotFound or Io (failed to spawn), NOT HandlerNotFound.
+    let is_editor_error = matches!(
+        err,
+        rowforge_studio_core::UiError::EditorNotFound { .. }
+            | rowforge_studio_core::UiError::Io(_)
+    );
+    assert!(is_editor_error, "expected editor error, got: {:?}", err);
+}
+
+/// set_preferred_editor updates the live field without workspace re-open.
+#[test]
+fn studio_core_set_preferred_editor_updates_live_field() {
+    let tmp = empty_workspace();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("h1")).unwrap();
+    std::fs::write(
+        tmp.path().join("handlers").join("h1").join("rowforge.yaml"),
+        "name: h1\nversion: 0.1.0\nentry:\n  cmd: [\"./h1\"]\n",
+    ).unwrap();
+
+    let mut core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    // Initially None — resolver falls through to environment/probes.
+    // Now set a bogus value and verify it's picked up.
+    core.set_preferred_editor(Some("__rowforge_t15_updated_bogus__".into()));
+
+    let err = core.handler_open_editor("h1").unwrap_err();
+    let is_editor_error = matches!(
+        err,
+        rowforge_studio_core::UiError::EditorNotFound { .. }
+            | rowforge_studio_core::UiError::Io(_)
+    );
+    assert!(is_editor_error, "expected editor error after set, got: {:?}", err);
+}

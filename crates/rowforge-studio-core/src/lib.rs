@@ -256,12 +256,20 @@ impl StudioCore {
             store,
             exec_list_cache: Cache::new(DEFAULT_TTL),
             sessions,
-            preferred_editor: None,  // T15 will plumb from OpenOpts.preferred_editor
+            // Plan 7 T15: sourced from Settings.preferred_editor via OpenOpts.
+            preferred_editor: opts.preferred_editor,
         })
     }
 
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
+    }
+
+    /// Plan 7 T15: update the preferred editor in-place after a settings_save
+    /// so the next handler_open_editor call uses the new value without
+    /// requiring a workspace re-open.
+    pub fn set_preferred_editor(&mut self, editor: Option<String>) {
+        self.preferred_editor = editor;
     }
 
     /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.

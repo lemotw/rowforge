@@ -34,6 +34,13 @@ export interface Settings {
    */
   max_concurrent_runs: number | null;
   telemetry_opt_in: boolean;
+  /**
+   * Plan 7 T15: preferred editor command for handler_open_editor.
+   * When non-null, overrides $VISUAL / $EDITOR / auto-detect fallback chain.
+   * The value is shell-split at call time ("code --wait" works).
+   * null means fall through to the 4-tier resolver.
+   */
+  preferred_editor: string | null;
 }
 
 export type UiErrorKind =

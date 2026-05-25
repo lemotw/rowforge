@@ -20,6 +20,7 @@ vi.mock("@/ipc/client", () => ({
       workspace_root: "/tmp/ws",
       max_concurrent_runs: 3,
       telemetry_opt_in: false,
+      preferred_editor: null,
     }),
     workspace_settings_save: vi.fn().mockResolvedValue(undefined),
     run_active: vi.fn().mockResolvedValue([]),
@@ -48,6 +49,41 @@ describe("SettingsForm", () => {
     expect(screen.getByText(/telemetry/i)).toBeInTheDocument();
     // default_workers dropped — workers is per-Run, not a Settings default.
     expect(screen.queryByLabelText(/default workers/i)).toBeNull();
+  });
+
+  it("renders the Editor section with the preferred editor input", async () => {
+    render(wrap(<SettingsForm />));
+    expect(await screen.findByText(/^editor$/i)).toBeInTheDocument();
+    const input = screen.getByLabelText(/preferred editor command/i);
+    expect(input).toBeInTheDocument();
+    // null from mock → empty string displayed
+    expect((input as HTMLInputElement).value).toBe("");
+  });
+
+  it("empty preferred_editor input serializes to null on save", async () => {
+    render(wrap(<SettingsForm />));
+    await screen.findByLabelText(/preferred editor command/i);
+    // Field is already empty (null) — click Save directly.
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+    await waitFor(async () => {
+      const { ipc } = await import("@/ipc/client");
+      expect(ipc.workspace_settings_save).toHaveBeenCalledWith({
+        settings: expect.objectContaining({ preferred_editor: null }),
+      });
+    });
+  });
+
+  it("non-empty preferred_editor passes through unchanged on save", async () => {
+    render(wrap(<SettingsForm />));
+    const input = await screen.findByLabelText(/preferred editor command/i);
+    fireEvent.change(input, { target: { value: "nvim" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+    await waitFor(async () => {
+      const { ipc } = await import("@/ipc/client");
+      expect(ipc.workspace_settings_save).toHaveBeenCalledWith({
+        settings: expect.objectContaining({ preferred_editor: "nvim" }),
+      });
+    });
   });
 
   it("shows the dirty banner when max_concurrent_runs differs from loaded value", async () => {

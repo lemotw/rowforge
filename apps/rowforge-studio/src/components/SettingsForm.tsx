@@ -92,6 +92,25 @@ export function SettingsForm() {
         )}
       </Section>
 
+      <Section title="Editor">
+        <Field label="Preferred editor command" htmlFor="preferred-editor">
+          <Input
+            id="preferred-editor"
+            value={form.preferred_editor ?? ""}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                preferred_editor: e.target.value === "" ? null : e.target.value,
+              })
+            }
+            placeholder="e.g., code --wait, nvim, vim"
+          />
+        </Field>
+        <div className="text-xs text-muted-foreground">
+          Leave blank to use $VISUAL, $EDITOR, or auto-detect (code &rarr; cursor &rarr; nvim &rarr; vim &rarr; nano).
+        </div>
+      </Section>
+
       <Section title="Telemetry">
         <label className="flex items-center gap-2 text-sm">
           <input
