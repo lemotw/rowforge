@@ -467,3 +467,120 @@ echo "// notes" > "$WS/handlers/no-manifest/notes.txt"
   or manual reload
 - No detail-page file-click-to-open — files are display-only; Open in
   editor on the page header opens the whole dir
+
+## Plan 08 additions — Handler build
+
+### Pre-populate fixtures
+
+Before starting, ensure you have at least one handler with `entry.build`
+and one without. The existing `examples/handlers/golang-apple-refund`
+(or similar Go handlers) works well. For a python-only handler, use:
+
+```bash
+WS=<workspace>
+mkdir -p "$WS/handlers/py-noop"
+cat > "$WS/handlers/py-noop/rowforge.yaml" <<'EOF'
+name: py-noop
+version: 0.1.0
+language: python
+kind: row
+primary_field: id
+entry:
+  cmd: ["python3", "handler.py"]
+EOF
+```
+
+### 1. CLI auto-build (closes ENOENT pain)
+
+1. Fresh checkout / clean workspace. Don't pre-build anything.
+2. `rowforge exec start --csv path/to/any.csv --name smoke`
+3. `rowforge exec run --handler examples/handlers/golang-apple-refund <exec_id> --sample 2 --workers 1`
+4. Expected: stderr shows `[rowforge] building golang-apple-refund ...`
+   then `[rowforge] build ok (NNN ms)` then the run proceeds. The
+   binary is now present in the handler dir.
+5. Re-run the same command → no build banner (binary is fresh).
+6. `touch examples/handlers/golang-apple-refund/handler.go`
+7. Re-run → build banner appears again (source mtime > binary mtime).
+
+### 2. CLI explicit build subcommand
+
+8. `rowforge handler build` — builds every handler under
+   `<workspace>/handlers/*` that has `entry.build` AND is stale.
+   Per-handler outcomes printed to stderr.
+9. `rowforge handler build alpha` — single handler by name.
+10. `rowforge handler build --force alpha` — bypasses staleness check;
+    rebuilds even when binary is fresh.
+
+### 3. CLI build failure
+
+11. Edit a handler's `rowforge.yaml` to make `entry.build` a failing
+    command (e.g. `build: ["sh", "-c", "exit 3"]`).
+12. `rowforge exec run --handler <dir> <exec_id>` → expected: stderr
+    shows `[rowforge] build failed (exit 3):` followed by any build
+    output; CLI exits with code 2.
+
+### 4. Studio Build button (happy path)
+
+13. Open Studio. Navigate to a handler with `entry.build` (e.g.
+    `golang-apple-refund` or any Go handler).
+14. Detail page header shows a **Build** button between Open in editor
+    and Rename…
+15. Click Build → label changes to "Building…", button disabled.
+16. After completion (~3–10 s for a Go handler): Last build section
+    appears between Manifest and Files. Green "success" badge, exit 0,
+    duration in ms, timestamp.
+17. Click "Show output ▾" → log expands; shows build stdout (usually
+    empty for Go) and stderr.
+18. Re-click "Hide output ▴" → collapses.
+
+### 5. Studio Build button (failure path)
+
+19. Edit a handler's `rowforge.yaml` to make `entry.build` fail
+    (e.g. `build: ["sh", "-c", "echo broken >&2; exit 5"]`).
+20. From Studio's detail page, click **Build**.
+21. Sonner toast appears: "Build failed for 'NAME' (exit 5). See the
+    Last build section for details."
+22. Last build section shows: red "failed" badge, exit 5, duration.
+    Expand → stderr contains "broken".
+
+### 6. Studio Build button hidden for python/node handlers
+
+23. Navigate to a handler whose `entry.cmd` is `["python3", ...]` with
+    no `entry.build`. Detail page header does **NOT** show a Build
+    button.
+
+### 7. Toolchain missing
+
+24. Edit a handler so `entry.build` is `["this-tool-xyz-does-not-exist"]`.
+25. Click **Build** in Studio → toast: "Build tool
+    'this-tool-xyz-does-not-exist' not found in PATH. Install it or
+    update entry.build in your manifest."
+26. Last build section is NOT populated (no outcome to cache on
+    toolchain-missing; verify by reloading detail page — section absent).
+
+### 8. Manifest validation warnings (Plan 8 additions)
+
+27. Detail page of a handler whose `entry.build` first token isn't on
+    PATH → Manifest section shows a yellow warning chip:
+    "build tool 'X' not found in PATH".
+28. Detail page of a handler whose `entry.cmd` points to a missing
+    relative file AND `entry.build` is absent → yellow warning:
+    "entry.cmd target './X' not found".
+29. Same handler setup but WITH `entry.build` present → the
+    `CmdTargetMissing` warning is suppressed (build is expected to
+    produce the target).
+
+### Known Plan 8 limitations (deferred to later plans)
+
+- No smoke test surface — handler verification still requires running
+  an actual exec-run.
+- No build cancel — long builds block the Build button until exit.
+- stderr not streamed — log appears all at once at completion.
+- No build / exec-run interlock — concurrent build + run on the same
+  handler can race; user is expected to wait.
+- `BuildOutcome` cache lost on Studio quit — re-open shows no "Last
+  build" until the next build is triggered.
+- Studio's Tauri `handler_build` command is `async` but does not use
+  `spawn_blocking` — the Tauri async runtime is blocked for the
+  duration of the build. For multi-second builds this may delay other
+  Tauri commands. Refactor flagged for a later plan.

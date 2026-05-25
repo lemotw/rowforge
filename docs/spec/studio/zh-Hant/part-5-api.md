@@ -179,6 +179,16 @@ pub enum UiError {
 
     #[error("invalid handler name: {name}")]
     InvalidHandlerName { name: String },
+
+    // Plan 8 — 建置變體（詳見第 8 部分 §8.5.4）
+    #[error("build failed for handler '{name}' (exit {exit_code})")]
+    BuildFailed { name: String, exit_code: i32 },
+
+    #[error("build tool '{tool}' for handler '{name}' not found in PATH")]
+    ToolchainMissing { name: String, tool: String },
+
+    #[error("handler '{name}' has no entry.build in its manifest")]
+    NoBuildCommand { name: String },
 }
 ```
 
@@ -191,6 +201,14 @@ Plan 7 變體說明：
 | `HandlerExists { name }` | `handler_exists` | `{ name }` | `handler_scaffold`（目標目錄已存在）、`handler_rename`（新名稱已被使用） | 對應 dialog 的 inline banner；名稱未修改前 submit 停用 |
 | `InvalidHandlerName { name }` | `invalid_handler_name` | `{ name }` | `handler_scaffold`、`handler_rename`，名稱未通過正則 `/^[a-z0-9][a-z0-9-]*$/` 時 | Inline 欄位錯誤；打字時即在前端驗證，後端為最終依據 |
 | `InvalidArg(String)` | `invalid_arg` | `{ message }` | `handler_scaffold`，`primary_field` 未通過識別碼正則 `^[a-zA-Z_][a-zA-Z0-9_]*$` 時 | primary_field 欄位 inline 錯誤；防止腳手架檔案中的 YAML/Go 注入 |
+
+Plan 8 變體說明：
+
+| 變體 | 序列化 `kind` | Payload | 由何 emit | UI 呈現 |
+|---|---|---|---|---|
+| `BuildFailed { name, exit_code }` | `build_failed` | `{ name, exit_code }` | `handler_build` 建置以非零值結束時 | Sonner toast："Build failed for 'NAME' (exit N). See the Last build section for details." |
+| `ToolchainMissing { name, tool }` | `toolchain_missing` | `{ name, tool }` | `handler_build` 當 `entry.build[0]` 不在 `PATH` 時 | Toast："Build tool 'TOOL' not found in PATH. Install it or update entry.build in your manifest." |
+| `NoBuildCommand { name }` | `no_build_command` | `{ name }` | `handler_build` 當 manifest 無 `entry.build` 時 | Toast："Handler 'NAME' has no entry.build command in rowforge.yaml." |
 
 組合規則：
 - 不提供 blanket `From<anyhow::Error> for UiError`。
@@ -261,7 +279,29 @@ handler_reveal(name)                  -> ()
 handler_scaffold(args)                -> String          // 回傳新 handler 名稱
 handler_delete(name)                  -> ()
 handler_rename(old, new)              -> ()
+
+// Plan 8 — 建置 command（詳見第 8 部分 §8.5.3）
+handler_build(name: String)           -> BuildOutcome    // async；emit handlers:list
 ```
+
+`handler_build` 說明：此 command 宣告為 `async` 但目前在建置期間
+阻塞 Tauri async runtime（未使用 `spawn_blocking`）。已標記為後續
+重構項目；典型 Go/Rust 建置在 30 秒內完成。
+
+`BuildOutcome` 型別（住在 `rowforge-core::build`）：
+
+```rust
+struct BuildOutcome {
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    exit_code: i32,
+    command: Vec<String>,   // 跑時的 entry.build 副本
+    stdout: String,
+    stderr: String,
+}
+```
+
+完整型別說明見第 8 部分 §8.3。
 
 Run 生命週期指令說明（Plan 5）：
 

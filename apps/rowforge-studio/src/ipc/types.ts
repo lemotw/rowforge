@@ -60,7 +60,9 @@ export type UiErrorKind =
   | "editor_not_found"
   | "handler_not_found"
   | "handler_exists"
-  | "invalid_handler_name";
+  | "invalid_handler_name"
+  | "build_failed"
+  | "no_build_command";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shapes (confirmed by ipc_contract tests):
@@ -91,13 +93,17 @@ export type UiError =
   | { kind: "duplicate_exec_name"; message: { name: string } }
   | { kind: "export_incomplete"; message: { missing_count: number } }
   | { kind: "manifest_invalid"; message: { errors: ManifestError[] } }
-  | { kind: "toolchain_missing"; message: { token: string } }
+  // Plan 7 used { token: string }; Plan 8 reworked to { name: string; tool: string }.
+  | { kind: "toolchain_missing"; message: { name: string; tool: string } | null }
   // EditorNotFound: unit variant. serde adjacent tagging emits message: null
   // (verified by editor_not_found_serializes test in error.rs).
   | { kind: "editor_not_found"; message: null }
   | { kind: "handler_not_found"; message: { name: string } }
   | { kind: "handler_exists"; message: { name: string } }
-  | { kind: "invalid_handler_name"; message: { name: string } };
+  | { kind: "invalid_handler_name"; message: { name: string } }
+  // Plan 8 build variants.
+  | { kind: "build_failed"; message: { name: string; exit_code: number } | null }
+  | { kind: "no_build_command"; message: { name: string } | null };
 
 function isUiError(e: unknown): e is UiError {
   return !!e && typeof e === "object" && "kind" in e && "message" in e;
@@ -129,7 +135,7 @@ export function uiErrorMessage(e: unknown): string {
     case "manifest_invalid":
       return `[manifest_invalid] ${e.message.errors.length} error(s)`;
     case "toolchain_missing":
-      return `[toolchain_missing] '${e.message.token}' not on PATH`;
+      return `Build tool "${e.message?.tool ?? "?"}" not found in PATH. Install it or update entry.build in your manifest.`;
     case "editor_not_found":
       return `[editor_not_found] No editor found — set Settings.preferred_editor, or VISUAL/EDITOR env, or install code/cursor/nvim/vim/nano`;
     case "handler_not_found":
@@ -138,6 +144,11 @@ export function uiErrorMessage(e: unknown): string {
       return `[handler_exists] '${e.message.name}' already exists`;
     case "invalid_handler_name":
       return `[invalid_handler_name] '${e.message.name}' must match ^[a-z0-9][a-z0-9-]*$`;
+    // Plan 8 build variants.
+    case "build_failed":
+      return `Build failed for "${e.message?.name ?? "handler"}" (exit ${e.message?.exit_code ?? "?"}). See the Last build section for details.`;
+    case "no_build_command":
+      return `Handler "${e.message?.name ?? "?"}" has no entry.build command in rowforge.yaml.`;
   }
 }
 
@@ -410,6 +421,20 @@ export interface ProgressSnapshot {
   rate_10s: number;
 }
 
+// ===== Plan 8 build outcome =====
+
+/** Mirror of rowforge-studio-core::build::BuildOutcome. */
+export interface BuildOutcome {
+  /** ISO 8601 UTC */
+  started_at: string;
+  /** ISO 8601 UTC */
+  finished_at: string;
+  exit_code: number;
+  command: string[];
+  stdout: string;
+  stderr: string;
+}
+
 // ===== Plan 7 handler authoring =====
 
 export type ManifestStatus = "valid" | "invalid" | "missing";
@@ -439,6 +464,8 @@ export interface HandlerDetail {
   manifest_warnings: ManifestWarning[];
   source_files: SourceFileSummary[];
   has_fixtures_dir: boolean;
+  /** Plan 8: outcome of the most recent handler_build invocation; null if never built. */
+  last_build: BuildOutcome | null;
 }
 
 export interface ScaffoldArgs {

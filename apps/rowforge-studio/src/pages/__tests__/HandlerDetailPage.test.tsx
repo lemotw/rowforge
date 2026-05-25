@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -30,13 +30,24 @@ describe("HandlerDetailPage", () => {
     );
   }
 
-  function mockInvoke(detail: HandlerDetail | null, rejectWith?: unknown) {
+  function mockInvoke(detail: HandlerDetail | null, rejectWith?: unknown, buildReject?: unknown) {
     (invoke as any).mockImplementation((cmd: string) => {
       if (cmd === "workspace_current")
         return Promise.resolve({ root: "/tmp/ws", schema_version: 2 });
       if (cmd === "handler_show") {
         if (rejectWith !== undefined) return Promise.reject(rejectWith);
         return Promise.resolve(detail);
+      }
+      if (cmd === "handler_build") {
+        if (buildReject !== undefined) return Promise.reject(buildReject);
+        return Promise.resolve({
+          started_at: "2026-05-25T10:00:00Z",
+          finished_at: "2026-05-25T10:00:01Z",
+          exit_code: 0,
+          command: ["sh", "-c", "go build ."],
+          stdout: "ok\n",
+          stderr: "",
+        });
       }
       throw new Error("unexpected invoke: " + cmd);
     });
@@ -72,6 +83,7 @@ describe("HandlerDetailPage", () => {
       { name: "fixtures", size_bytes: 0, is_directory: true },
     ],
     has_fixtures_dir: true,
+    last_build: null,
   };
 
   const invalidDetail: HandlerDetail = {
@@ -93,6 +105,7 @@ describe("HandlerDetailPage", () => {
       { name: "handler.go", size_bytes: 200, is_directory: false },
     ],
     has_fixtures_dir: false,
+    last_build: null,
   };
 
   const missingDetail: HandlerDetail = {
@@ -111,6 +124,7 @@ describe("HandlerDetailPage", () => {
       { name: "main.go", size_bytes: 8192, is_directory: false },
     ],
     has_fixtures_dir: false,
+    last_build: null,
   };
 
   // ── 1. Loading state ────────────────────────────────────────────────────────
@@ -266,5 +280,44 @@ describe("HandlerDetailPage", () => {
     render(wrap(<HandlerDetailPage />, "alpha"));
 
     expect(await screen.findByText("Warnings")).toBeInTheDocument();
+  });
+
+  // ── 7. Build button ─────────────────────────────────────────────────────────
+
+  const buildableDetail: HandlerDetail = {
+    ...validDetail,
+    manifest: {
+      ...validDetail.manifest,
+      entry: { cmd: ["./alpha", "--serve"], build: ["sh", "-c", "go build ."] },
+    } as any,
+  };
+
+  it("renders Build button when manifest has entry.build", async () => {
+    mockInvoke(buildableDetail);
+    render(wrap(<HandlerDetailPage />, "alpha"));
+
+    expect(await screen.findByRole("button", { name: /^Build$/ })).toBeInTheDocument();
+  });
+
+  it("hides Build button when manifest has no entry.build", async () => {
+    mockInvoke(validDetail);
+    render(wrap(<HandlerDetailPage />, "alpha"));
+
+    // Wait for page to fully render (path is unique on the page)
+    await screen.findByText("/tmp/ws/handlers/alpha");
+    expect(screen.queryByRole("button", { name: /^Build$/ })).toBeNull();
+  });
+
+  it("clicking Build invokes handler_build with handler name", async () => {
+    mockInvoke(buildableDetail);
+    render(wrap(<HandlerDetailPage />, "alpha"));
+
+    const buildBtn = await screen.findByRole("button", { name: /^Build$/ });
+    fireEvent.click(buildBtn);
+
+    // Wait a tick for the mutation to fire
+    await vi.waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("handler_build", { name: "alpha" });
+    });
   });
 });

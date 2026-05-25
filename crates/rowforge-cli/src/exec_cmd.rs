@@ -11,6 +11,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
+use rowforge_core::build::{needs_build, run_build, BuildError};
 use rowforge_core::execution_store::{
     Execution, ExecutionState, ExecutionStore, FinishAttempt, NewAttempt, NewExecution,
     NewHandlerInstance, RunType, Simulation, Source,
@@ -349,6 +350,41 @@ async fn run_attempt(store: &mut ExecutionStore, a: RunAttemptArgs) -> Result<i3
     let manifest_hash = format!("sha256:{:x}", Sha256::digest(&manifest_bytes));
     let handler_canon = std::fs::canonicalize(&a.handler)
         .with_context(|| format!("canonicalize {}", a.handler.display()))?;
+
+    // Auto-build gate: build (or rebuild) the handler binary when stale.
+    if needs_build(&handler_canon, &manifest) {
+        eprintln!("[rowforge] building {} ...", manifest.name);
+        match run_build(&handler_canon, &manifest) {
+            Ok(outcome) => {
+                let dur = outcome
+                    .finished_at
+                    .signed_duration_since(outcome.started_at)
+                    .num_milliseconds();
+                eprintln!("[rowforge] build ok ({} ms)", dur);
+            }
+            Err(BuildError::BuildFailed { exit_code, outcome, .. }) => {
+                eprintln!("[rowforge] build failed (exit {}):", exit_code);
+                if !outcome.stdout.is_empty() {
+                    eprint!("{}", outcome.stdout);
+                }
+                if !outcome.stderr.is_empty() {
+                    eprint!("{}", outcome.stderr);
+                }
+                std::process::exit(2);
+            }
+            Err(BuildError::ToolchainMissing { tool }) => {
+                eprintln!("[rowforge] build tool '{}' not found in PATH", tool);
+                std::process::exit(2);
+            }
+            Err(BuildError::NoBuildCommand) => {
+                unreachable!("needs_build returned true but manifest has no build command");
+            }
+            Err(BuildError::Io(e)) => {
+                eprintln!("[rowforge] build io error: {}", e);
+                std::process::exit(2);
+            }
+        }
+    }
 
     let hi = store.register_handler_instance(NewHandlerInstance {
         handler_id: manifest.name.clone(),

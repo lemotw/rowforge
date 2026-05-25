@@ -3130,6 +3130,7 @@ dependencies = [
  "chrono",
  "csv",
  "dirs 5.0.1",
+ "filetime",
  "fs2",
  "rusqlite",
  "serde",
@@ -3142,6 +3143,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "ulid",
+ "which",
 ]
 
 [[package]]

@@ -42,6 +42,7 @@ pub fn run() {
             commands::handler_scaffold,
             commands::handler_delete,
             commands::handler_rename,
+            commands::handler_build,    // Plan 8 T7
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,7 +5,8 @@
 //! becomes `WorkspaceLocked`. Plan 4 adds `RunAborted`, `RunBusy`,
 //! `UnknownHandle`; Plan 5 refactors tuple variants to struct payloads and
 //! adds `InvalidInput`, `DuplicateExecName`, `ExportIncomplete`,
-//! `ManifestInvalid`, `ToolchainMissing`.
+//! `ManifestInvalid`; Plan 8 adds `BuildFailed`, `ToolchainMissing` (reworked),
+//! `NoBuildCommand`.
 
 use serde::Serialize;
 use thiserror::Error;
@@ -20,7 +21,7 @@ pub enum BusyScope {
     PerWorkspace,
 }
 
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Error, Serialize, Clone)]
 #[serde(tag = "kind", content = "message", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum UiError {
@@ -84,9 +85,9 @@ pub enum UiError {
         errors: Vec<crate::manifest::ManifestError>,
     },
 
-    /// Manifest references a binary not found on PATH (used by future plans).
-    #[error("toolchain missing: {token}")]
-    ToolchainMissing { token: String },
+    /// First token of entry.build not resolvable via which::which.
+    #[error("build tool '{tool}' for handler '{name}' not found in PATH")]
+    ToolchainMissing { name: String, tool: String },
 
     /// 4-tier editor resolution exhausted: Settings.preferred_editor →
     /// $VISUAL → $EDITOR → probe (code/cursor/nvim/vim/nano) all missed.
@@ -105,6 +106,14 @@ pub enum UiError {
     /// Handler name doesn't match `[a-z0-9-]+`. Caught before any fs op.
     #[error("invalid handler name: {name}")]
     InvalidHandlerName { name: String },
+
+    /// Build subprocess exited non-zero.
+    #[error("build failed for handler '{name}' (exit {exit_code})")]
+    BuildFailed { name: String, exit_code: i32 },
+
+    /// Attempted to build a handler whose manifest has no entry.build.
+    #[error("handler '{name}' has no entry.build in its manifest")]
+    NoBuildCommand { name: String },
 }
 
 impl From<std::io::Error> for UiError {
@@ -205,5 +214,31 @@ mod tests {
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["kind"], json!("invalid_handler_name"));
         assert_eq!(v["message"]["name"], json!("Bad Name"));
+    }
+
+    #[test]
+    fn build_failed_serializes_with_kind_and_data() {
+        let e = UiError::BuildFailed { name: "alpha".into(), exit_code: 7 };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("build_failed"));
+        assert_eq!(v["message"]["name"], json!("alpha"));
+        assert_eq!(v["message"]["exit_code"], json!(7));
+    }
+
+    #[test]
+    fn toolchain_missing_serializes_correctly() {
+        let e = UiError::ToolchainMissing { name: "alpha".into(), tool: "go".into() };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("toolchain_missing"));
+        assert_eq!(v["message"]["name"], json!("alpha"));
+        assert_eq!(v["message"]["tool"], json!("go"));
+    }
+
+    #[test]
+    fn no_build_command_serializes_correctly() {
+        let e = UiError::NoBuildCommand { name: "alpha".into() };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("no_build_command"));
+        assert_eq!(v["message"]["name"], json!("alpha"));
     }
 }

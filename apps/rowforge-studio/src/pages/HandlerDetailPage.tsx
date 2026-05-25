@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useWorkspace } from "@/ipc/queries";
 import { AppShell } from "@/layout/AppShell";
@@ -9,6 +10,7 @@ import {
   useHandlerShow,
   useHandlerOpenEditor,
   useHandlerReveal,
+  useHandlerBuild,
 } from "@/ipc/use-handlers";
 import {
   uiErrorMessage,
@@ -18,6 +20,7 @@ import {
 } from "@/ipc/types";
 import { DeleteHandlerDialog } from "@/components/DeleteHandlerDialog";
 import { RenameHandlerDialog } from "@/components/RenameHandlerDialog";
+import { LastBuildSection } from "@/components/LastBuildSection";
 
 export function HandlerDetailPage() {
   const { name = "" } = useParams<{ name: string }>();
@@ -26,8 +29,15 @@ export function HandlerDetailPage() {
   const { data, isLoading, isError, error } = useHandlerShow(name);
   const openEditor = useHandlerOpenEditor();
   const reveal = useHandlerReveal();
+  const build = useHandlerBuild();
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+
+  useEffect(() => {
+    if (build.isError) {
+      toast.error(uiErrorMessage(build.error));
+    }
+  }, [build.isError, build.error]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -79,6 +89,8 @@ export function HandlerDetailPage() {
 
   if (!data) return null;
 
+  const hasBuildCmd = (data?.manifest as any)?.entry?.build != null;
+
   return (
     <AppShell workspace={workspace}>
       <div className="p-6 space-y-6">
@@ -88,8 +100,12 @@ export function HandlerDetailPage() {
           onReveal={() => reveal.mutate({ name })}
           onRename={() => setRenameOpen(true)}
           onDelete={() => setDeleteOpen(true)}
+          hasBuildCmd={hasBuildCmd}
+          onBuild={() => build.mutate({ name })}
+          buildPending={build.isPending}
         />
         <ManifestSection detail={data} />
+        <LastBuildSection last_build={data.last_build} pending={build.isPending} />
         <SourceFilesSection detail={data} />
       </div>
       <RenameHandlerDialog
@@ -112,12 +128,18 @@ function DetailHeader({
   onReveal,
   onRename,
   onDelete,
+  hasBuildCmd,
+  onBuild,
+  buildPending,
 }: {
   detail: HandlerDetail;
   onOpenEditor: () => void;
   onReveal: () => void;
   onRename: () => void;
   onDelete: () => void;
+  hasBuildCmd: boolean;
+  onBuild: () => void;
+  buildPending: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -138,6 +160,15 @@ function DetailHeader({
         </div>
         <div className="flex gap-2 flex-wrap justify-end">
           <Button onClick={onOpenEditor}>Open in editor</Button>
+          {hasBuildCmd && (
+            <Button
+              onClick={onBuild}
+              disabled={buildPending}
+              variant="outline"
+            >
+              {buildPending ? "Building…" : "Build"}
+            </Button>
+          )}
           <Button variant="outline" onClick={onReveal}>
             Reveal
           </Button>

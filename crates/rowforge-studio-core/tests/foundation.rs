@@ -2140,3 +2140,169 @@ fn studio_core_set_preferred_editor_updates_live_field() {
     );
     assert!(is_editor_error, "expected editor error after set, got: {:?}", err);
 }
+
+// ============================================================
+// Plan 8 T6 — handler_build + build cache + HandlerDetail.last_build
+// ============================================================
+
+/// Helper: write a minimal handler under `<workspace>/handlers/<name>/`.
+fn write_handler(workspace: &tempfile::TempDir, name: &str, manifest_yaml: &str) {
+    let dir = workspace.path().join("handlers").join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rowforge.yaml"), manifest_yaml).unwrap();
+}
+
+/// A handler whose manifest has no entry.build returns NoBuildCommand.
+#[test]
+fn handler_build_no_command_returns_no_build_command_error() {
+    let tmp = empty_workspace();
+    write_handler(
+        &tmp,
+        "no-build",
+        "name: no-build\nversion: 0.1.0\nentry:\n  cmd: [\"./no-build\"]\n",
+    );
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    )
+    .unwrap();
+
+    let err = core.handler_build("no-build").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::NoBuildCommand { .. }),
+        "expected NoBuildCommand, got: {:?}",
+        err
+    );
+}
+
+/// Successful build is cached; subsequent handler_show returns last_build with exit_code 0.
+#[test]
+fn handler_build_success_populates_last_build_in_show() {
+    let tmp = empty_workspace();
+    write_handler(
+        &tmp,
+        "build-ok",
+        "name: build-ok\nversion: 0.1.0\nentry:\n  cmd: [\"./build-ok\"]\n  build: [\"sh\", \"-c\", \"echo hi\"]\n",
+    );
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    )
+    .unwrap();
+
+    let outcome = core.handler_build("build-ok").expect("build should succeed");
+    assert_eq!(outcome.exit_code, 0);
+
+    let detail = core.handler_show("build-ok").expect("show should succeed");
+    let last = detail.last_build.expect("last_build should be Some after successful build");
+    assert_eq!(last.exit_code, 0, "cached outcome should have exit_code 0");
+}
+
+/// Failed build is still cached; subsequent handler_show returns last_build with the non-zero exit code and captured stderr.
+#[test]
+fn handler_build_failure_caches_outcome_for_inspection() {
+    let tmp = empty_workspace();
+    write_handler(
+        &tmp,
+        "build-fail",
+        "name: build-fail\nversion: 0.1.0\nentry:\n  cmd: [\"./build-fail\"]\n  build: [\"sh\", \"-c\", \"echo oops >&2; exit 5\"]\n",
+    );
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    )
+    .unwrap();
+
+    let err = core.handler_build("build-fail").unwrap_err();
+    assert!(
+        matches!(
+            err,
+            rowforge_studio_core::UiError::BuildFailed { exit_code: 5, .. }
+        ),
+        "expected BuildFailed(5), got: {:?}",
+        err
+    );
+
+    // Even on failure, the outcome must be cached for UI log display.
+    let detail = core.handler_show("build-fail").expect("show should succeed");
+    let last = detail
+        .last_build
+        .expect("last_build should be Some even after a failed build");
+    assert_eq!(last.exit_code, 5, "cached failed outcome should preserve exit code");
+    assert!(
+        last.stderr.contains("oops"),
+        "cached stderr should contain 'oops', got: {:?}",
+        last.stderr
+    );
+}
+
+/// BLOCKER regression: handler_build must reject path-traversal names before
+/// any filesystem access (manifest read must never touch out-of-workspace paths).
+#[test]
+fn handler_build_rejects_traversal_name() {
+    let tmp = tempfile::Builder::new()
+        .prefix("rfs-plan8-build-trav")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core.handler_build("../etc/passwd").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { ref name } if name.contains("..")),
+        "expected InvalidHandlerName for traversal, got: {:?}",
+        err
+    );
+}
+
+/// BLOCKER regression: handler_build must reject absolute paths as names.
+#[test]
+fn handler_build_rejects_absolute_name() {
+    let tmp = tempfile::Builder::new()
+        .prefix("rfs-plan8-build-abs")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core.handler_build("/etc/passwd").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "expected InvalidHandlerName for absolute path name, got: {:?}",
+        err
+    );
+}
+
+/// ToolchainMissing does NOT write to the cache; handler_show returns last_build == None.
+#[test]
+fn handler_build_toolchain_missing_returns_error_without_cache_write() {
+    let tmp = empty_workspace();
+    write_handler(
+        &tmp,
+        "no-tool",
+        "name: no-tool\nversion: 0.1.0\nentry:\n  cmd: [\"./no-tool\"]\n  build: [\"__rowforge_nonexistent_tool_xyz__\"]\n",
+    );
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    )
+    .unwrap();
+
+    let err = core.handler_build("no-tool").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::ToolchainMissing { .. }),
+        "expected ToolchainMissing, got: {:?}",
+        err
+    );
+
+    // Cache must remain empty — no outcome to display.
+    let detail = core.handler_show("no-tool").expect("show should succeed");
+    assert!(
+        detail.last_build.is_none(),
+        "last_build must be None when ToolchainMissing (no outcome cached)"
+    );
+}

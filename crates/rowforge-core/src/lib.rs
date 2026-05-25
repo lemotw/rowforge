@@ -8,6 +8,7 @@ pub mod error;
 pub mod export;
 pub mod execution_store;
 pub mod jsonl_writer;
+pub mod build;
 pub mod manifest;
 pub mod meta;
 pub mod pool;

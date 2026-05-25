@@ -42,6 +42,10 @@ pub struct HandlerDetail {
     pub manifest_warnings: Vec<crate::manifest::ManifestWarning>,
     pub source_files: Vec<SourceFileSummary>,
     pub has_fixtures_dir: bool,
+    /// Most recent build outcome from the in-memory cache on StudioCore.
+    /// None until the first successful or failed build in the current session.
+    /// Populated by StudioCore::handler_show, not by this module.
+    pub last_build: Option<rowforge_core::build::BuildOutcome>,
 }
 
 #[non_exhaustive]
@@ -215,6 +219,7 @@ pub fn show(workspace_root: &Path, name: &str) -> Result<HandlerDetail, UiError>
         manifest_warnings: report.warnings,
         source_files,
         has_fixtures_dir: path.join("fixtures").is_dir(),
+        last_build: None,
     })
 }
 
@@ -231,6 +236,37 @@ pub(crate) fn validate_name(name: &str) -> bool {
         _ => {}
     }
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+// ---------------------------------------------------------------------------
+// Plan 8 T6 — build_raw (lower-level, no caching; StudioCore owns caching)
+// ---------------------------------------------------------------------------
+
+/// Execute the handler's build command unconditionally.
+///
+/// Does NOT call `needs_build` — Studio's contract (design §7.3) is always
+/// force-rebuild. Returns the raw `BuildError` so the caller
+/// (`StudioCore::handler_build`) can decide cache writes and UiError mapping.
+pub(crate) fn build_raw(
+    workspace_root: &Path,
+    name: &str,
+) -> Result<rowforge_core::build::BuildOutcome, rowforge_core::build::BuildError> {
+    if !validate_name(name) {
+        return Err(rowforge_core::build::BuildError::Io(format!(
+            "invalid handler name: {}",
+            name
+        )));
+    }
+    let dir = workspace_root.join("handlers").join(name);
+    if !dir.is_dir() {
+        return Err(rowforge_core::build::BuildError::Io(format!(
+            "handler '{}' not found",
+            name
+        )));
+    }
+    let (manifest, _path) = rowforge_core::manifest::Manifest::load_from_dir(&dir)
+        .map_err(|e| rowforge_core::build::BuildError::Io(format!("manifest load: {}", e)))?;
+    rowforge_core::build::run_build(&dir, &manifest)
 }
 
 // ---------------------------------------------------------------------------

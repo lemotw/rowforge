@@ -54,12 +54,12 @@ describe("uiErrorMessage", () => {
     expect(uiErrorMessage(e)).toBe("[manifest_invalid] 2 error(s)");
   });
 
-  it("renders toolchain_missing with the token", () => {
+  it("renders toolchain_missing with the tool name", () => {
     const e: UiError = {
       kind: "toolchain_missing",
-      message: { token: "ghc" },
+      message: { name: "my-handler", tool: "ghc" },
     };
-    expect(uiErrorMessage(e)).toContain("'ghc' not on PATH");
+    expect(uiErrorMessage(e)).toContain("ghc");
   });
 
   it("renders editor_not_found", () => {
@@ -80,6 +80,24 @@ describe("uiErrorMessage", () => {
   it("renders invalid_handler_name with name", () => {
     expect(uiErrorMessage({ kind: "invalid_handler_name", message: { name: "Bad Name" } }))
       .toContain("Bad Name");
+  });
+
+  it("renders build_failed copy", () => {
+    expect(
+      uiErrorMessage({ kind: "build_failed", message: { name: "alpha", exit_code: 3 } })
+    ).toContain("Build failed");
+  });
+
+  it("renders toolchain_missing copy", () => {
+    expect(
+      uiErrorMessage({ kind: "toolchain_missing", message: { name: "alpha", tool: "go" } })
+    ).toContain("go");
+  });
+
+  it("renders no_build_command copy", () => {
+    expect(
+      uiErrorMessage({ kind: "no_build_command", message: { name: "alpha" } })
+    ).toContain("entry.build");
   });
 
   it("falls back to String() for non-UiError inputs", () => {
