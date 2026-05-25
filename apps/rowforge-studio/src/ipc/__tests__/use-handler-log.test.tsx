@@ -23,7 +23,7 @@ describe("useHandlerLogTail", () => {
     (invoke as any).mockResolvedValue(lines);
     const { result } = renderHook(() => useHandlerLogTail("e1", "a1"), { wrapper: wrap });
     await waitFor(() => expect(result.current.data).toEqual(lines));
-    expect(invoke).toHaveBeenCalledWith("handler_log_tail", { exec_id: "e1", attempt_id: "a1", max_lines: 5000 });
+    expect(invoke).toHaveBeenCalledWith("handler_log_tail", { execId: "e1", attemptId: "a1", maxLines: 5000 });
   });
 });
 
@@ -72,8 +72,8 @@ describe("useHandlerLogLive", () => {
       wrapper: wrap,
     });
     // Wait for subscribe call to happen
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("handler_log_subscribe", { exec_id: "e1", attempt_id: "a1" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("handler_log_subscribe", { execId: "e1", attemptId: "a1" }));
     unmount();
-    expect(invoke).toHaveBeenCalledWith("handler_log_unsubscribe", { attempt_id: "a1" });
+    expect(invoke).toHaveBeenCalledWith("handler_log_unsubscribe", { attemptId: "a1" });
   });
 });

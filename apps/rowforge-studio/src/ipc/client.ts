@@ -100,10 +100,10 @@ export const ipc = {
 
   // ===== Plan 9 handler logs =====
 
-  handler_log_tail: (args: { exec_id: string; attempt_id: string; max_lines?: number }) =>
+  handler_log_tail: (args: { execId: string; attemptId: string; maxLines?: number }) =>
     invoke<HandlerLogLine[]>("handler_log_tail", args),
-  handler_log_subscribe: (args: { exec_id: string; attempt_id: string }) =>
+  handler_log_subscribe: (args: { execId: string; attemptId: string }) =>
     invoke<void>("handler_log_subscribe", args),
-  handler_log_unsubscribe: (args: { attempt_id: string }) =>
+  handler_log_unsubscribe: (args: { attemptId: string }) =>
     invoke<void>("handler_log_unsubscribe", args),
 };

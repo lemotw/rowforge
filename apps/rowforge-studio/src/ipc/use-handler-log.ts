@@ -8,7 +8,7 @@ export function useHandlerLogTail(execId: string, attemptId: string, maxLines = 
   return useQuery({
     queryKey: ["handler_log_tail", execId, attemptId, maxLines],
     queryFn: () =>
-      ipc.handler_log_tail({ exec_id: execId, attempt_id: attemptId, max_lines: maxLines }),
+      ipc.handler_log_tail({ execId, attemptId, maxLines }),
     enabled: !!attemptId,
   });
 }
@@ -36,7 +36,7 @@ export function useHandlerLogLive(execId: string, attemptId: string, enabled: bo
     let cancelled = false;
 
     ipc
-      .handler_log_subscribe({ exec_id: execId, attempt_id: attemptId })
+      .handler_log_subscribe({ execId, attemptId })
       .then(() => {
         if (cancelled) return undefined;
         return listen<{ lines: HandlerLogLine[]; dropped: number }>(
@@ -59,7 +59,7 @@ export function useHandlerLogLive(execId: string, attemptId: string, enabled: bo
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
-      ipc.handler_log_unsubscribe({ attempt_id: attemptId }).catch(() => {});
+      ipc.handler_log_unsubscribe({ attemptId }).catch(() => {});
     };
   }, [execId, attemptId, enabled]);
 
