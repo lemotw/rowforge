@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
@@ -76,34 +76,7 @@ export function ExecDetailPage() {
               </TabsList>
 
               <TabsContent value="attempts">
-                {detail.data.attempts.length === 0 ? (
-                  <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-                    This execution has never been run.
-                  </div>
-                ) : (
-                  <Table>
-                    <Thead>
-                      <Tr><Th>#</Th><Th>State</Th><Th>Started</Th><Th>Run type</Th><Th></Th></Tr>
-                    </Thead>
-                    <tbody>
-                      {detail.data.attempts.map((a, i) => (
-                        <Tr key={a.id}>
-                          <Td>{i + 1}</Td>
-                          <Td><StateChip state={a.state} /></Td>
-                          <Td className="font-mono">
-                            {new Date(a.started_at).toISOString().replace("T", " ").slice(0, 16)}
-                          </Td>
-                          <Td>{a.run_type}</Td>
-                          <Td>
-                            <Link to={`/exec/${id}/attempt/${a.id}`} className="text-primary hover:underline">
-                              open ⏵
-                            </Link>
-                          </Td>
-                        </Tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                )}
+                <AttemptsList attempts={detail.data.attempts} execId={id!} />
               </TabsContent>
 
               <TabsContent value="rollup">
@@ -124,6 +97,77 @@ export function ExecDetailPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+function AttemptsList({
+  attempts,
+  execId,
+}: {
+  attempts: import("@/ipc/types").AttemptSummary[];
+  execId: string;
+}) {
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+
+  const sorted = useMemo(() => {
+    const copy = [...attempts];
+    copy.sort((a, b) => {
+      const ta = new Date(a.started_at).getTime();
+      const tb = new Date(b.started_at).getTime();
+      return sortDir === "desc" ? tb - ta : ta - tb;
+    });
+    return copy;
+  }, [attempts, sortDir]);
+
+  if (attempts.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
+        This execution has never been run.
+      </div>
+    );
+  }
+
+  const toggleSort = () => setSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
+  const arrow = sortDir === "desc" ? "▼" : "▲";
+
+  return (
+    <Table>
+      <Thead>
+        <Tr>
+          <Th>State</Th>
+          <Th>Run type</Th>
+          <Th>
+            <button
+              type="button"
+              onClick={toggleSort}
+              className="inline-flex items-center gap-1 hover:text-foreground"
+              aria-label={`Sort by Started ${sortDir === "desc" ? "ascending" : "descending"}`}
+            >
+              Started <span className="text-muted-foreground text-[10px]">{arrow}</span>
+            </button>
+          </Th>
+          <Th></Th>
+        </Tr>
+      </Thead>
+      <tbody>
+        {sorted.map((a) => (
+          <Tr key={a.id}>
+            <Td>
+              <StateChip state={a.state} />
+            </Td>
+            <Td>{a.run_type}</Td>
+            <Td className="font-mono">
+              {new Date(a.started_at).toISOString().replace("T", " ").slice(0, 16)}
+            </Td>
+            <Td>
+              <Link to={`/exec/${execId}/attempt/${a.id}`} className="text-primary hover:underline">
+                open ⏵
+              </Link>
+            </Td>
+          </Tr>
+        ))}
+      </tbody>
+    </Table>
   );
 }
 
