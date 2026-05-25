@@ -5,6 +5,14 @@ import { MemoryRouter } from "react-router-dom";
 import { SettingsForm } from "@/components/SettingsForm";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    loading: vi.fn().mockReturnValue("toast-1"),
+    dismiss: vi.fn(),
+  },
+}));
 vi.mock("@/ipc/client", () => ({
   ipc: {
     workspace_settings_load: vi.fn().mockResolvedValue({
@@ -59,6 +67,17 @@ describe("SettingsForm", () => {
       expect(ipc.workspace_settings_save).toHaveBeenCalledWith({
         settings: expect.objectContaining({ max_concurrent_runs: 5 }),
       });
+    });
+  });
+
+  it("Save fires a success toast so users know it persisted", async () => {
+    render(wrap(<SettingsForm />));
+    const mcr = await screen.findByLabelText(/max concurrent runs/i);
+    fireEvent.change(mcr, { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+    await waitFor(async () => {
+      const { toast } = await import("sonner");
+      expect(toast.success).toHaveBeenCalledWith("Settings saved");
     });
   });
 });
