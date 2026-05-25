@@ -61,6 +61,13 @@ pub enum ManifestWarning {
     /// Relative tokens like `./bin/x` or `bin/x` skip the probe; they
     /// resolve via cwd at spawn time.
     PathLookupFailed { field: String, token: String },
+    /// `entry.build[0]` is not resolvable via `which::which`. The build
+    /// step will fail at runtime if the tool is absent.
+    BuildToolNotInPath { tool: String },
+    /// `entry.cmd[0]` refers to an absolute path that does not exist, a
+    /// relative path not present in the handler dir, or a bare name not
+    /// on PATH — and there is no `entry.build` to produce it.
+    CmdTargetMissing { target: String },
 }
 
 #[non_exhaustive]
@@ -116,6 +123,12 @@ fn validate_at(handler_dir: &Path) -> ManifestReport {
         }
     }
 
+    // PATH-resolution warnings (T2):
+    // - BuildToolNotInPath: entry.build[0] not resolvable via which::which
+    // - CmdTargetMissing: entry.cmd[0] refers to a missing path/binary
+    //   (skipped when entry.build is present — build is expected to produce it)
+    check_path_resolution(&core_manifest, handler_dir, &mut warnings);
+
     let manifest = Manifest {
         name: core_manifest.name,
         version: core_manifest.version,
@@ -125,6 +138,51 @@ fn validate_at(handler_dir: &Path) -> ManifestReport {
     };
 
     ManifestReport { manifest: Some(manifest), errors, warnings }
+}
+
+fn check_path_resolution(
+    manifest: &rowforge_core::manifest::Manifest,
+    handler_dir: &Path,
+    warnings: &mut Vec<ManifestWarning>,
+) {
+    // 1. Build tool: entry.build[0] must be resolvable via which::which.
+    //    (Only bare names are relevant — relative paths like ./tools/build
+    //    resolve at spawn time, and we can't which-probe them here.)
+    if let Some(build) = &manifest.entry.build {
+        if let Some(tool) = build.first() {
+            // Only warn for bare names (no path separators). Relative/absolute
+            // paths are not PATH-lookups and are handled by other checks.
+            if !tool.contains('/') && !tool.contains('\\') && which::which(tool).is_err() {
+                warnings.push(ManifestWarning::BuildToolNotInPath {
+                    tool: tool.clone(),
+                });
+            }
+        }
+    }
+
+    // 2. Cmd target: entry.cmd[0] must resolve to an existing file,
+    //    unless entry.build is present (build is expected to produce it).
+    if manifest.entry.build.is_none() {
+        if let Some(t) = manifest.entry.cmd.first() {
+            let t_str = t.as_str();
+            let exists = if t_str.starts_with('/') {
+                // Absolute path — check directly.
+                std::path::Path::new(t_str).exists()
+            } else if t_str.contains('/') || t_str.starts_with('.') {
+                // Relative path — resolve against handler_dir.
+                let stripped = t_str.trim_start_matches("./");
+                handler_dir.join(stripped).exists()
+            } else {
+                // Bare name — must be on PATH.
+                which::which(t_str).is_ok()
+            };
+            if !exists {
+                warnings.push(ManifestWarning::CmdTargetMissing {
+                    target: t_str.to_string(),
+                });
+            }
+        }
+    }
 }
 
 fn probe_path_token(token: &str, field: &str, warnings: &mut Vec<ManifestWarning>) {
@@ -211,14 +269,19 @@ mod tests {
 
     #[test]
     fn relative_cmd_not_path_probed() {
+        // Relative paths skip which-probing (PathLookupFailed); they are
+        // checked for on-disk existence instead. Create the binary so the
+        // file-existence check passes too → zero warnings.
         let dir = tmpdir("rel-bin");
+        fs::create_dir_all(dir.join("bin")).unwrap();
+        fs::write(dir.join("bin/handler"), b"").unwrap();
         write_yaml(
             &dir,
             "name: x\nversion: 0.1.0\nentry:\n  cmd: [\"./bin/handler\"]\n",
         );
         let report = validate_manifest(&ManifestSource::Path { path: dir });
         assert!(report.errors.is_empty());
-        assert!(report.warnings.is_empty());
+        assert!(report.warnings.is_empty(), "expected no warnings, got: {:?}", report.warnings);
         assert!(report.manifest.is_some());
     }
 
@@ -235,5 +298,59 @@ mod tests {
             w,
             ManifestWarning::PathLookupFailed { field, .. } if field == "entry.build"
         )));
+    }
+
+    #[test]
+    fn validate_warns_when_build_tool_not_in_path() {
+        let dir = tmpdir("build-tool-missing");
+        write_yaml(
+            &dir,
+            "name: t\nversion: 0.1.0\nentry:\n  cmd: [\"./handler\"]\n  build: [\"this-tool-xyz-does-not-exist\", \"build\"]\n",
+        );
+        let report = validate_manifest(&ManifestSource::Path { path: dir });
+        assert!(report.errors.is_empty());
+        assert!(
+            report.warnings.iter().any(|w| matches!(
+                w,
+                ManifestWarning::BuildToolNotInPath { tool } if tool == "this-tool-xyz-does-not-exist"
+            )),
+            "expected BuildToolNotInPath warning, got: {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn validate_warns_when_relative_cmd_missing_and_no_build() {
+        let dir = tmpdir("cmd-missing-no-build");
+        write_yaml(
+            &dir,
+            "name: t\nversion: 0.1.0\nentry:\n  cmd: [\"./missing-binary\"]\n",
+        );
+        let report = validate_manifest(&ManifestSource::Path { path: dir });
+        assert!(report.errors.is_empty());
+        assert!(
+            report.warnings.iter().any(|w| matches!(
+                w,
+                ManifestWarning::CmdTargetMissing { target } if target == "./missing-binary"
+            )),
+            "expected CmdTargetMissing warning, got: {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn validate_does_not_warn_when_cmd_missing_but_build_present() {
+        let dir = tmpdir("cmd-missing-with-build");
+        write_yaml(
+            &dir,
+            "name: t\nversion: 0.1.0\nentry:\n  cmd: [\"./not-yet-built\"]\n  build: [\"sh\", \"-c\", \"echo build\"]\n",
+        );
+        let report = validate_manifest(&ManifestSource::Path { path: dir });
+        assert!(report.errors.is_empty());
+        assert!(
+            !report.warnings.iter().any(|w| matches!(w, ManifestWarning::CmdTargetMissing { .. })),
+            "should not warn CmdTargetMissing when build is present, got: {:?}",
+            report.warnings
+        );
     }
 }
