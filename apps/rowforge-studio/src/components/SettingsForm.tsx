@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/ipc/client";
 import { uiErrorMessage, type Settings } from "@/ipc/types";
+import { WorkspaceSwitchButton } from "@/components/WorkspaceSwitchButton";
 
 /**
  * Plan 6 T11. Controlled form bound to Settings shape. Tracks dirty
@@ -53,9 +54,7 @@ export function SettingsForm() {
       <Section title="Workspace">
         <div className="space-y-2">
           <div className="font-mono text-sm">{form.workspace_root ?? "—"}</div>
-          <div className="text-xs text-muted-foreground">
-            (Switch button — T12)
-          </div>
+          <WorkspaceSwitchButton />
         </div>
       </Section>
 
