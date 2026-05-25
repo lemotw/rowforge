@@ -377,4 +377,6 @@ export interface ProgressSnapshot {
   in_flight: number;
   queue_depth: number;
   phase: Phase | null;
+  /** Plan 6 T5: sliding-window 10s rate. 0 while still warming up. */
+  rate_10s: number;
 }
