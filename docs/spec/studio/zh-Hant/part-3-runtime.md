@@ -162,6 +162,65 @@ Studio **不**提供孤兒 attempt 的「resume」。標準的重置動作是在
   `rowforge-core::workspace::scan_for_orphans` 啟動掃描。
 - 修補（寫 SQLite + meta）：`rowforge-core::workspace::mark_aborted`。
 
+## 3.9 Handler 記錄 tee（Plan 9）
+
+Studio 透過 `run_pipeline_in_process` 啟動 run 時，pool-streaming 層會
+將每個 worker 的 stdio 輸出同時導向兩個目的地：磁碟上的
+`<attempt_dir>/handler_log.log`，以及儲存在 `Session` 中的
+`broadcast::Sender<HandlerLogLine>`。
+
+### 捕獲範圍
+
+- **stderr** — 所有行，無條件捕獲。
+- **stdout** — 預設僅非 JSON 行（例如除錯輸出）。有效 outcome JSON 行
+  除非 `Settings.handler_log_capture_raw_stdout` 為 `true`（第 2 部分
+  §2.2.9）否則排除。Outcome JSON 通常量大，記錄入 log 幾乎不提升診斷
+  價值。
+
+### 磁碟格式
+
+每條追加的行格式如下：
+
+```
+<rfc3339-timestamp> [handler#<worker_id> <stream>] <content>
+```
+
+其中 `<stream>` 為 `stdout` 或 `stderr`。範例：
+
+```
+2026-05-25T14:32:01.423Z [handler#2 stderr] panic: nil pointer dereference
+```
+
+此格式專為 `cat`/`less`/`grep` 設計，無需 rowforge 專屬工具即可解析。
+行在抵達時追加；run 過程中檔案不截斷。不執行 log rotation — 呼叫端需自
+行管理檔案大小。
+
+### 即時 tail 用的 broadcast channel
+
+每次 run 啟動時，依 attempt 建立一個 `broadcast::Sender<HandlerLogLine>`
+（容量 4096）並儲存在 `Session`。Studio Tauri 層透過
+`StudioCore::handler_log_subscribe(attempt_id)` 訂閱，將行即時扇出至 UI。
+
+背壓：訂閱者的接收緩衝區滿時，`tokio::sync::broadcast` 靜默丟棄最舊的
+未讀訊息（丟棄的行數）。Tauri 事件泵在每個批次 payload 中攜帶 `dropped: u64`
+欄位，讓 UI 顯示警告 banner。磁碟上的檔案永遠完整 — 丟棄只影響
+in-process 的 broadcast 路徑。
+
+### 批次策略
+
+Tauri 事件 `handler_log:<attempt_id>` 至多每 100 ms 或累積 64 行時發送
+（以先到者為準）。Payload：
+
+```typescript
+{ lines: HandlerLogLine[], dropped: number }
+```
+
+### CLI 向下相容
+
+pool-streaming tee 為附加行為：`on_handler_log` 為 `None` 的 CLI 路徑
+中，stderr 仍像以往透過 `eprintln!` 印到終端機。`capture_raw_stdout` 旗
+標在 CLI 路徑中無關，預設 `false`。
+
 ## 3.8 背景與閒置行為
 
 - macOS App Nap 預設不關閉。Studio 在背景時長時間執行的 attempts 可能

@@ -156,6 +156,9 @@ struct Settings {
     max_concurrent_runs: Option<u32>,    // 預設 3
     telemetry_opt_in: bool,              // 預設 false；v1 不收集
     preferred_editor: Option<String>,    // Plan 7：編輯器命令覆寫，例如 "code"、"cursor"
+    #[serde(default)]
+    handler_log_capture_raw_stdout: bool, // Plan 9：預設 false；為 true 時，handler stdout
+                                          // 中的有效 outcome JSON 行也寫入 handler_log.log
 }
 ```
 型別存放於 `studio-core::settings`；load/save 的路徑解析屬於 Tauri 層
@@ -167,6 +170,12 @@ struct Settings {
 Settings 欄位並列；`schema_version` 維持為 1。透過
 `workspace_settings_save` 即時更新至 `StudioCore` — 不需重新開啟
 workspace。
+
+`handler_log_capture_raw_stdout` 控制 pool-streaming tee（第 3 部分 §3.9）
+是否也將帶有有效 outcome JSON 的 handler stdout 行寫入 `handler_log.log`。
+預設 `false`（outcome JSON 量大，記錄入 log 幾乎不提升診斷價值）。
+欄位使用 `#[serde(default)]`，因此不含此欄位的現有 `settings.json` 仍可
+正確讀取 — 不升 `schema_version`。
 
 > **注意 — 實作修正（Plan 7）：** 第 8 部分 §8.6.4 原先描述此欄位
 > 需將 `schema_version` 由 1 升至 2。Plan 7 採容忍 reader 方式加入

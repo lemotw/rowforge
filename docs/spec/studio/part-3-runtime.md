@@ -182,6 +182,68 @@ Responsibility split:
   `rowforge-core::workspace::scan_for_orphans`.
 - Repair (writing SQLite + meta): `rowforge-core::workspace::mark_aborted`.
 
+## 3.9 Handler log tee (Plan 9)
+
+When Studio starts a run via `run_pipeline_in_process`, the pool-streaming
+layer tees every worker's stdio output to two destinations simultaneously:
+`<attempt_dir>/handler_log.log` on disk and a `broadcast::Sender<HandlerLogLine>`
+held in the `Session`.
+
+### What is captured
+
+- **stderr** — all lines, unconditionally.
+- **stdout** — non-JSON lines only by default (e.g. debug prints). Valid
+  outcome JSON lines are excluded unless `Settings.handler_log_capture_raw_stdout`
+  is `true` (Part 2 §2.2.9). Outcome JSON is typically high-volume; writing
+  it to the log creates large files without adding diagnostic value.
+
+### On-disk format
+
+Each appended line has the form:
+
+```
+<rfc3339-timestamp> [handler#<worker_id> <stream>] <content>
+```
+
+where `<stream>` is `stdout` or `stderr`. Example:
+
+```
+2026-05-25T14:32:01.423Z [handler#2 stderr] panic: nil pointer dereference
+```
+
+The format is designed for `cat`/`less`/`grep` without rowforge-specific
+tooling. Lines are appended as they arrive; the file is never truncated
+during a run. No rotation is performed — callers must manage file size.
+
+### Broadcast channel for live tail
+
+A `broadcast::Sender<HandlerLogLine>` (capacity 4096) is created per
+attempt when the run starts and stored in the `Session`. Studio's Tauri
+layer subscribes via `StudioCore::handler_log_subscribe(attempt_id)` to
+fan out lines to the UI in real time.
+
+Backpressure: when a subscriber's receive buffer fills, the oldest
+unread messages are silently dropped by `tokio::sync::broadcast`. The
+Tauri event pump carries a `dropped: u64` field in every batch payload
+so the UI can surface a warning banner. The file on disk is always
+complete — dropping only affects the in-process broadcast path.
+
+### Batching policy
+
+The Tauri event `handler_log:<attempt_id>` is emitted at most every 100 ms
+OR when 64 lines have accumulated, whichever comes first. Payload:
+
+```typescript
+{ lines: HandlerLogLine[], dropped: number }
+```
+
+### CLI back-compat
+
+The pool-streaming tee is additive: when `on_handler_log` is `None` (the
+CLI path), stderr is still printed to the terminal via `eprintln!` as
+before. The `capture_raw_stdout` flag is irrelevant in the CLI path and
+defaults to `false`.
+
 ## 3.8 Background and idle behaviour
 
 - App Nap (macOS) is not opted out by default. Long-running attempts

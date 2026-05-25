@@ -584,3 +584,137 @@ EOF
   `spawn_blocking` — the Tauri async runtime is blocked for the
   duration of the build. For multi-second builds this may delay other
   Tauri commands. Refactor flagged for a later plan.
+
+---
+
+## Plan 09 — Handler Logs
+
+These steps verify the end-to-end handler log capture: file persistence,
+Studio Logs tab states (bootstrap / live / filters / auto-scroll / pause
+/ backpressure), capture_raw_stdout toggle, and edge cases.
+
+### 1. Setup
+
+1. Create a fresh workspace and an execution using any input CSV.
+   Use the `golang-apple-refund` handler (or any handler you can edit)
+   and add `fmt.Fprintln(os.Stderr, "processing row", rowIndex)` inside
+   the per-row handler body so every row emits a stderr line.
+
+2. Run the execution with at least a few hundred rows so the log file
+   has visible content.
+
+### 2. File persistence
+
+3. After the attempt finishes, locate the attempt directory:
+   `<workspace>/executions/<exec_id>/attempts/<attempt_id>/`
+   Confirm that `handler_log.log` exists in that directory.
+
+4. Run `cat <path>/handler_log.log | head -5` and verify each line has
+   the format:
+   ```
+   2026-05-25T14:32:01.423Z [handler#0 stderr] processing row 1
+   ```
+   — RFC 3339 timestamp, `[handler#<N> stderr|stdout]`, then content.
+
+5. In a terminal, run the same execution via the CLI:
+   `rowforge exec run --handler <handler_dir> <exec_id>`
+   Confirm that handler stderr lines still appear in the terminal
+   (`[handler#0 stderr] ...`) — CLI back-compat is preserved.
+
+6. Open the existing `handler_log.log` and grep for any JSON that looks
+   like an outcome line (e.g. `{"type":"success"`). With the default
+   setting `capture_raw_stdout = false`, no outcome JSON should appear.
+
+### 3. Studio Logs tab
+
+7. Open Studio. Navigate to the execution's Attempt Detail page for the
+   attempt you ran. Click the **Logs** tab (between Errors by code and
+   Artifacts in the sub-tab bar).
+
+8. The tab shows a tail of the log file — up to 5000 lines are loaded
+   on mount. Verify that the lines match what `cat` showed.
+
+9. Each line displays: RFC 3339 timestamp · colored worker badge `#0`
+   (or `#N`) · stream chip (yellow label **stderr** / blue label
+   **stdout**) · monospace line content.
+
+10. Click the `#0` worker chip in the toolbar filter. The list narrows
+    to only lines from worker 0. Click again to deselect.
+
+11. In the toolbar, switch the stream toggle to **stdout only**. The
+    list should be empty (or show only stdout lines if any non-JSON
+    stdout was emitted). Confirm stderr lines are hidden. Switch back
+    to **both**.
+
+12. Type a substring from one of the log lines into the search box.
+    The list narrows to matching lines. Clear the search box to restore.
+
+13. Start a new run on the same execution so the attempt is live.
+    Navigate to that attempt's Logs tab. Confirm the auto-scroll toggle
+    is on; new lines appear at the bottom and the viewport follows.
+
+14. While lines are arriving, scroll up manually. The auto-scroll
+    indicator in the toolbar should show as disengaged (e.g. greyed
+    out). New lines stop pushing the viewport.
+
+15. Click **Pause** in the toolbar. Live lines continue arriving in the
+    background but the visible list does not update. Click **Resume**:
+    buffered lines flush in and auto-scroll reactivates.
+
+### 4. Backpressure
+
+16. Modify the handler to emit ~10 000 lines per second to stderr (e.g.
+    log every byte or add a tight loop). Run the execution. While it is
+    running, watch the Logs tab — an amber banner should appear:
+    > ⚠ N log lines dropped — open the log file for full content.
+    The `dropped` counter in the banner corresponds to lines lost from
+    the broadcast channel, not from the file.
+
+17. After the run, click **Reveal log file** in the Logs toolbar. Your
+    OS file manager (Finder on macOS) should open at
+    `<attempt_dir>/handler_log.log`. Open the file and verify it
+    contains far more lines than the Studio UI showed — the file is
+    always complete.
+
+### 5. capture_raw_stdout
+
+18. Go to **Settings** (`/settings`). Scroll to the **Logs** section.
+    Enable the **Capture raw stdout** toggle. Click Save.
+
+19. Run a new attempt. After it finishes, open `handler_log.log` and
+    grep for outcome JSON lines (e.g. `{"type":"success"`). They should
+    now appear, interleaved with the stderr lines, each prefixed with
+    the `[handler#N stdout]` label.
+
+### 6. Edge cases
+
+20. Navigate to an old attempt that was created before Plan 9 (i.e.
+    before `handler_log.log` was introduced). Open its Logs tab. The
+    tab shows:
+    > No log file. This attempt predates Plan 9 log capture.
+
+21. Start a new run and navigate to its Logs tab immediately, before
+    the handler emits any output. The tab shows:
+    > Handler has not produced any output yet.
+    (Once the handler starts emitting, the message clears and lines
+    appear.)
+
+22. With any attempt open in the Logs tab, apply a filter combination
+    that matches nothing (e.g. search for a string that does not exist,
+    or select a worker ID that had no output). The list shows:
+    > No lines match the current filters.
+
+### Known Plan 9 limitations
+
+- No log rotation — a long-running handler can produce 100 MB+ files;
+  disk usage must be managed manually.
+- No cross-attempt log search — each attempt's log is a separate file;
+  there is no grep-across-attempts surface in the UI.
+- No color coding by severity keyword (ERROR / WARN / INFO) — all lines
+  use the same stream color (yellow stderr / blue stdout).
+- `rowforge-core`'s own internal tracing (the `tracing` crate spans)
+  is not captured — `handler_log.log` contains only the handler
+  process's own stdout/stderr, not the Studio runtime's logs.
+- The broadcast channel cap is 4096 lines; a handler emitting faster
+  than the Tauri event pump can drain will see drops. The file is
+  unaffected.

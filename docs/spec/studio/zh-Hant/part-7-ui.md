@@ -74,6 +74,9 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
     `limit ≤ 500`）。
   - **Errors by code** — 渲染 `AttemptDetail.by_error_code`（32 上限
     `OTHER` 溢位）。
+  - **Logs** — handler stderr/stdout 記錄 tail。Bootstrap 透過
+    `handler_log_tail`；即時更新透過 `handler_log_subscribe`
+    （Plan 9 §7.4 Flow K）。
   - **Artifacts** — `AttemptDetail.paths` 加上「在 Finder 顯示」
     （第 2 部分 §2.3）。
 - **Row History drawer** — 從 Failed rows 點開。實體：`RowHistory`。
@@ -91,7 +94,7 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
   `workspace_settings_load`、`workspace_settings_save`、`run_active`
   （透過 workspace 切換按鈕）、`workspace_open`（切換時）。
 
-  版面：單欄表單，分三個區塊。
+  版面：單欄表單，分四個區塊。
   1. **Workspace** — 以唯讀等寬文字顯示目前的 `workspace_root`；
      **Switch workspace…** 按鈕開啟目錄選取器。當 `run_active().len()
      > 0` 時按鈕停用並顯示琥珀色警告（頁面掛載時每 2 秒刷新）
@@ -104,6 +107,10 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
      `Settings.default_workers` 是 dead code,studio-core 的 `start_run`
      從來沒讀過,已移除。）
   3. **Telemetry** — `telemetry_opt_in` 核取方塊。
+  4. **Logs**（Plan 9）— `handler_log_capture_raw_stdout` 切換開關
+     （「Capture raw stdout」）。標籤副文字：「啟用後，handler stdout
+     中含有效 outcome JSON 的行也會寫入 handler_log.log，可能增加
+     檔案大小。」預設關閉。下次 run 後生效（非追溯）。
 
   底部有 Save / Cancel 按鈕。Save 透過 `workspace_settings_save` 持久化
   並使快取查詢失效；Cancel 從已載入值還原。
@@ -230,6 +237,33 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 
 惰性語意：`executions` 列中舊有的 `last_handler_dir` 引用在刪除後仍保留。
 符號連結防護：三層 — (1) 正則驗證名稱、(2) 路徑 canonicalize、(3) 斷言以 workspace `handlers/` 父目錄為前綴。
+
+### Flow K — 查看 handler 記錄（Logs tab，Plan 9）
+
+| # | 步驟 | Command |
+|---|---|---|
+| 1 | 導向 Attempt Detail；點選 **Logs** tab | — |
+| 2 | Tab 掛載 → bootstrap 載入 | `handler_log_tail(exec_id, attempt_id, 5000)` |
+| 3 | 若 `handler_log.log` 不存在 → 顯示「No log file. This attempt predates Plan 9 log capture.」 | — |
+| 4 | 若檔案存在但為空 → 顯示「Handler has not produced any output yet.」 | — |
+| 5 | 若 attempt 仍在執行（`isLive`）：訂閱即時行 | `handler_log_subscribe(exec_id, attempt_id)` |
+| 6 | 即時行透過事件 `handler_log:<attempt_id>` 在 ~100 ms 內抵達 | event |
+| 7 | Worker chip 多選篩選 → 清單縮小至選取的 worker | — |
+| 8 | Stream 篩選（stdout / stderr / 兩者）→ 進一步縮小 | — |
+| 9 | 文字搜尋（子字串）→ 進一步縮小 | — |
+| 10 | 篩選後無任何行 → 顯示「No lines match the current filters.」 | — |
+| 11 | 自動捲動開啟：新即時行抵達時 viewport 保持在底部 | — |
+| 12 | 使用者手動向上滾動 → 自動捲動解除 | — |
+| 13 | 點 **Pause**：即時行在緩衝區累積，可見清單凍結 | — |
+| 14 | 點 **Resume**：緩衝行沖入可見清單，自動捲動重新接合 | — |
+| 15 | 批次 payload 中 `dropped > 0` → 琥珀 banner「⚠ N 行 handler 記錄已丟棄 — 請開啟記錄檔取得完整內容」 | — |
+| 16 | 點 **Reveal log file** → OS 檔案管理員開啟 `<attempt_dir>/handler_log.log` | `shell::open` |
+| 17 | Tab 卸載或 attempt 完成 → 取消訂閱 | `handler_log_unsubscribe(attempt_id)` |
+
+**元件結構：**
+- `LogsToolbar` — worker chips、stream 切換、搜尋輸入、Pause/Resume 按鈕、Reveal 按鈕。
+- `LogsVirtualList` — `@tanstack/react-virtual` 清單；每列 28 px；帶顏色 stream chip（黃色 stderr / 藍色 stdout）；等寬內容。
+- `AttemptLogsTab` — 協調 bootstrap、即時訂閱、篩選組合、丟棄 banner。
 
 ## 7.5 顏色與狀態映射
 

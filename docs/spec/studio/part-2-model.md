@@ -162,6 +162,9 @@ struct Settings {
     max_concurrent_runs: Option<u32>,    // default 3
     telemetry_opt_in: bool,              // default false; not collected in v1
     preferred_editor: Option<String>,    // Plan 7: editor command override, e.g. "code", "cursor"
+    #[serde(default)]
+    handler_log_capture_raw_stdout: bool, // Plan 9: default false; when true, valid outcome JSON lines
+                                          // from handler stdout are also written to handler_log.log
 }
 ```
 Type lives in `studio-core::settings`; load/save path resolution lives in
@@ -172,6 +175,13 @@ the Tauri layer (uses Tauri's `app_data_dir`).
 → probe `code`/`cursor`/`nvim`/`vim`/`nano`. Stored in `settings.json` alongside
 the other Settings fields; `schema_version` stays 1. Live-updated into
 `StudioCore` on `workspace_settings_save` — no workspace re-open required.
+
+`handler_log_capture_raw_stdout` controls whether the pool-streaming tee
+(Part 3 §3.9) also writes handler stdout lines that carry valid outcome JSON
+to `handler_log.log`. Default is `false` (outcome JSON is high-volume and
+rarely useful in the log). The field uses `#[serde(default)]` so existing
+`settings.json` files without it are read without error — no `schema_version`
+bump.
 
 > **Note — implementer correction (Plan 7):** §8.6.4 in Part 8 originally
 > described a `schema_version` bump from 1 to 2 for this field. Plan 7

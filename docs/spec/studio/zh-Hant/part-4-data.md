@@ -12,6 +12,7 @@
 | `executions/<e>/manifest.json` | CLI 寫入 | `ExecDetail` 鏡像;與 SQLite 重複 |
 | `executions/<e>/attempts/<r>/meta.json` | CLI 在 terminal 狀態寫入 | `AttemptDetail.stats`、`by_error_code` |
 | `executions/<e>/attempts/<r>/outcomes.jsonl` | CLI 在 run 中串流 | 掃描以提供 `FailedRowPage`、`ExecRollup`、`RowHistory` |
+| `executions/<e>/attempts/<r>/handler_log.log` | Studio 在 run 中追加（Plan 9） | Logs tab bootstrap 透過 `handler_log_tail`；即時 tail 透過 `handler_log_subscribe` |
 | `executions/<e>/attempts/<r>/handler-snapshot/` | CLI 在 attempt 起始寫入 | 僅透過「在 Finder 顯示」檢視 |
 | `executions/<e>/exports/<ts>/resolution.json` | CLI 在 export 時寫入 | 有 export 後才讀取 |
 

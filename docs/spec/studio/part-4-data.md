@@ -13,6 +13,7 @@ versioning. Disk layout produced by the CLI is in
 | `executions/<e>/manifest.json` | CLI writes | `ExecDetail` mirror; redundant with SQLite |
 | `executions/<e>/attempts/<r>/meta.json` | CLI writes at terminal state | `AttemptDetail.stats`, `by_error_code` |
 | `executions/<e>/attempts/<r>/outcomes.jsonl` | CLI streams during run | Scanned for `FailedRowPage`, `ExecRollup`, `RowHistory` |
+| `executions/<e>/attempts/<r>/handler_log.log` | Studio appends during run (Plan 9) | Logs tab bootstrap via `handler_log_tail`; live tail via `handler_log_subscribe` |
 | `executions/<e>/attempts/<r>/handler-snapshot/` | CLI writes at attempt start | Inspected only via "Reveal in Finder" |
 | `executions/<e>/exports/<ts>/resolution.json` | CLI writes at export | Read when an export has happened |
 

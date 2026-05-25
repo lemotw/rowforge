@@ -84,6 +84,9 @@ different lib is not a breaking spec change.
     `limit ≤ 500`).
   - **Errors by code** — renders `AttemptDetail.by_error_code` (with
     `OTHER` overflow at 32).
+  - **Logs** — handler stderr/stdout log tail. Bootstrap via
+    `handler_log_tail`; live via `handler_log_subscribe` (Plan 9 §7.4
+    Flow K).
   - **Artifacts** — `AttemptDetail.paths` with "Reveal in Finder" per
     Part 2 §2.3.
 - **Row History drawer** — opened from Failed rows. Entity: `RowHistory`.
@@ -104,7 +107,7 @@ different lib is not a breaking spec change.
   `workspace_settings_load`, `workspace_settings_save`, `run_active`
   (via the workspace switch button), `workspace_open` (when switching).
 
-  Layout: three sections in a single-column form.
+  Layout: four sections in a single-column form.
   1. **Workspace** — current `workspace_root` shown as read-only mono
      text; **Switch workspace…** button opens a directory picker.
      Button is disabled with an amber warning when `run_active().len()
@@ -118,6 +121,11 @@ different lib is not a breaking spec change.
      not here — `Settings.default_workers` was removed as dead code:
      nothing in studio-core's `start_run` ever read it.)
   3. **Telemetry** — `telemetry_opt_in` checkbox.
+  4. **Logs** (Plan 9) — `handler_log_capture_raw_stdout` toggle
+     ("Capture raw stdout"). Label subtext: "When enabled, handler
+     stdout lines that contain valid outcome JSON are also written to
+     handler_log.log. Increases file size." Default off. Takes effect
+     on the next run (not retroactive).
 
   Save / Cancel buttons at the bottom. Save persists via
   `workspace_settings_save` and invalidates the cached query; Cancel
@@ -250,6 +258,33 @@ Lazy semantics: SQLite is untouched; past `ExecSummary.last_handler_dir` rows st
 
 Lazy semantics: past `last_handler_dir` references in `executions` rows survive the delete.
 Symlink defense: three layers — (1) regex validate name, (2) canonicalize resolved path, (3) assert `starts_with` workspace `handlers/` parent.
+
+### Flow K — View handler log (Logs tab, Plan 9)
+
+| # | Step | Command |
+|---|---|---|
+| 1 | Navigate to Attempt Detail; click **Logs** tab | — |
+| 2 | Tab mounts → bootstrap load | `handler_log_tail(exec_id, attempt_id, 5000)` |
+| 3 | If `handler_log.log` absent → show "No log file. This attempt predates Plan 9 log capture." | — |
+| 4 | If file exists but empty → show "Handler has not produced any output yet." | — |
+| 5 | If attempt is still running (`isLive`): subscribe for live lines | `handler_log_subscribe(exec_id, attempt_id)` |
+| 6 | Live lines arrive via event `handler_log:<attempt_id>` within ~100 ms | event |
+| 7 | Worker chip multi-select filter → list narrows to selected workers | — |
+| 8 | Stream filter (stdout / stderr / both) → further narrows | — |
+| 9 | Text search (substring) → further narrows | — |
+| 10 | Filter matches nothing → "No lines match the current filters." | — |
+| 11 | Auto-scroll on: viewport stays at bottom as new live lines arrive | — |
+| 12 | User scrolls up manually → auto-scroll disengages | — |
+| 13 | Click **Pause**: live lines buffer internally, visible list frozen | — |
+| 14 | Click **Resume**: buffered lines flush into the visible list, auto-scroll re-engages | — |
+| 15 | `dropped > 0` in a batch payload → amber banner "⚠ N log lines dropped — open the log file for full content" | — |
+| 16 | Click **Reveal log file** → OS file manager opens at `<attempt_dir>/handler_log.log` | `shell::open` |
+| 17 | Tab unmounts or attempt finishes → | `handler_log_unsubscribe(attempt_id)` |
+
+**Component breakdown:**
+- `LogsToolbar` — worker chips, stream toggle, search input, Pause/Resume button, Reveal button.
+- `LogsVirtualList` — `@tanstack/react-virtual` list; each row 28 px; colored stream chip (yellow stderr / blue stdout); monospace content.
+- `AttemptLogsTab` — orchestrates bootstrap, live subscription, filter composition, dropped banner.
 
 ## 7.5 Color & state mapping
 
