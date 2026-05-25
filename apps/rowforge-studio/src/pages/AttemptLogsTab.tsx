@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { useHandlerLogTail, useHandlerLogLive } from "@/ipc/use-handler-log";
 import { LogsToolbar } from "@/components/LogsToolbar";
@@ -70,7 +70,7 @@ export function AttemptLogsTab({ execId, attemptId, isLive, logFilePath }: Props
       toast.error("Workspace not loaded yet — try again in a moment");
       return;
     }
-    shellOpen(logFilePath).catch((err) => {
+    openPath(logFilePath).catch((err) => {
       // Most likely: file doesn't exist on disk yet (handler hasn't emitted
       // anything) or the OS can't open .log in any default app.
       toast.error(`Couldn't open log file: ${err?.message ?? err}`);

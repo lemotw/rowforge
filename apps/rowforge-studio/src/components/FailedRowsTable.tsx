@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
 import { ipc } from "@/ipc/client";
@@ -56,7 +56,7 @@ export function FailedRowsTable({
   return (
     <div>
       <div className="mb-2 flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={() => shellOpen(pathsOutcomes)}>
+        <Button size="sm" variant="ghost" onClick={() => openPath(pathsOutcomes)}>
           Reveal outcomes.jsonl
         </Button>
       </div>

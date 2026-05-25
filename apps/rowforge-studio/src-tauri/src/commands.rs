@@ -370,9 +370,9 @@ pub fn handler_reveal(
             .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
         core.handler_reveal_path(&name)?
     };
-    use tauri_plugin_shell::ShellExt;
-    app.shell()
-        .open(path.to_string_lossy().to_string(), None)
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<String>)
         .map_err(|e| UiError::Io(e.to_string()))?;
     Ok(())
 }

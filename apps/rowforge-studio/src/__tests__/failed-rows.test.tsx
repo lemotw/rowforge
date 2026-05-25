@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { FailedRowsTable } from "@/components/FailedRowsTable";
 import type React from "react";
 
-vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn(), openUrl: vi.fn() }));
 
 describe("FailedRowsTable", () => {
   let qc: QueryClient;

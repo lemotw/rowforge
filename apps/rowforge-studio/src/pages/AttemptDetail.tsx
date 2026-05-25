@@ -5,7 +5,7 @@ import { ipc } from "@/ipc/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { AppShell } from "@/layout/AppShell";
 import { useAttemptDetail, useExecDetail, useWorkspace } from "@/ipc/queries";
 import { uiErrorMessage } from "@/ipc/types";
@@ -221,7 +221,7 @@ export function AttemptDetailPage() {
                     <li key={k} className="flex items-center gap-2">
                       <span className="font-mono text-muted-foreground">{k}:</span>
                       <span className="font-mono">{v}</span>
-                      <Button size="sm" variant="ghost" onClick={() => shellOpen(v)}>
+                      <Button size="sm" variant="ghost" onClick={() => openPath(v)}>
                         Reveal
                       </Button>
                     </li>

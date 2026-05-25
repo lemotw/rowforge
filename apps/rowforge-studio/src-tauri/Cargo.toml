@@ -16,7 +16,7 @@ tauri-build = { workspace = true }
 
 [dependencies]
 tauri = { workspace = true, features = [] }
-tauri-plugin-shell = { workspace = true }
+tauri-plugin-opener = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 rowforge-studio-core = { path = "../../../crates/rowforge-studio-core" }
 serde = { workspace = true }
