@@ -244,6 +244,59 @@ CLI path), stderr is still printed to the terminal via `eprintln!` as
 before. The `capture_raw_stdout` flag is irrelevant in the CLI path and
 defaults to `false`.
 
+## 3.10 Execution deletion (Plan 10)
+
+### Active-run gate
+
+`StudioCore::execution_delete(exec_id)` first validates that `exec_id`
+passes the `is_valid_id_component` check (same regex used everywhere for
+id validation), then queries `SessionRegistry::has_active_run_for_exec`.
+If any session is alive for that execution the call returns
+`UiError::ExecutionInUse { exec_id }` immediately — no partial work is
+done.
+
+### SQLite cascade (manual; no `ON DELETE CASCADE`)
+
+The current schema does **not** use `ON DELETE CASCADE` on the foreign
+key from `attempts` to `executions`. Deletion is therefore performed
+manually inside a single transaction:
+
+1. `DELETE FROM attempts WHERE execution_id = ?`
+2. `DELETE FROM executions WHERE id = ?`
+
+Both statements execute atomically. If either fails, the transaction is
+rolled back and an error is returned.
+
+### Filesystem cleanup
+
+After the SQLite transaction commits, Studio calls `fs::remove_dir_all`
+on `<workspace_root>/executions/<exec_id>/`. This step is **best-effort**:
+
+- If the directory is missing (already removed externally) the error is
+  silently ignored.
+- If `remove_dir_all` fails for any other reason (permissions, OS error)
+  the error is **logged but not returned to the caller** — the SQLite
+  record is the authoritative source of truth. The orphaned directory
+  will not appear in future `exec_list` results but will remain on disk.
+
+### Idempotency
+
+Attempting to delete an execution that does not exist returns a
+`UiError::NotFound { kind: "execution", id }`. This is the only failure
+mode after the active-run gate clears (short of IO errors), so callers
+can treat a successful delete followed by a repeated delete as a
+predictable `NotFound`.
+
+### Bulk deletion
+
+`StudioCore::execution_delete_bulk(exec_ids: Vec<String>)` iterates the
+list serially, calling `execution_delete` for each id. Failures are
+accumulated into `ExecDeleteBulkResult::failed`; the loop **never aborts
+early**. All remaining ids are attempted regardless of earlier failures.
+The function always returns `Ok(ExecDeleteBulkResult)` — the `Result`
+error arm is only used for argument-validation errors that apply to the
+entire call (e.g. empty id list), not per-item failures.
+
 ## 3.8 Background and idle behaviour
 
 - App Nap (macOS) is not opted out by default. Long-running attempts

@@ -54,7 +54,13 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
   或不可讀時顯示。實體：`Workspace`。呼叫：`workspace_open`、
   `workspace_settings_load`。
 - **Workspace Home（Exec list）** — 預設落點。實體：`Vec<ExecSummary>`。
-  呼叫：`exec_list`。包含「New execution」CTA。
+  呼叫：`exec_list`。包含「New execution」CTA 與 header 中的**選取模式**
+  切換開關（Plan 10）。欄位順序：[核取方塊（僅選取模式）] | 名稱 | 列數 |
+  Attempts | 大小 | 建立時間。名稱欄位以 `title={exec_id}` 顯示提示文字。
+  進行中執行的列顯示停用的核取方塊，提示文字為「Cancel active run first」
+  （由 `last_attempt_state === "running"` 偵測）。選取 ≥ 1 列後，標頭
+  出現「Delete N execution(s)」按鈕，開啟 `DeleteExecutionsDialog`。批量
+  刪除部分失敗時，清單上方顯示黃色警告；點擊「Dismiss」可清除。
 - **New Execution Wizard**（modal-as-route `/new`）— 實體：
   `StartExecArgs`。呼叫：`manifest_validate`、`exec_start`，可選的
   `run_start`。
@@ -65,6 +71,10 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
     （第 2 部分 §2.2.5、第 4 部分 §4.3）。
   - **Bindings** — 唯讀檢視 `handler_binding`、`field_mapping`、
     `config_overrides`。
+  - **404 fallback（Plan 10）：** 當 `exec_show` 回傳 `NotFound`（例如
+    該執行已被另一視窗或 CLI 刪除）時，頁面渲染「This execution has been
+    deleted or is unavailable.」加上 ← 返回 `/` 的連結，取代正常的
+    詳情視圖。延伸現有的 `isError` 分支 — 不需新路由。
 - **Attempt Detail** `/exec/:id/attempt/:aid` — 實體：`AttemptDetail`。
   呼叫：`attempt_show`。Sub-tabs：
   - **Live / Summary** — 計數器 + Phase chip bar；attempt 為 active
@@ -265,6 +275,28 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 - `LogsVirtualList` — `@tanstack/react-virtual` 清單；每列 28 px；帶顏色 stream chip（黃色 stderr / 藍色 stdout）；等寬內容。
 - `AttemptLogsTab` — 協調 bootstrap、即時訂閱、篩選組合、丟棄 banner。
 
+### Flow L — 選取模式 + 批量刪除（Plan 10）
+
+| # | 步驟 | 呼叫的 Command |
+|---|---|---|
+| 1 | Exec list header → 點 **Select**（選取） | — |
+| 2 | 核取方塊欄出現於名稱左側；每列都有核取方塊；Cancel 按鈕取代 header 中的 Select | — |
+| 3 | 進行中執行的列核取方塊**停用**；hover 顯示「Cancel active run first」（由 `last_attempt_state === "running"` 偵測） | — |
+| 4 | 點擊非停用列 → 切換選取狀態；選取模式中列點擊不再導航 | — |
+| 5 | 點擊 **Cancel** → 退出選取模式並清除所有選取 | — |
+| 6 | 選取 ≥ 1 列 → header 出現 **Delete N execution(s)** 按鈕 | — |
+| 7 | 點擊 Delete N → `DeleteExecutionsDialog` 開啟：標題「Delete N execution(s)?」；列出最多 10 筆所選名稱 + 「…及 M 筆更多」；顯示總大小；destructive **Delete** 按鈕 | — |
+| 8 | 確認 → mutation | `execution_delete_bulk(exec_ids)` |
+| 9 | 成功：Sonner toast「N execution(s) deleted」；`exec_list` query 失效；dialog 關閉；退出選取模式 | event `exec_list:refresh` |
+| 10 | 部分失敗：清單上方黃色警告，顯示失敗的 exec_id 及原因；Dismiss 按鈕清除警告 | — |
+| 11 | 已刪除執行的 ExecDetail 頁面：`exec_show` 回傳 `NotFound`；渲染「This execution has been deleted or is unavailable.」+ ← 返回連結 | `exec_show` |
+
+**元件結構：**
+- `DeleteExecutionsDialog` — shadcn `AlertDialog`；項目清單（最多 10 + 溢位計數）；透過 `formatBytes` 顯示總大小；destructive 確認按鈕。
+- `useExecutionDelete` — 單一刪除 mutation hook；成功後使 `exec_list` 失效。
+- `useExecutionDeleteBulk` — 批量刪除 mutation hook；任何成功刪除後使 `exec_list` 失效；暴露 `bulkFailures` 狀態。
+- `formatBytes` helper — 住在 `apps/rowforge-studio/src/lib/format.ts`；由 dialog 與 ExecList 大小欄共用。
+
 ## 7.5 顏色與狀態映射
 
 此節為 v1 規範。
@@ -448,6 +480,7 @@ Live tab 時也能看到。
 | `HandlerNotFound { name }` | `/handlers/:name` inline empty state 加返回連結 | Plan 7；書籤過期或同時被刪除 |
 | `HandlerExists { name }` | ScaffoldDialog / RenameHandlerDialog 的 inline banner | Plan 7；名稱已被使用 |
 | `InvalidHandlerName { name }` | ScaffoldDialog / RenameHandlerDialog 的 inline 欄位錯誤 | Plan 7；未通過 `/^[a-z0-9][a-z0-9-]*$/` |
+| `ExecutionInUse { exec_id }` | ExecList 選取模式中核取方塊停用 + 提示文字「Cancel active run first」；批量部分失敗時黃色警告 | Plan 10；`execution_delete` 中的進行中執行防護閘 |
 
 `AbortReason`（第 6 部分 §6.5）是至少 9 變體的 union;Aborted banner
 分支到對應的 reason 詳情面板（例如 `AllWorkersCrashed` 開啟

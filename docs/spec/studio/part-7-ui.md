@@ -64,7 +64,15 @@ different lib is not a breaking spec change.
   `None` or unreadable. Entity: `Workspace`. Calls: `workspace_open`,
   `workspace_settings_load`.
 - **Workspace Home (Exec list)** — default landing. Entity:
-  `Vec<ExecSummary>`. Call: `exec_list`. Includes "New execution" CTA.
+  `Vec<ExecSummary>`. Call: `exec_list`. Includes "New execution" CTA and
+  a **Select** mode toggle in the header (Plan 10). Column order:
+  [checkbox (Select mode only)] | Name | Rows | Attempts | Size | Created.
+  Name cells show a `title={exec_id}` hover tooltip. Active-run rows
+  show a disabled checkbox with tooltip "Cancel active run first" (detected
+  via `last_attempt_state === "running"`). Selecting ≥ 1 row enables a
+  "Delete N execution(s)" button that opens `DeleteExecutionsDialog`. A
+  yellow alert above the table displays per-item failures from a partial
+  bulk delete; it is dismissed by clicking "Dismiss".
 - **New Execution Wizard** (modal-as-route `/new`) — entity:
   `StartExecArgs`. Calls: `manifest_validate`, `exec_start`,
   optional `run_start`.
@@ -75,6 +83,11 @@ different lib is not a breaking spec change.
     (Part 2 §2.2.5, Part 4 §4.3).
   - **Bindings** — read-only view of `handler_binding`, `field_mapping`,
     `config_overrides`.
+  - **404 fallback (Plan 10):** when `exec_show` returns `NotFound` (e.g.
+    the execution was deleted from another window or by the CLI), the page
+    renders "This execution has been deleted or is unavailable." with a
+    ← Back link to `/` instead of the normal detail view. This extends the
+    existing `isError` branch — no new route is required.
 - **Attempt Detail** `/exec/:id/attempt/:aid` — entity: `AttemptDetail`.
   Call: `attempt_show`. Sub-tabs:
   - **Live / Summary** — counters + Phase chip bar; subscribes to
@@ -286,6 +299,28 @@ Symlink defense: three layers — (1) regex validate name, (2) canonicalize reso
 - `LogsVirtualList` — `@tanstack/react-virtual` list; each row 28 px; colored stream chip (yellow stderr / blue stdout); monospace content.
 - `AttemptLogsTab` — orchestrates bootstrap, live subscription, filter composition, dropped banner.
 
+### Flow L — Select mode + bulk delete (Plan 10)
+
+| # | Step | Command |
+|---|---|---|
+| 1 | Exec list header → click **Select** | — |
+| 2 | Checkbox column appears left of Name; each row has a checkbox; Cancel button replaces Select in header | — |
+| 3 | Active-run rows have a **disabled** checkbox; hover shows "Cancel active run first" (detected via `last_attempt_state === "running"`) | — |
+| 4 | Click a non-disabled row → toggles selection; row click no longer navigates in Select mode | — |
+| 5 | Click **Cancel** → exits Select mode and clears all selections | — |
+| 6 | Select ≥ 1 row → **Delete N execution(s)** button appears in header | — |
+| 7 | Click Delete N → `DeleteExecutionsDialog` opens: title "Delete N execution(s)?"; lists up to 10 selected names + "… and M more"; shows total size; destructive **Delete** button | — |
+| 8 | Confirm → mutation | `execution_delete_bulk(exec_ids)` |
+| 9 | On success: Sonner toast "N execution(s) deleted"; `exec_list` query invalidated; dialog closes; Select mode exits | event `exec_list:refresh` |
+| 10 | Partial failure: yellow alert above table shows which exec_ids failed and why; Dismiss button clears alert | — |
+| 11 | ExecDetail page for a deleted-elsewhere exec: `exec_show` returns `NotFound`; page renders "This execution has been deleted or is unavailable." + ← Back link | `exec_show` |
+
+**Component breakdown:**
+- `DeleteExecutionsDialog` — shadcn `AlertDialog`; item list (max 10 + overflow count); total size via `formatBytes`; destructive confirm button.
+- `useExecutionDelete` — single-delete mutation hook; invalidates `exec_list` on success.
+- `useExecutionDeleteBulk` — bulk-delete mutation hook; invalidates `exec_list` on any successful delete; exposes `bulkFailures` state.
+- `formatBytes` helper — lives in `apps/rowforge-studio/src/lib/format.ts`; shared by dialog and ExecList Size column.
+
 ## 7.5 Color & state mapping
 
 The mapping table below is normative for v1.
@@ -477,6 +512,7 @@ consistency for a tool, and sprint cost.
 | `HandlerNotFound { name }` | `/handlers/:name` inline empty state with back link | Plan 7; stale bookmark or concurrent delete |
 | `HandlerExists { name }` | Inline banner in ScaffoldDialog / RenameHandlerDialog | Plan 7; name already taken |
 | `InvalidHandlerName { name }` | Inline field error in ScaffoldDialog / RenameHandlerDialog | Plan 7; fails `/^[a-z0-9][a-z0-9-]*$/` |
+| `ExecutionInUse { exec_id }` | Checkbox disabled in ExecList select mode + tooltip "Cancel active run first"; yellow alert for bulk partial failure | Plan 10; active-run guard in `execution_delete` |
 
 `AbortReason` (Part 6 §6.5) is a discriminated union of at least 9
 variants; the Aborted banner branches into reason-specific detail

@@ -48,6 +48,7 @@ struct ExecSummary {
     last_attempt_state: Option<AttemptState>,
     last_attempt_counts: Option<AttemptCounts>,   // success/failed/crashed of last attempt only
     last_handler_dir: Option<PathBuf>,             // Plan 6: handler dir from most recent run; powers RunButton default
+    size_bytes: Option<u64>,             // Plan 10: total on-disk size of the execution directory; None if dir missing or not yet measured
 }
 ```
 - `last_attempt_counts` is NOT a rollup across attempts. The rollup is
@@ -188,6 +189,25 @@ bump.
 > landed `preferred_editor` without bumping the schema version (the tolerant
 > reader makes it a non-breaking addition). The authoritative statement is
 > this note; §8.6.4 preserves the original design prose for context.
+
+### 2.2.10 `ExecDeleteBulkResult` and `ExecDeleteFailure` (Plan 10)
+
+```rust
+struct ExecDeleteBulkResult {
+    deleted: Vec<String>,          // exec_ids that were successfully removed
+    failed: Vec<ExecDeleteFailure>,
+}
+
+struct ExecDeleteFailure {
+    exec_id: String,
+    reason: String,                // human-readable; e.g. "execution is in use" or "not found"
+}
+```
+
+`ExecDeleteBulkResult` is returned by `execution_delete_bulk`. Serial
+execution: if one item fails, the remaining items are still attempted and
+the operation never aborts early. The caller can inspect `failed` to
+surface a partial-failure warning in the UI.
 
 ## 2.3 What is deliberately not an entity
 
