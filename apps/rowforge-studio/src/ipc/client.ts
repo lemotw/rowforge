@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AttemptDetail,
   AttemptId,
+  BuildOutcome,
   CancelMode,
   ExecDetail,
   ExecRollup,
@@ -93,4 +94,6 @@ export const ipc = {
     invoke<void>("handler_delete", args),
   handler_rename: (args: { old: string; new: string }) =>
     invoke<void>("handler_rename", args),
+  handler_build: (args: { name: string }) =>
+    invoke<BuildOutcome>("handler_build", args),
 };

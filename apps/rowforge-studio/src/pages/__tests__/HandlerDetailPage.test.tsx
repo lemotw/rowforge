@@ -72,6 +72,7 @@ describe("HandlerDetailPage", () => {
       { name: "fixtures", size_bytes: 0, is_directory: true },
     ],
     has_fixtures_dir: true,
+    last_build: null,
   };
 
   const invalidDetail: HandlerDetail = {
@@ -93,6 +94,7 @@ describe("HandlerDetailPage", () => {
       { name: "handler.go", size_bytes: 200, is_directory: false },
     ],
     has_fixtures_dir: false,
+    last_build: null,
   };
 
   const missingDetail: HandlerDetail = {
@@ -111,6 +113,7 @@ describe("HandlerDetailPage", () => {
       { name: "main.go", size_bytes: 8192, is_directory: false },
     ],
     has_fixtures_dir: false,
+    last_build: null,
   };
 
   // ── 1. Loading state ────────────────────────────────────────────────────────

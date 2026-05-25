@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ipc } from "./client";
-import type { ScaffoldArgs } from "./types";
+import type { BuildOutcome, ScaffoldArgs } from "./types";
 
 /** Plan 7: list all handlers under <workspace>/handlers/. */
 export const useHandlerList = () =>
@@ -68,6 +68,22 @@ export const useHandlerRename = () => {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["handler_list"] });
       qc.removeQueries({ queryKey: ["handler_show", vars.old] });
+    },
+  });
+};
+
+/**
+ * Plan 8: trigger a handler build. Returns the BuildOutcome.
+ * On success, invalidates both handler_show (refreshes last_build) and
+ * handler_list (refreshes manifest_status / version).
+ */
+export const useHandlerBuild = () => {
+  const qc = useQueryClient();
+  return useMutation<BuildOutcome, unknown, { name: string }>({
+    mutationFn: (args: { name: string }) => ipc.handler_build(args),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["handler_show", vars.name] });
+      qc.invalidateQueries({ queryKey: ["handler_list"] });
     },
   });
 };
