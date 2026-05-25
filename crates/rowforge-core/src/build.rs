@@ -66,8 +66,12 @@ pub fn needs_build(handler_dir: &Path, manifest: &Manifest) -> bool {
 }
 
 fn max_source_mtime(dir: &Path) -> Option<SystemTime> {
+    // Source extensions scanned for mtime comparison. Add new languages here.
+    // Deliberate omissions: .dart (uncommon handler language; can add later).
     const EXTS: &[&str] = &[
-        "go", "rs", "py", "js", "ts", "mjs", "java", "c", "cpp", "h", "hpp",
+        "go", "rs", "py", "js", "ts", "mjs",
+        "java", "kt", "kts", "scala",
+        "c", "cpp", "h", "hpp", "cs", "zig",
     ];
     let mut max: Option<SystemTime> = None;
     let entries = std::fs::read_dir(dir).ok()?;
@@ -218,6 +222,25 @@ mod tests {
         set_file_mtime(&src, FileTime::from_unix_time(1_000_000, 0)).unwrap();
         set_file_mtime(&bin, FileTime::from_unix_time(2_000_000, 0)).unwrap();
         let m = mk_manifest(vec!["./handler"], Some(vec!["go", "build"]));
+        assert!(!needs_build(tmp.path(), &m));
+    }
+
+    #[test]
+    fn needs_build_true_when_binary_missing_and_no_source_files() {
+        // Empty dir: no binary, no source files. max_source_mtime returns None,
+        // but the binary-missing early return fires first → must build.
+        let tmp = TempDir::new().unwrap();
+        let m = mk_manifest(vec!["./handler"], Some(vec!["sh", "-c", "echo build"]));
+        assert!(needs_build(tmp.path(), &m));
+    }
+
+    #[test]
+    fn needs_build_false_when_binary_exists_and_no_source_files() {
+        // Binary present, no source files at all → max_source_mtime returns None
+        // → unwrap_or(false) → no rebuild needed.
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("handler"), "binary").unwrap();
+        let m = mk_manifest(vec!["./handler"], Some(vec!["sh", "-c", "echo build"]));
         assert!(!needs_build(tmp.path(), &m));
     }
 

@@ -309,6 +309,11 @@ impl StudioCore {
     /// - `ToolchainMissing` — first token of build command not on PATH
     /// - `Io`               — manifest load or spawn failure
     pub fn handler_build(&self, name: &str) -> Result<rowforge_core::build::BuildOutcome, UiError> {
+        // Validate name BEFORE any path construction — defense in depth.
+        // Prevents out-of-workspace manifest reads from paths like ../etc/passwd.
+        if !crate::handler::validate_name(name) {
+            return Err(UiError::InvalidHandlerName { name: name.to_string() });
+        }
         // Pre-flight: load manifest & check entry.build before invoking
         // build_raw, so we surface NoBuildCommand cleanly.
         let dir = self.workspace.root.as_path().join("handlers").join(name);

@@ -161,8 +161,19 @@ fn check_path_resolution(
     }
 
     // 2. Cmd target: entry.cmd[0] must resolve to an existing file,
-    //    unless entry.build is present (build is expected to produce it).
-    if manifest.entry.build.is_none() {
+    //    unless entry.build is present AND the build tool itself resolves on
+    //    PATH (if the build tool is also missing, surface both warnings so
+    //    the user fixes both problems, not just the tool).
+    let build_tool_resolves = manifest
+        .entry
+        .build
+        .as_ref()
+        .and_then(|b| b.first())
+        .map(|tool| which::which(tool).is_ok())
+        .unwrap_or(false);
+    let suppress_cmd_warning = manifest.entry.build.is_some() && build_tool_resolves;
+
+    if !suppress_cmd_warning {
         if let Some(t) = manifest.entry.cmd.first() {
             let t_str = t.as_str();
             let exists = if t_str.starts_with('/') {
@@ -349,7 +360,37 @@ mod tests {
         assert!(report.errors.is_empty());
         assert!(
             !report.warnings.iter().any(|w| matches!(w, ManifestWarning::CmdTargetMissing { .. })),
-            "should not warn CmdTargetMissing when build is present, got: {:?}",
+            "should not warn CmdTargetMissing when build is present and tool resolves, got: {:?}",
+            report.warnings
+        );
+    }
+
+    /// IMPORTANT regression: when entry.build is present but the build tool is
+    /// itself missing from PATH, BOTH BuildToolNotInPath AND CmdTargetMissing
+    /// should fire so the user knows about both problems at once.
+    #[test]
+    fn cmd_target_missing_fires_when_build_tool_also_missing() {
+        let dir = tmpdir("both-missing");
+        write_yaml(
+            &dir,
+            "name: t\nversion: 0.1.0\nentry:\n  cmd: [\"./missing-binary\"]\n  build: [\"this-tool-xyz-does-not-exist\", \"build\"]\n",
+        );
+        let report = validate_manifest(&ManifestSource::Path { path: dir });
+        assert!(report.errors.is_empty());
+        assert!(
+            report.warnings.iter().any(|w| matches!(
+                w,
+                ManifestWarning::BuildToolNotInPath { tool } if tool == "this-tool-xyz-does-not-exist"
+            )),
+            "expected BuildToolNotInPath warning, got: {:?}",
+            report.warnings
+        );
+        assert!(
+            report.warnings.iter().any(|w| matches!(
+                w,
+                ManifestWarning::CmdTargetMissing { target } if target == "./missing-binary"
+            )),
+            "expected CmdTargetMissing warning when build tool also missing, got: {:?}",
             report.warnings
         );
     }

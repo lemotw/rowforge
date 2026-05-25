@@ -2236,6 +2236,47 @@ fn handler_build_failure_caches_outcome_for_inspection() {
     );
 }
 
+/// BLOCKER regression: handler_build must reject path-traversal names before
+/// any filesystem access (manifest read must never touch out-of-workspace paths).
+#[test]
+fn handler_build_rejects_traversal_name() {
+    let tmp = tempfile::Builder::new()
+        .prefix("rfs-plan8-build-trav")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core.handler_build("../etc/passwd").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { ref name } if name.contains("..")),
+        "expected InvalidHandlerName for traversal, got: {:?}",
+        err
+    );
+}
+
+/// BLOCKER regression: handler_build must reject absolute paths as names.
+#[test]
+fn handler_build_rejects_absolute_name() {
+    let tmp = tempfile::Builder::new()
+        .prefix("rfs-plan8-build-abs")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    let err = core.handler_build("/etc/passwd").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "expected InvalidHandlerName for absolute path name, got: {:?}",
+        err
+    );
+}
+
 /// ToolchainMissing does NOT write to the cache; handler_show returns last_build == None.
 #[test]
 fn handler_build_toolchain_missing_returns_error_without_cache_write() {
