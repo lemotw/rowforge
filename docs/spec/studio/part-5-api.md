@@ -169,8 +169,31 @@ pub enum UiError {
 
     #[error("internal: {0}")]
     Internal(String),
+
+    // Plan 7 — handler management variants (see Part 8 §8.5.4 for full handler error set)
+    #[error("editor not found")]
+    EditorNotFound,
+
+    #[error("handler not found: {name}")]
+    HandlerNotFound { name: String },
+
+    #[error("handler already exists: {name}")]
+    HandlerExists { name: String },
+
+    #[error("invalid handler name: {name}")]
+    InvalidHandlerName { name: String },
 }
 ```
+
+Plan 7 variant details:
+
+| Variant | Serialized `kind` | Payload | Emitted by | UI rendering |
+|---|---|---|---|---|
+| `EditorNotFound` | `editor_not_found` | none (`message: null`) | `handler_open_editor` when none of preferred / `$VISUAL` / `$EDITOR` / probes resolved | Toast or inline error; copy points user to Settings → Editor or to set `$VISUAL`/`$EDITOR` |
+| `HandlerNotFound { name }` | `handler_not_found` | `{ name }` | `handler_show`, `handler_open_editor`, `handler_reveal`, `handler_delete`, `handler_rename` when target dir is absent | Detail page: "Handler '<name>' not found. It may have been deleted or renamed." with back link to `/handlers` |
+| `HandlerExists { name }` | `handler_exists` | `{ name }` | `handler_scaffold` (target dir already exists), `handler_rename` (new name already taken) | Inline banner in the relevant dialog; submit stays disabled until name changes |
+| `InvalidHandlerName { name }` | `invalid_handler_name` | `{ name }` | `handler_scaffold`, `handler_rename` when name fails regex `/^[a-z0-9][a-z0-9-]*$/` | Inline field error; validated client-side during typing, server is authoritative |
+| `InvalidArg(String)` | `invalid_arg` | `{ message }` | `handler_scaffold` when `primary_field` fails identifier regex `^[a-zA-Z_][a-zA-Z0-9_]*$` | Inline field error on the primary_field input; prevents YAML/Go injection in scaffolded files |
 
 Composition rules:
 - No blanket `From<anyhow::Error> for UiError`.
@@ -237,6 +260,15 @@ run_snapshot(handle)                  -> ProgressSnapshot
 attempt_active_handle(attempt_id)     -> Option<RunHandle>
 
 manifest_validate(source)             -> ManifestReport
+
+// Plan 7 — handler management commands (see Part 8 §8.5.3 for full list)
+handler_list()                        -> Vec<HandlerSummary>
+handler_show(name)                    -> HandlerDetail
+handler_open_editor(name)             -> ()
+handler_reveal(name)                  -> ()
+handler_scaffold(args)                -> String          // returns new handler name
+handler_delete(name)                  -> ()
+handler_rename(old, new)              -> ()
 ```
 
 Notes on the run lifecycle commands (Plan 5):
@@ -267,6 +299,7 @@ Events (one-way, core → UI):
 ```
 run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (Part 6 §6.6)
+handlers:list                         ()                      // Plan 7: coarse refresh hint emitted after scaffold/delete/rename
 ```
 
 ## 5.6 Settings

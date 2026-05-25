@@ -129,6 +129,10 @@ different lib is not a breaking spec change.
   in this part. **Part 8 supersedes this**: in v1 the Authoring group
   is active and contains a Handlers route. The remaining anchored
   items below (Manifest editor, Pack) still apply.
+- **`/handlers` and `/handlers/:name`** — **Plan 7: both routes are active
+  in v1.** The sidebar Handlers item is enabled; the list and detail pages
+  are shipped. See Part 8 §8.6.1 for full IA details and §7.4 Flows E-H
+  below for the associated user flows.
 - **`ListFilter` filter bar** — reserved area above the exec list;
   hidden in v1 (Part 5 §5.2 `ListFilter`).
 - **`HandlerSource` picker** — `Dir` only in v1; the picker is a single
@@ -138,7 +142,7 @@ different lib is not a breaking spec change.
 ### Global navigation
 
 - **Left sidebar (persistent):** Workspace group (Executions, Settings)
-  + Authoring group (disabled).
+  + Authoring group (Handlers active — Plan 7).
 - **Top header (persistent):** workspace name + path tooltip; breadcrumb
   (`Executions / <exec> / Attempt #N / Failed rows`); **Active runs pill**
   on the right.
@@ -211,6 +215,41 @@ Strict trace of Part 3 §3.5 soft/hard semantics.
 | 5 | Pick `format = Both`; check `require_complete` | — |
 | 6 | Confirm → progress toast | `exec_export` |
 | 7 | On done, toast offers "Reveal output dir" via `ExportReport.output_dir` | — |
+
+### Flow H — Scaffold a new handler (Plan 7)
+
+| # | Step | Command |
+|---|---|---|
+| 1 | Sidebar Handlers → `/handlers` | `handler_list` |
+| 2 | Click "New Handler" → `ScaffoldDialog` opens | — |
+| 3 | Enter name (regex `/^[a-z0-9][a-z0-9-]*$/`, validated client-side), choose template (`GoStdio` / `GoBatch` / `Empty`), enter `primary_field` | — |
+| 4 | Submit → `handler_scaffold` mutation | `handler_scaffold` |
+| 5 | On success: toast + close dialog + navigate to `/handlers/<name>` | `handler_show` |
+
+Negative paths: `HandlerExists` / `InvalidHandlerName` errors render inline in the dialog; dialog stays open until the user corrects the name or cancels.
+
+### Flow I — Rename a handler (lazy, Plan 7)
+
+| # | Step | Command |
+|---|---|---|
+| 1 | `/handlers/:name` → "Rename…" → `RenameHandlerDialog` (pre-fills current name) | — |
+| 2 | Edit name (must differ from current and pass regex) → click "Rename" | — |
+| 3 | `handler_rename` mutation | `handler_rename` |
+| 4 | On success: toast + close dialog + navigate to `/handlers/<new-name>` | — |
+
+Lazy semantics: SQLite is untouched; past `ExecSummary.last_handler_dir` rows still reference the old name (informational, not load-bearing — see Part 2 §2.2.2 lazy rename note).
+
+### Flow J — Delete a handler (typed-token confirm, Plan 7)
+
+| # | Step | Command |
+|---|---|---|
+| 1 | `/handlers/:name` → "Delete…" → `DeleteHandlerDialog` | — |
+| 2 | User types the exact handler name (case-sensitive) to enable the Delete button | — |
+| 3 | Click "Delete" → `handler_delete` mutation | `handler_delete` |
+| 4 | On success: toast + close dialog + navigate to `/handlers` | `handler_list` |
+
+Lazy semantics: past `last_handler_dir` references in `executions` rows survive the delete.
+Symlink defense: three layers — (1) regex validate name, (2) canonicalize resolved path, (3) assert `starts_with` workspace `handlers/` parent.
 
 ## 7.5 Color & state mapping
 
@@ -399,6 +438,10 @@ consistency for a tool, and sprint cost.
 | `RunBusy { execution_id, scope }` | Inline disabled button + tooltip (PerExec); toast (Workspace) | No retry-loop; user must resolve |
 | `Io(String)` | Toast (error) + copy details | Usually transient |
 | `Internal(String)` | Toast (error) + copy details + "Report issue" | Backend bug; UI does not explain |
+| `EditorNotFound` | Toast (error) + link to Settings → Editor | Plan 7; `handler_open_editor` only |
+| `HandlerNotFound { name }` | `/handlers/:name` inline empty state with back link | Plan 7; stale bookmark or concurrent delete |
+| `HandlerExists { name }` | Inline banner in ScaffoldDialog / RenameHandlerDialog | Plan 7; name already taken |
+| `InvalidHandlerName { name }` | Inline field error in ScaffoldDialog / RenameHandlerDialog | Plan 7; fails `/^[a-z0-9][a-z0-9-]*$/` |
 
 `AbortReason` (Part 6 §6.5) is a discriminated union of at least 9
 variants; the Aborted banner branches into reason-specific detail
@@ -445,6 +488,11 @@ The Settings page exposes `Settings` (Part 2 §2.2.9) one field per row.
   Lowering below current active count shows a confirmation warning.
 - `telemetry_opt_in` — switch, default off; tooltip notes telemetry is
   not collected in v1.
+- **`preferred_editor`** (Plan 7) — text input, placeholder `"code"`.
+  Optional; when empty the resolver falls through to `$VISUAL` / `$EDITOR`
+  / probes (Part 8 §8.4.1). Displayed in a fourth "Editor" section of
+  the Settings form. Saves via `workspace_settings_save` and takes effect
+  immediately on the next `handler_open_editor` call (no restart required).
 
 Note: `default_workers` is **not** a Settings field. Per-run worker
 count is configured in the RunButton options panel; nothing in

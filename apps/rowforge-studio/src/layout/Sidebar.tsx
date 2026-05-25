@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Activity, Settings as SettingsIcon } from "lucide-react";
+import { Activity, FileCode2, Settings as SettingsIcon } from "lucide-react";
 
 export function Sidebar() {
   return (
@@ -15,7 +15,7 @@ export function Sidebar() {
         <div className="mt-4 px-2 pb-1 text-xs uppercase text-muted-foreground">
           Authoring
         </div>
-        <SideLink label="Handlers" disabled hint="Coming soon" />
+        <NavSideLink to="/handlers" icon={<FileCode2 className="h-4 w-4" />} label="Handlers" />
       </nav>
     </aside>
   );
@@ -46,30 +46,5 @@ function NavSideLink({
       {icon}
       <span>{label}</span>
     </NavLink>
-  );
-}
-
-function SideLink({
-  icon,
-  label,
-  disabled,
-  hint,
-}: {
-  icon?: React.ReactNode;
-  label: string;
-  disabled?: boolean;
-  hint?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 rounded px-2 py-1.5",
-        disabled && "text-muted-foreground/50"
-      )}
-    >
-      {icon}
-      <span>{label}</span>
-      {hint && <span className="ml-auto text-[10px]">{hint}</span>}
-    </div>
   );
 }

@@ -16,6 +16,11 @@ pub struct OpenOpts {
     /// Plan 6 T9: threaded from `Settings.max_concurrent_runs` by the
     /// Tauri `workspace_open` command; studio-core stays filesystem-policy-free.
     pub max_concurrent_runs: Option<u32>,
+    /// Plan 7 T15: user-supplied editor command sourced from
+    /// `Settings.preferred_editor`. When `Some`, overrides the
+    /// $VISUAL / $EDITOR / probe fallback in `resolve_editor`.
+    /// `None` means fall through to the 4-tier resolver.
+    pub preferred_editor: Option<String>,
 }
 
 impl OpenOpts {
@@ -29,6 +34,11 @@ impl OpenOpts {
     /// Set the workspace-level concurrency limit for `SessionRegistry`.
     pub fn with_max_concurrent_runs(mut self, n: Option<u32>) -> Self {
         self.max_concurrent_runs = n;
+        self
+    }
+    /// Set the preferred editor command for `handler_open_editor`.
+    pub fn with_preferred_editor(mut self, editor: Option<String>) -> Self {
+        self.preferred_editor = editor;
         self
     }
 }

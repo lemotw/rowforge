@@ -24,6 +24,12 @@ pub struct Settings {
     pub workspace_root: Option<PathBuf>,
     pub max_concurrent_runs: Option<u32>,
     pub telemetry_opt_in: bool,
+    /// Plan 7 T15: user-supplied editor command for handler_open_editor.
+    /// When `Some`, overrides $VISUAL / $EDITOR / probe fallback chain.
+    /// The value is shell-split (shlex) at call time so "code --wait"
+    /// works. `None` means fall through to the 4-tier resolver.
+    #[serde(default)]
+    pub preferred_editor: Option<String>,
 }
 
 impl Default for Settings {
@@ -33,6 +39,7 @@ impl Default for Settings {
             workspace_root: None,
             max_concurrent_runs: None,
             telemetry_opt_in: false,
+            preferred_editor: None,
         }
     }
 }
@@ -75,5 +82,24 @@ mod tests {
         assert_eq!(parsed.schema_version, 1);
         assert_eq!(parsed.workspace_root, None);
         assert!(!parsed.telemetry_opt_in);
+        assert_eq!(parsed.preferred_editor, None);
+    }
+
+    #[test]
+    fn roundtrip_preferred_editor_some() {
+        let mut s = Settings::default();
+        s.preferred_editor = Some("code --wait".into());
+        let mut buf = Vec::new();
+        s.save_to(&mut buf).unwrap();
+        let parsed = Settings::load_from(buf.as_slice()).unwrap();
+        assert_eq!(parsed.preferred_editor, Some("code --wait".into()));
+    }
+
+    #[test]
+    fn roundtrip_preferred_editor_none_survives_json() {
+        // Older settings files without the field should deserialize to None.
+        let json = br#"{"schema_version": 1, "workspace_root": null}"#;
+        let parsed = Settings::load_from(json.as_slice()).unwrap();
+        assert_eq!(parsed.preferred_editor, None);
     }
 }

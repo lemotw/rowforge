@@ -1448,3 +1448,695 @@ fn workspace_limit_defaults_to_three_when_unset() {
     .unwrap();
     assert_eq!(core.sessions().workspace_limit(), 3);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 7 T3 — handler_list + handler_show
+// ---------------------------------------------------------------------------
+
+#[test]
+fn handler_list_finds_dirs_under_workspace_handlers() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let handlers_dir = tmp.path().join("handlers");
+    std::fs::create_dir_all(&handlers_dir).unwrap();
+
+    // Three test handlers: valid manifest / no manifest / invalid manifest.
+    let valid = handlers_dir.join("alpha");
+    std::fs::create_dir_all(&valid).unwrap();
+    std::fs::write(
+        valid.join("rowforge.yaml"),
+        "name: alpha\nversion: 0.1.0\nlanguage: go\nentry:\n  cmd: [\"./alpha\"]\n",
+    ).unwrap();
+
+    let no_manifest = handlers_dir.join("bravo");
+    std::fs::create_dir_all(&no_manifest).unwrap();
+
+    let invalid = handlers_dir.join("charlie");
+    std::fs::create_dir_all(&invalid).unwrap();
+    std::fs::write(invalid.join("rowforge.yaml"), "this: is: bad: yaml: :::").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    let mut list = core.handler_list().unwrap();
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0].name, "alpha");
+    assert_eq!(list[0].manifest_status, rowforge_studio_core::ManifestStatus::Valid);
+    assert_eq!(list[0].version.as_deref(), Some("0.1.0"));
+    assert_eq!(list[0].language.as_deref(), Some("go"));
+
+    assert_eq!(list[1].name, "bravo");
+    assert_eq!(list[1].manifest_status, rowforge_studio_core::ManifestStatus::Missing);
+    assert_eq!(list[1].version, None);
+
+    assert_eq!(list[2].name, "charlie");
+    assert_eq!(list[2].manifest_status, rowforge_studio_core::ManifestStatus::Invalid);
+}
+
+#[test]
+fn handler_list_returns_empty_when_handlers_dir_missing() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // No handlers/ subdir at all.
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    assert_eq!(core.handler_list().unwrap().len(), 0);
+}
+
+// Regression: last_modified must be the max of dir mtime AND every top-level
+// entry's mtime, because writing a file does not always update the parent
+// directory's own mtime (platform-dependent).
+//
+// Strategy: snapshot last_modified before a file write, sleep 1.1s (enough
+// to advance the filesystem clock), write a new file, snapshot again.
+// The second snapshot must be strictly later than the first. This avoids
+// adding a dep on filetime's set_file_mtime, which is unreliable on APFS.
+#[test]
+fn list_uses_max_mtime_over_dir_contents() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let h = tmp.path().join("handlers").join("zeta");
+    std::fs::create_dir_all(&h).unwrap();
+    std::fs::write(
+        h.join("rowforge.yaml"),
+        "name: zeta\nversion: 0.1.0\nentry:\n  cmd: [\"./zeta\"]\n",
+    ).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    // Baseline: last_modified before any file is written inside the handler dir
+    // (only rowforge.yaml exists at this point).
+    let list_before = core.handler_list().unwrap();
+    assert_eq!(list_before.len(), 1);
+    let before = list_before[0].last_modified;
+
+    // Sleep past filesystem clock resolution (1.1 s covers HFS+ 1-s and
+    // APFS sub-second granularity).
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    // Write a new file inside the handler dir. The file's mtime will be later
+    // than the dir's own mtime (which the OS may not update on file creation).
+    std::fs::write(h.join("handler.go"), "package main").unwrap();
+
+    let list_after = core.handler_list().unwrap();
+    assert_eq!(list_after.len(), 1);
+    let after = list_after[0].last_modified;
+
+    assert!(
+        after > before,
+        "last_modified should advance when a file inside the handler dir is \
+         written; before={before:?}, after={after:?}. The fold over dir entries \
+         is likely broken."
+    );
+}
+
+#[test]
+fn handler_show_returns_manifest_and_source_files() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let h = tmp.path().join("handlers").join("alpha");
+    std::fs::create_dir_all(&h).unwrap();
+    std::fs::write(
+        h.join("rowforge.yaml"),
+        "name: alpha\nversion: 0.1.0\nentry:\n  cmd: [\"./alpha\"]\n",
+    ).unwrap();
+    std::fs::write(h.join("handler.go"), "package main").unwrap();
+    std::fs::write(h.join("go.mod"), "module alpha\ngo 1.22").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let detail = core.handler_show("alpha").unwrap();
+
+    assert_eq!(detail.summary.name, "alpha");
+    assert_eq!(detail.summary.manifest_status, rowforge_studio_core::ManifestStatus::Valid);
+    assert!(detail.manifest.is_some());
+    assert!(detail.manifest_errors.is_empty());
+
+    let names: Vec<&str> = detail.source_files.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"handler.go"), "got files: {:?}", names);
+    assert!(names.contains(&"go.mod"), "got files: {:?}", names);
+    // rowforge.yaml is the manifest, not "source" — must be excluded.
+    assert!(!names.contains(&"rowforge.yaml"));
+}
+
+#[test]
+fn handler_show_errors_on_unknown_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_show("ghost").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }),
+        "got: {:?}", err);
+}
+
+#[test]
+fn handler_show_rejects_invalid_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_show("Bad Name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 7 T4 — handler_reveal_path + handler_open_editor integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn handler_reveal_path_returns_dir_for_existing_handler() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let h = tmp.path().join("handlers").join("alpha");
+    std::fs::create_dir_all(&h).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    let path = core.handler_reveal_path("alpha").unwrap();
+    assert_eq!(path, h);
+}
+
+#[test]
+fn handler_reveal_path_errors_on_unknown_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_reveal_path("ghost").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }));
+}
+
+#[test]
+fn handler_open_editor_rejects_invalid_name_before_resolver() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_open_editor("../etc").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// Plan 7 T6 — handler_scaffold
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scaffold_writes_go_stdio_template() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    let name = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "my-handler",
+            rowforge_studio_core::ScaffoldTemplate::GoStdio,
+            "email",
+        ))
+        .unwrap();
+    assert_eq!(name, "my-handler");
+
+    let dir = tmp.path().join("handlers").join("my-handler");
+    assert!(dir.is_dir(), "handler dir should be created");
+
+    // 3 files, with variable substitution.
+    let yaml = std::fs::read_to_string(dir.join("rowforge.yaml")).unwrap();
+    assert!(yaml.contains("name: my-handler"), "rowforge.yaml didn't get {{name}} replaced; got:\n{}", yaml);
+    assert!(yaml.contains("email"), "rowforge.yaml didn't get {{primary_field}} replaced; got:\n{}", yaml);
+    assert!(!yaml.contains("{{name}}"), "rowforge.yaml still has unrendered {{name}}");
+    assert!(!yaml.contains("{{primary_field}}"), "rowforge.yaml still has unrendered {{primary_field}}");
+
+    assert!(dir.join("handler.go").is_file());
+    assert!(dir.join("go.mod").is_file());
+
+    // go.mod should reference the handler name.
+    let gomod = std::fs::read_to_string(dir.join("go.mod")).unwrap();
+    assert!(gomod.contains("my-handler"), "go.mod should reference name; got:\n{}", gomod);
+}
+
+#[test]
+fn scaffold_writes_go_batch_template_with_batch_mode() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-batch").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "batch-handler",
+        rowforge_studio_core::ScaffoldTemplate::GoBatch,
+        "order_id",
+    )).unwrap();
+
+    let dir = tmp.path().join("handlers").join("batch-handler");
+    let yaml = std::fs::read_to_string(dir.join("rowforge.yaml")).unwrap();
+    assert!(yaml.contains("batch"), "go_batch template should mention batch mode; got:\n{}", yaml);
+}
+
+#[test]
+fn scaffold_writes_empty_template_two_files() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-empty").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "skel",
+        rowforge_studio_core::ScaffoldTemplate::Empty,
+        "id",
+    )).unwrap();
+
+    let dir = tmp.path().join("handlers").join("skel");
+    assert!(dir.join("rowforge.yaml").is_file());
+    assert!(dir.join("handler.go").is_file());
+    // Empty template explicitly does NOT include go.mod.
+    assert!(!dir.join("go.mod").exists(),
+        "Empty template should not write go.mod (user builds however they want)");
+}
+
+#[test]
+fn scaffold_rejects_invalid_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-bn").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "Has Space",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "x",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+
+    // Verify no partial directory was created.
+    assert!(!tmp.path().join("handlers").join("Has Space").exists());
+}
+
+#[test]
+fn scaffold_errors_when_name_already_exists() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-ex").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("taken")).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "taken",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "x",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerExists { .. }),
+        "got: {:?}", err);
+}
+
+#[test]
+fn scaffold_rejects_leading_hyphen_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-lh").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    // Leading hyphen — must be rejected by the tightened validate_name regex.
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "-foo",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "id",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "leading-hyphen name should be rejected; got: {:?}", err);
+
+    let err2 = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "-",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "id",
+        ))
+        .unwrap_err();
+    assert!(matches!(err2, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "bare hyphen name should be rejected; got: {:?}", err2);
+}
+
+#[test]
+fn scaffold_rejects_unsafe_primary_field() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-pf").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    // primary_field with a quote (YAML / Go injection risk).
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "my-handler",
+            rowforge_studio_core::ScaffoldTemplate::GoStdio,
+            "id\"",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidArg(_)),
+        "primary_field with quote should return InvalidArg; got: {:?}", err);
+
+    // primary_field with embedded newline.
+    let err2 = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "my-handler2",
+            rowforge_studio_core::ScaffoldTemplate::GoStdio,
+            "id\nentry:\n  cmd: [\"rm\", \"-rf\"]",
+        ))
+        .unwrap_err();
+    assert!(matches!(err2, rowforge_studio_core::UiError::InvalidArg(_)),
+        "primary_field with newline should return InvalidArg; got: {:?}", err2);
+}
+
+#[test]
+fn scaffold_accepts_valid_primary_field() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-pfok").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "good-handler",
+        rowforge_studio_core::ScaffoldTemplate::GoStdio,
+        "order_id",
+    )).expect("valid identifier primary_field should be accepted");
+}
+
+#[test]
+fn delete_removes_handler_dir() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del").tempdir().unwrap();
+    let dir = tmp.path().join("handlers").join("doomed");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rowforge.yaml"), "name: doomed\nversion: 0.1.0\nentry:\n  cmd: [\"./x\"]\n").unwrap();
+    std::fs::write(dir.join("handler.go"), "package main").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    core.handler_delete("doomed").unwrap();
+
+    assert!(!dir.exists(), "handler dir should be gone");
+    // Sibling handlers/ dir still exists (we only removed the one named dir).
+    assert!(tmp.path().join("handlers").is_dir());
+}
+
+#[test]
+fn delete_errors_on_unknown_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del-nf").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_delete("ghost").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }));
+}
+
+#[test]
+fn delete_rejects_invalid_name_before_any_fs_op() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del-bn").tempdir().unwrap();
+    // Regression: even if a path like ../etc were ALLOWED through validation,
+    // we'd be opening fs::remove_dir_all on a user-controllable absolute
+    // path. The regex fence guarantees we never get there.
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_delete("../etc").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_rejects_symlinked_dir_pointing_outside_workspace() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del-sym").tempdir().unwrap();
+    let outside = tempfile::Builder::new().prefix("rfs-plan7-del-victim").tempdir().unwrap();
+
+    // Build a victim dir OUTSIDE the workspace that we should not be able
+    // to delete by symlinking into handlers/.
+    let victim = outside.path().join("precious");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("important.txt"), "do not delete me").unwrap();
+
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    symlink(&victim, tmp.path().join("handlers").join("evil"))
+        .expect("symlink creation should succeed on unix");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let result = core.handler_delete("evil");
+
+    // The canonicalize() check MUST reject this: the symlink resolves
+    // outside the workspace's handlers/ dir, so layer 3 fires.
+    assert!(
+        matches!(result, Err(_)),
+        "delete of a symlink pointing outside the workspace must return Err; got: {:?}",
+        result
+    );
+
+    // Verify the symlink entry itself is still intact (not removed as a
+    // side-effect of the rejection). Use symlink_metadata so we detect the
+    // link itself rather than following it to the (still-existing) target.
+    assert!(
+        std::fs::symlink_metadata(tmp.path().join("handlers").join("evil")).is_ok(),
+        "the symlink entry should still exist after rejection"
+    );
+
+    // The victim dir and its contents must be untouched.
+    assert!(victim.is_dir(), "victim dir should NOT have been deleted");
+    assert!(victim.join("important.txt").is_file(),
+        "victim's contents should NOT have been removed");
+}
+
+#[test]
+fn rename_moves_handler_dir() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn").tempdir().unwrap();
+    let src = tmp.path().join("handlers").join("old-name");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("rowforge.yaml"),
+        "name: old-name\nversion: 0.1.0\nentry:\n  cmd: [\"./old-name\"]\n",
+    ).unwrap();
+    std::fs::write(src.join("handler.go"), "package main").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    core.handler_rename("old-name", "new-name").unwrap();
+
+    let dst = tmp.path().join("handlers").join("new-name");
+    assert!(!src.is_dir(), "old dir should be gone");
+    assert!(dst.is_dir(), "new dir should exist");
+    // Contents preserved (rename, not copy).
+    assert!(dst.join("rowforge.yaml").is_file());
+    assert!(dst.join("handler.go").is_file());
+    // Note: rowforge.yaml's `name:` field is NOT auto-rewritten —
+    // that's user's responsibility after rename. The dir was renamed,
+    // the file contents are byte-identical.
+}
+
+#[test]
+fn rename_errors_on_unknown_source() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-nf").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("ghost", "new-name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }),
+        "got: {:?}", err);
+}
+
+#[test]
+fn rename_errors_when_destination_exists() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-ex").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("a")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("b")).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("a", "b").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerExists { .. }),
+        "got: {:?}", err);
+
+    // Both dirs still there — rename was a no-op.
+    assert!(tmp.path().join("handlers").join("a").is_dir());
+    assert!(tmp.path().join("handlers").join("b").is_dir());
+}
+
+#[test]
+fn rename_rejects_invalid_old_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-bo").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("../etc", "new-name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }));
+}
+
+#[test]
+fn rename_rejects_invalid_new_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-bn").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("ok")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("ok", "Bad Name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+    // Source still intact — pre-flight regex blocked anything from happening.
+    assert!(tmp.path().join("handlers").join("ok").is_dir());
+}
+
+/// Renaming a handler dir is a pure `fs::rename` — sqlite is NOT updated.
+/// Existing executions whose `last_handler_dir` pointed at the old path
+/// must still see the old path after the rename (lazy / content-addressed
+/// semantics from spec part-2 footnote).
+#[test]
+fn rename_preserves_executions_last_handler_dir() {
+    use rowforge_core::execution_store::{ExecutionStore, NewExecution};
+
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-lazy").tempdir().unwrap();
+
+    // 1. Create the handler dir via scaffold.
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "old-name",
+        rowforge_studio_core::ScaffoldTemplate::Empty,
+        "id",
+    )).unwrap();
+    let handler_abs = tmp.path().join("handlers").join("old-name");
+
+    // 2. Insert an execution row with last_handler_dir pointing at the handler dir.
+    let exec_id = {
+        let csv = tmp.path().join("input.csv");
+        std::fs::write(&csv, "id\nr1\n").unwrap();
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+        let exec = store.create_execution(NewExecution {
+            name: Some("lazy-rename-test".into()),
+            input_csv_id: "csv-lazy".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        }).unwrap();
+        store.set_last_handler_dir(&exec.id, &handler_abs).unwrap();
+        exec.id
+    };
+
+    // 3. Rename the handler.
+    core.handler_rename("old-name", "new-name").unwrap();
+
+    // 4. Assert new dir exists, old dir is gone.
+    assert!(!tmp.path().join("handlers").join("old-name").is_dir(),
+        "old handler dir should be gone after rename");
+    assert!(tmp.path().join("handlers").join("new-name").is_dir(),
+        "new handler dir should exist after rename");
+
+    // 5. Assert last_handler_dir in sqlite is UNCHANGED (still the old path).
+    let store = ExecutionStore::open(tmp.path()).unwrap();
+    let exec = store.get_execution(&exec_id).unwrap()
+        .expect("execution should still exist");
+    assert_eq!(
+        exec.last_handler_dir.as_deref(),
+        Some(handler_abs.as_path()),
+        "rename must NOT update last_handler_dir in sqlite; got: {:?}",
+        exec.last_handler_dir,
+    );
+}
+
+// ============================================================
+// Plan 7 T15 — Settings.preferred_editor roundtrip + plumbing
+// ============================================================
+
+/// Settings with preferred_editor = Some(...) survives a JSON roundtrip.
+#[test]
+fn settings_preferred_editor_roundtrip() {
+    let mut s = rowforge_studio_core::Settings::default();
+    s.preferred_editor = Some("code --wait".into());
+    let mut buf = Vec::new();
+    s.save_to(&mut buf).unwrap();
+    let loaded = rowforge_studio_core::Settings::load_from(buf.as_slice()).unwrap();
+    assert_eq!(loaded.preferred_editor, Some("code --wait".into()));
+}
+
+/// Settings parsed from JSON without the field defaults to None (backward compat).
+#[test]
+fn settings_preferred_editor_absent_defaults_to_none() {
+    let json = br#"{"schema_version": 1}"#;
+    let parsed = rowforge_studio_core::Settings::load_from(json.as_slice()).unwrap();
+    assert_eq!(parsed.preferred_editor, None);
+}
+
+/// OpenOpts.with_preferred_editor propagates into StudioCore.
+/// Verified via handler_open_editor — when no handler dir exists it returns
+/// HandlerNotFound (not EditorNotFound), confirming the editor value reached
+/// the resolver but the handler guard fired first.
+#[test]
+fn studio_core_preferred_editor_set_from_open_opts() {
+    let tmp = empty_workspace();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("my-handler")).unwrap();
+    // Write a minimal manifest so show() works.
+    std::fs::write(
+        tmp.path().join("handlers").join("my-handler").join("rowforge.yaml"),
+        "name: my-handler\nversion: 0.1.0\nentry:\n  cmd: [\"./my-handler\"]\n",
+    ).unwrap();
+
+    // Pass a deliberately bogus command so resolve_editor returns an error.
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new()
+            .with_workspace(tmp.path().into())
+            .with_preferred_editor(Some("__rowforge_t15_bogus_editor__".into())),
+    ).unwrap();
+
+    let err = core.handler_open_editor("my-handler").unwrap_err();
+    // The bogus preferred editor is tried first — the error should be
+    // EditorNotFound or Io (failed to spawn), NOT HandlerNotFound.
+    let is_editor_error = matches!(
+        err,
+        rowforge_studio_core::UiError::EditorNotFound { .. }
+            | rowforge_studio_core::UiError::Io(_)
+    );
+    assert!(is_editor_error, "expected editor error, got: {:?}", err);
+}
+
+/// set_preferred_editor updates the live field without workspace re-open.
+#[test]
+fn studio_core_set_preferred_editor_updates_live_field() {
+    let tmp = empty_workspace();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("h1")).unwrap();
+    std::fs::write(
+        tmp.path().join("handlers").join("h1").join("rowforge.yaml"),
+        "name: h1\nversion: 0.1.0\nentry:\n  cmd: [\"./h1\"]\n",
+    ).unwrap();
+
+    let mut core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    // Initially None — resolver falls through to environment/probes.
+    // Now set a bogus value and verify it's picked up.
+    core.set_preferred_editor(Some("__rowforge_t15_updated_bogus__".into()));
+
+    let err = core.handler_open_editor("h1").unwrap_err();
+    let is_editor_error = matches!(
+        err,
+        rowforge_studio_core::UiError::EditorNotFound { .. }
+            | rowforge_studio_core::UiError::Io(_)
+    );
+    assert!(is_editor_error, "expected editor error after set, got: {:?}", err);
+}

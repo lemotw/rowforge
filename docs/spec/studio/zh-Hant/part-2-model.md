@@ -51,6 +51,14 @@ struct ExecSummary {
 ```
 - `last_attempt_counts` 不是跨 attempt 的 rollup。Rollup 是
   `ExecRollup`，採 cold 計算，因為它需要掃描所有 attempts。
+- **惰性改名語意（Plan 7）：** `handler_rename` 只執行 `fs::rename`；
+  SQLite `executions` 資料表**不**更新。因此，run 啟動時所取得的
+  `last_handler_dir` 快照，在改名後仍指向舊目錄名稱。這是刻意的設計：
+  handler 以 run 開始時所捕捉的快照作為內容定址基礎，`last_handler_dir`
+  為資訊性欄位而非可載入的依據。實際效果：改名後，ExecHistory 中引用該
+  handler 的列仍顯示舊名稱；透過新名稱建立的 run 則使用新名稱。
+  同樣語意也適用於 `handler_delete` — 刪除 handler 不會從 `executions`
+  列中清除過去的 `last_handler_dir` 引用。
 
 ### 2.2.3 `ExecDetail`
 ```rust
@@ -147,10 +155,23 @@ struct Settings {
     workspace_root: Option<PathBuf>,
     max_concurrent_runs: Option<u32>,    // 預設 3
     telemetry_opt_in: bool,              // 預設 false；v1 不收集
+    preferred_editor: Option<String>,    // Plan 7：編輯器命令覆寫，例如 "code"、"cursor"
 }
 ```
 型別存放於 `studio-core::settings`；load/save 的路徑解析屬於 Tauri 層
 （使用 Tauri 的 `app_data_dir`）。
+
+`preferred_editor` 為 `handler_open_editor` 四層編輯器解析器的第一層
+（見第 8 部分 §8.4.1）：preferred → `$VISUAL` → `$EDITOR` →
+探測 `code`/`cursor`/`nvim`/`vim`/`nano`。儲存於 `settings.json`，與其他
+Settings 欄位並列；`schema_version` 維持為 1。透過
+`workspace_settings_save` 即時更新至 `StudioCore` — 不需重新開啟
+workspace。
+
+> **注意 — 實作修正（Plan 7）：** 第 8 部分 §8.6.4 原先描述此欄位
+> 需將 `schema_version` 由 1 升至 2。Plan 7 採容忍 reader 方式加入
+> `preferred_editor`，未升版號。以本注意事項為準；§8.6.4 保留原設計
+> 文字以供參照。
 
 ## 2.3 故意不作為實體
 

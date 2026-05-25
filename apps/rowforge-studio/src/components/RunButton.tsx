@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Play, Settings2 } from "lucide-react";
 import { useExecRollup, useRunStart } from "@/ipc/queries";
+import { useHandlerList } from "@/ipc/use-handlers";
 import { uiErrorMessage } from "@/ipc/types";
 import type { ExecutionId } from "@/ipc/types";
 
@@ -14,9 +15,9 @@ import type { ExecutionId } from "@/ipc/types";
  * Two modes:
  * - **Quick Run** (primary button): picks handler dir → starts a full run.
  *   Same behaviour as the Plan 4 minimal launcher.
- * - **Options** (settings icon): opens an inline panel for sample size
- *   (`row_limit`), worker count, and dry-run flag. Submit from here uses
- *   those values + handler dir.
+ * - **Options** (settings icon): opens an inline panel for handler
+ *   selection (workspace dropdown or external pick), sample size
+ *   (`row_limit`), worker count, and dry-run flag.
  *
  * After successful start, navigates to the new attempt's Live tab
  * (Plan 5 T15).
@@ -50,6 +51,14 @@ export function RunButton({
       /* privacy mode / quota — ignore */
     }
   }, []);
+
+  // Workspace handlers (Plan 7). Surfaced as a dropdown above the
+  // free-form directory picker so users don't have to navigate the OS
+  // dialog for handlers that already live under <workspace>/handlers/.
+  const handlers = useHandlerList();
+  const workspaceHandlers = Array.isArray(handlers.data) ? handlers.data : [];
+  const selectedWorkspaceHandler =
+    workspaceHandlers.find((h) => h.path === handlerDir)?.name ?? "";
 
   // Rollup tells us how many rows are NeverAttempted (= remaining when
   // skip_attempted is on). Lazy: only fetched once the options panel opens.
@@ -159,8 +168,42 @@ export function RunButton({
           </div>
 
           <div className="space-y-3">
+            {workspaceHandlers.length > 0 && (
+              <div>
+                <label htmlFor="run-workspace-handler" className="mb-1 block text-xs">
+                  Workspace handler
+                </label>
+                <select
+                  id="run-workspace-handler"
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs"
+                  value={selectedWorkspaceHandler}
+                  onChange={(e) => {
+                    const h = workspaceHandlers.find((x) => x.name === e.target.value);
+                    if (h) setHandlerDir(h.path);
+                  }}
+                >
+                  <option value="">— choose —</option>
+                  {workspaceHandlers.map((h) => (
+                    <option
+                      key={h.name}
+                      value={h.name}
+                      disabled={h.manifest_status !== "valid"}
+                    >
+                      {h.name}
+                      {h.manifest_status !== "valid" ? ` (${h.manifest_status})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
-              <label className="mb-1 block text-xs">Handler directory</label>
+              <label className="mb-1 block text-xs">
+                Handler directory{" "}
+                {workspaceHandlers.length > 0 && (
+                  <span className="text-muted-foreground">(or pick external)</span>
+                )}
+              </label>
               <div className="flex gap-1">
                 <Input
                   value={handlerDir ?? ""}

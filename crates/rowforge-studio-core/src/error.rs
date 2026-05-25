@@ -87,6 +87,24 @@ pub enum UiError {
     /// Manifest references a binary not found on PATH (used by future plans).
     #[error("toolchain missing: {token}")]
     ToolchainMissing { token: String },
+
+    /// 4-tier editor resolution exhausted: Settings.preferred_editor →
+    /// $VISUAL → $EDITOR → probe (code/cursor/nvim/vim/nano) all missed.
+    /// Plan 7 spec §8.5.4.
+    #[error("editor not found")]
+    EditorNotFound,
+
+    /// `<workspace>/handlers/<name>` doesn't exist.
+    #[error("handler not found: {name}")]
+    HandlerNotFound { name: String },
+
+    /// Scaffold target / rename destination already exists.
+    #[error("handler already exists: {name}")]
+    HandlerExists { name: String },
+
+    /// Handler name doesn't match `[a-z0-9-]+`. Caught before any fs op.
+    #[error("invalid handler name: {name}")]
+    InvalidHandlerName { name: String },
 }
 
 impl From<std::io::Error> for UiError {
@@ -153,5 +171,39 @@ mod tests {
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["kind"], json!("export_incomplete"));
         assert_eq!(v["message"]["missing_count"], json!(42));
+    }
+
+    #[test]
+    fn editor_not_found_serializes() {
+        let e = UiError::EditorNotFound;
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("editor_not_found"));
+        // Unit variant with adjacent tagging: serde emits content=null.
+        // Verify the exact shape so the TS mirror knows what to type.
+        assert!(v["message"].is_null());
+    }
+
+    #[test]
+    fn handler_not_found_carries_name() {
+        let e = UiError::HandlerNotFound { name: "foo".into() };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("handler_not_found"));
+        assert_eq!(v["message"]["name"], json!("foo"));
+    }
+
+    #[test]
+    fn handler_exists_carries_name() {
+        let e = UiError::HandlerExists { name: "taken".into() };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("handler_exists"));
+        assert_eq!(v["message"]["name"], json!("taken"));
+    }
+
+    #[test]
+    fn invalid_handler_name_carries_name() {
+        let e = UiError::InvalidHandlerName { name: "Bad Name".into() };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("invalid_handler_name"));
+        assert_eq!(v["message"]["name"], json!("Bad Name"));
     }
 }

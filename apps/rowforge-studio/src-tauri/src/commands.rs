@@ -8,10 +8,12 @@ use std::path::PathBuf;
 
 use rowforge_studio_core::{
     AttemptDetail, AttemptId, CancelMode, ExecDetail, ExecRollup, ExecSummary, ExecutionId,
-    ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, ListFilter, ManifestReport,
-    ManifestSource, OpenOpts, ProgressSnapshot, RowHistory, RunHandle, RunOpts,
-    RunStartedHandle, RunStatus, Settings, StartExecArgs, StudioCore, UiError, Workspace,
+    ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, HandlerDetail, HandlerSummary,
+    ListFilter, ManifestReport, ManifestSource, OpenOpts, ProgressSnapshot, RowHistory,
+    RunHandle, RunOpts, RunStartedHandle, RunStatus, ScaffoldArgs, Settings, StartExecArgs,
+    StudioCore, UiError, Workspace,
 };
+use tauri::Emitter;
 use tauri::State;
 
 use crate::settings as settings_io;
@@ -31,7 +33,11 @@ pub fn workspace_open(
         Some(p) => OpenOpts::new().with_workspace(p),
         None => OpenOpts::new(),
     };
-    let opts = opts.with_max_concurrent_runs(prev.max_concurrent_runs);
+    // Plan 6 T9: size SessionRegistry from Settings.max_concurrent_runs.
+    // Plan 7 T15: seed StudioCore.preferred_editor from Settings.preferred_editor.
+    let opts = opts
+        .with_max_concurrent_runs(prev.max_concurrent_runs)
+        .with_preferred_editor(prev.preferred_editor.clone());
     let core = StudioCore::open(opts)?;
     let workspace = core.workspace().clone();
 
@@ -79,9 +85,18 @@ pub fn workspace_settings_load(app: tauri::AppHandle) -> Result<Settings, UiErro
 #[tauri::command]
 pub fn workspace_settings_save(
     app: tauri::AppHandle,
+    state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), UiError> {
-    settings_io::save(&app, &settings)
+    settings_io::save(&app, &settings)?;
+    // Plan 7 T15: refresh preferred_editor in the live StudioCore so the
+    // next handler_open_editor call uses the new value without requiring a
+    // workspace re-open.
+    let mut guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(core) = guard.as_mut() {
+        core.set_preferred_editor(settings.preferred_editor.clone());
+    }
+    Ok(())
 }
 
 /// Returns the currently-open workspace, if any. None means no workspace
@@ -299,5 +314,115 @@ pub fn manifest_validate(
         .as_ref()
         .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
     core.validate_manifest(source)
+}
+
+// ===== Plan 7 handler authoring =====
+
+#[tauri::command]
+pub fn handler_list(state: State<'_, AppState>) -> Result<Vec<HandlerSummary>, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.handler_list()
+}
+
+#[tauri::command]
+pub fn handler_show(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<HandlerDetail, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.handler_show(&name)
+}
+
+#[tauri::command]
+pub fn handler_open_editor(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.handler_open_editor(&name)
+}
+
+#[tauri::command]
+pub fn handler_reveal(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<(), UiError> {
+    // studio-core returns the path; we wrap with shell::open at the layer
+    // boundary so studio-core stays OS-policy-free.
+    let path = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_reveal_path(&name)?
+    };
+    use tauri_plugin_shell::ShellExt;
+    app.shell()
+        .open(path.to_string_lossy().to_string(), None)
+        .map_err(|e| UiError::Io(e.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn handler_scaffold(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    args: ScaffoldArgs,
+) -> Result<String, UiError> {
+    let name = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_scaffold(args)?
+    };
+    // Spec §8.5.2 — coarse refresh hint after mutation.
+    let _ = app.emit("handlers:list", ());
+    Ok(name)
+}
+
+#[tauri::command]
+pub fn handler_delete(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<(), UiError> {
+    {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_delete(&name)?;
+    }
+    let _ = app.emit("handlers:list", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn handler_rename(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    old: String,
+    new: String,
+) -> Result<(), UiError> {
+    {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_rename(&old, &new)?;
+    }
+    let _ = app.emit("handlers:list", ());
+    Ok(())
 }
 

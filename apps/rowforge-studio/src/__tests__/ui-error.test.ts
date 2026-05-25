@@ -62,6 +62,26 @@ describe("uiErrorMessage", () => {
     expect(uiErrorMessage(e)).toContain("'ghc' not on PATH");
   });
 
+  it("renders editor_not_found", () => {
+    expect(uiErrorMessage({ kind: "editor_not_found", message: null }))
+      .toContain("editor_not_found");
+  });
+
+  it("renders handler_not_found with name", () => {
+    expect(uiErrorMessage({ kind: "handler_not_found", message: { name: "foo" } }))
+      .toContain("foo");
+  });
+
+  it("renders handler_exists with name", () => {
+    expect(uiErrorMessage({ kind: "handler_exists", message: { name: "taken" } }))
+      .toContain("taken");
+  });
+
+  it("renders invalid_handler_name with name", () => {
+    expect(uiErrorMessage({ kind: "invalid_handler_name", message: { name: "Bad Name" } }))
+      .toContain("Bad Name");
+  });
+
   it("falls back to String() for non-UiError inputs", () => {
     expect(uiErrorMessage("plain string")).toBe("plain string");
     expect(uiErrorMessage(null)).toBe("null");

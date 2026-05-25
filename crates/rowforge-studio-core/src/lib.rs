@@ -11,6 +11,7 @@ pub mod events;
 pub mod exec_detail;
 pub mod exec_view;
 pub mod failed;
+pub mod handler;
 pub mod ids;
 pub mod manifest;
 pub mod rollup;
@@ -24,6 +25,10 @@ pub mod workspace;
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
 
 pub use aggregator::{ProgressAggregator, ProgressSnapshot};
+pub use handler::{
+    HandlerSummary, HandlerDetail, SourceFileSummary,
+    ManifestStatus, ScaffoldArgs, ScaffoldTemplate,
+};
 pub use attempt_detail::{AttemptDetail, AttemptPaths, HandlerInstanceView};
 pub use error::{BusyScope, UiError};
 pub use events::{AbortReason, Phase, ProgressEvent, RunReport, WorkerCrashRecord};
@@ -185,6 +190,11 @@ pub struct StudioCore {
     pub(crate) store: std::sync::Arc<std::sync::Mutex<rowforge_core::execution_store::ExecutionStore>>,
     exec_list_cache: Cache<ExecListKey, Vec<ExecSummary>>,
     pub(crate) sessions: std::sync::Arc<crate::session::SessionRegistry>,
+    /// Plan 7: caller-supplied editor command for handler_open_editor.
+    /// Sourced from `OpenOpts.preferred_editor` which the Tauri layer
+    /// loads from Settings before calling `open()`. None → resolver
+    /// falls through to $VISUAL / $EDITOR / probes.
+    preferred_editor: Option<String>,
 }
 
 impl Drop for StudioCore {
@@ -246,11 +256,74 @@ impl StudioCore {
             store,
             exec_list_cache: Cache::new(DEFAULT_TTL),
             sessions,
+            // Plan 7 T15: sourced from Settings.preferred_editor via OpenOpts.
+            preferred_editor: opts.preferred_editor,
         })
     }
 
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
+    }
+
+    /// Plan 7 T15: update the preferred editor in-place after a settings_save
+    /// so the next handler_open_editor call uses the new value without
+    /// requiring a workspace re-open.
+    pub fn set_preferred_editor(&mut self, editor: Option<String>) {
+        self.preferred_editor = editor;
+    }
+
+    /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.
+    /// Returns empty list when the dir doesn't exist (not an error).
+    pub fn handler_list(&self) -> Result<Vec<HandlerSummary>, UiError> {
+        crate::handler::list(self.workspace.root.as_path())
+    }
+
+    /// Plan 7 T3: load a single handler's detail (manifest + source files).
+    /// Errors: `InvalidHandlerName` (regex fail), `HandlerNotFound` (dir missing).
+    pub fn handler_show(&self, name: &str) -> Result<HandlerDetail, UiError> {
+        crate::handler::show(self.workspace.root.as_path(), name)
+    }
+
+    /// Plan 7 T4: open the handler dir in the user's preferred external editor.
+    /// 4-tier resolution per spec 8.4.1. Errors: InvalidHandlerName,
+    /// HandlerNotFound, EditorNotFound, InvalidArg (shell-parse failure),
+    /// Io (spawn failure).
+    pub fn handler_open_editor(&self, name: &str) -> Result<(), UiError> {
+        crate::handler::open_editor(
+            self.workspace.root.as_path(),
+            name,
+            self.preferred_editor.as_deref(),
+        )
+    }
+
+    /// Plan 7 T4: return the handler dir path for the Tauri layer to pass
+    /// to `shell::open()`. Errors: InvalidHandlerName, HandlerNotFound.
+    pub fn handler_reveal_path(&self, name: &str) -> Result<std::path::PathBuf, UiError> {
+        crate::handler::reveal_path(self.workspace.root.as_path(), name)
+    }
+
+    /// Plan 7 T6: scaffold a new handler from a template. Errors:
+    /// `InvalidHandlerName` (regex fail), `HandlerExists` (destination
+    /// taken), `Io` (filesystem write failure).
+    pub fn handler_scaffold(&self, args: ScaffoldArgs) -> Result<String, UiError> {
+        crate::handler::scaffold(self.workspace.root.as_path(), args)
+    }
+
+    /// Plan 7 T7: delete a handler directory. Three-layer defense against
+    /// path traversal (regex / canonicalize / starts_with). Errors:
+    /// `InvalidHandlerName`, `HandlerNotFound`, `InvalidArg` (resolved
+    /// outside workspace), `Io` (filesystem op failure).
+    pub fn handler_delete(&self, name: &str) -> Result<(), UiError> {
+        crate::handler::delete(self.workspace.root.as_path(), name)
+    }
+
+    /// Plan 7 T8: rename a handler directory. Lazy on sqlite — past
+    /// `handler_instances.source_snapshot_dir` rows continue to reference
+    /// the old path (handler_instance is content-addressed; the path field
+    /// is informational). Errors: InvalidHandlerName, HandlerNotFound,
+    /// HandlerExists, Io.
+    pub fn handler_rename(&self, old: &str, new: &str) -> Result<(), UiError> {
+        crate::handler::rename(self.workspace.root.as_path(), old, new)
     }
 
     /// Return the Arc-wrapped session registry for this workspace.

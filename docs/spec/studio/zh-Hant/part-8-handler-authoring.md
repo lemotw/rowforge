@@ -119,12 +119,20 @@ struct SmokeTestReport {
 }
 
 struct ScaffoldArgs {
-    name: String,                          // [a-z0-9-]+
+    name: String,                          // ^[a-z0-9][a-z0-9-]*$
     template: ScaffoldTemplate,
-    primary_field: String,                 // 範例預期的輸入欄位名
+    primary_field: String,                 // ^[a-zA-Z_][a-zA-Z0-9_]*$ — 範例預期的輸入欄位名
 }
 enum ScaffoldTemplate { GoStdio, GoBatch, Empty }
 ```
+
+**Scaffold 欄位驗證：**
+- `name` 必須符合 `^[a-z0-9][a-z0-9-]*$` — 由伺服器端 `handler_scaffold`
+  與 `handler_rename` 強制執行；失敗時 emit `InvalidHandlerName`。
+- `primary_field` 必須為合法識別碼：`^[a-zA-Z_][a-zA-Z0-9_]*$`
+  （字母、數字、底線；不可以數字開頭）— 由伺服器端 `handler_scaffold`
+  強制執行；失敗時 emit `InvalidArg`。此限制防止腳手架檔案中的
+  YAML/Go 注入。
 
 成本級別(第 2 部分 §2.1):
 
@@ -142,7 +150,7 @@ enum ScaffoldTemplate { GoStdio, GoBatch, Empty }
 
 1. `Settings.preferred_editor`(§8.6.4)。
 2. `$VISUAL`、然後 `$EDITOR`。
-3. 在 `PATH` 中探測 `code`、`cursor`、`subl`、`zed`。
+3. 在 `PATH` 中探測 `code`、`cursor`、`nvim`、`vim`、`nano`。
 4. 失敗 → `UiError::EditorNotFound`。
 
 選定的命令以 handler 資料夾作為唯一引數,detached 模式 spawn。Studio
@@ -227,6 +235,25 @@ Studio 退出時(第 3 部分 §3.6):
    顯示陳舊的「last build」。
 
 ## 8.5 API
+
+> **Plan 7 已出貨。** §8.5.1–§8.5.3 所有項目均已落地。已落地檔案路徑：
+>
+> - `crates/rowforge-studio-core/src/handler.rs` — 模組主體
+>   （`handler_list`、`handler_show`、`handler_open_editor`、`handler_reveal`、
+>   `handler_scaffold`、`handler_delete`、`handler_rename`、`resolve_editor`）
+> - `crates/rowforge-studio-core/src/handler_templates/` — 內嵌 scaffold
+>   模板（GoStdio、GoBatch、Empty）
+> - `crates/rowforge-studio-core/src/error.rs` — `UiError` 變體，含 Plan 7
+>   新增項目
+> - `apps/rowforge-studio/src-tauri/src/commands.rs` — 7 個新 command 的
+>   Tauri command shell
+> - `apps/rowforge-studio/src/ipc/types.ts` — TypeScript 映射
+> - `apps/rowforge-studio/src/ipc/use-handlers.ts` — TanStack Query hooks
+> - `apps/rowforge-studio/src/pages/HandlersPage.tsx`
+> - `apps/rowforge-studio/src/pages/HandlerDetailPage.tsx`
+> - `apps/rowforge-studio/src/components/ScaffoldDialog.tsx`
+> - `apps/rowforge-studio/src/components/RenameHandlerDialog.tsx`
+> - `apps/rowforge-studio/src/components/DeleteHandlerDialog.tsx`
 
 ### 8.5.1 `StudioCore` 新增
 
@@ -337,14 +364,18 @@ enum HandlerBusyReason {
 
 ## 8.6 UI(擴充第 7 部分)
 
+> **Plan 7 已出貨。** `/handlers` 與 `/handlers/:name` 均為已上線路由。
+> IA 更新見第 7 部分 §7.3；scaffold/rename/delete user flow 見第 7 部分
+> §7.4 Flow H–J。
+
 Part 7 §7.3 的 Sidebar / shell 其他不變。**Authoring** 群組不再 disabled。
 
 ### 8.6.1 IA 新增
 
-- Sidebar `AUTHORING / ● Handlers` 變為可用。
-- 路由:
-  - `/handlers` — Handler 清單。
-  - `/handlers/:name` — Handler 詳情。Tabs:**Source**(檔案列表)、
+- Sidebar `AUTHORING / ● Handlers` 變為可用（Plan 7：已出貨）。
+- 路由（Plan 7：全部已上線）:
+  - `/handlers` — Handler 清單（`HandlersPage.tsx`）。
+  - `/handlers/:name` — Handler 詳情（`HandlerDetailPage.tsx`）。Tabs:**Source**(檔案列表)、
     **Manifest**(驗證報告)、**Smoke test**、**Build log**。
   - `/handlers/new` — Scaffold wizard(modal-as-route)。
 - Run launcher(Part 7 §7.3):`HandlerSource` picker 變為從
@@ -403,13 +434,15 @@ Part 7 §7.3 的 Sidebar / shell 其他不變。**Authoring** 群組不再 disab
 ```rust
 struct Settings {
     // ... 既有
-    preferred_editor: Option<String>,              // 例如 "code"、"cursor"
-    smoke_test_default_timeout_secs: Option<u32>,  // 預設 30
+    preferred_editor: Option<String>,              // 例如 "code"、"cursor"  [Plan 7：已出貨]
+    smoke_test_default_timeout_secs: Option<u32>,  // 預設 30               [延後]
 }
 ```
 
-`schema_version` 由 1 升 2。容忍 reader 處理舊檔(缺欄位預設 `None`);
-v1 Studio 對 v2 settings 檔回 `WorkspaceLocked { by: "newer settings schema" }`。
+> **實作修正（Plan 7）：** `preferred_editor` 以容忍 reader 方式加入，
+> 未升 `schema_version`。原設計描述由 1 升至 2；Plan 7 維持版號 1。
+> 以第 2 部分 §2.2.9 的說明為準；§8.6.4 保留原設計文字以供參照。
+> `smoke_test_default_timeout_secs` 為延後項目，Plan 7 未出貨。
 
 ### 8.6.5 線框圖(示意)
 

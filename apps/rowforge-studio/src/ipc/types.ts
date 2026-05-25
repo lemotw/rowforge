@@ -34,6 +34,13 @@ export interface Settings {
    */
   max_concurrent_runs: number | null;
   telemetry_opt_in: boolean;
+  /**
+   * Plan 7 T15: preferred editor command for handler_open_editor.
+   * When non-null, overrides $VISUAL / $EDITOR / auto-detect fallback chain.
+   * The value is shell-split at call time ("code --wait" works).
+   * null means fall through to the 4-tier resolver.
+   */
+  preferred_editor: string | null;
 }
 
 export type UiErrorKind =
@@ -49,7 +56,11 @@ export type UiErrorKind =
   | "duplicate_exec_name"
   | "export_incomplete"
   | "manifest_invalid"
-  | "toolchain_missing";
+  | "toolchain_missing"
+  | "editor_not_found"
+  | "handler_not_found"
+  | "handler_exists"
+  | "invalid_handler_name";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shapes (confirmed by ipc_contract tests):
@@ -80,7 +91,13 @@ export type UiError =
   | { kind: "duplicate_exec_name"; message: { name: string } }
   | { kind: "export_incomplete"; message: { missing_count: number } }
   | { kind: "manifest_invalid"; message: { errors: ManifestError[] } }
-  | { kind: "toolchain_missing"; message: { token: string } };
+  | { kind: "toolchain_missing"; message: { token: string } }
+  // EditorNotFound: unit variant. serde adjacent tagging emits message: null
+  // (verified by editor_not_found_serializes test in error.rs).
+  | { kind: "editor_not_found"; message: null }
+  | { kind: "handler_not_found"; message: { name: string } }
+  | { kind: "handler_exists"; message: { name: string } }
+  | { kind: "invalid_handler_name"; message: { name: string } };
 
 function isUiError(e: unknown): e is UiError {
   return !!e && typeof e === "object" && "kind" in e && "message" in e;
@@ -113,6 +130,14 @@ export function uiErrorMessage(e: unknown): string {
       return `[manifest_invalid] ${e.message.errors.length} error(s)`;
     case "toolchain_missing":
       return `[toolchain_missing] '${e.message.token}' not on PATH`;
+    case "editor_not_found":
+      return `[editor_not_found] No editor found — set Settings.preferred_editor, or VISUAL/EDITOR env, or install code/cursor/nvim/vim/nano`;
+    case "handler_not_found":
+      return `[handler_not_found] '${e.message.name}' is not under <workspace>/handlers/`;
+    case "handler_exists":
+      return `[handler_exists] '${e.message.name}' already exists`;
+    case "invalid_handler_name":
+      return `[invalid_handler_name] '${e.message.name}' must match ^[a-z0-9][a-z0-9-]*$`;
   }
 }
 
@@ -383,4 +408,41 @@ export interface ProgressSnapshot {
   phase: Phase | null;
   /** Plan 6 T5: sliding-window 10s rate. 0 while still warming up. */
   rate_10s: number;
+}
+
+// ===== Plan 7 handler authoring =====
+
+export type ManifestStatus = "valid" | "invalid" | "missing";
+
+export type ScaffoldTemplate = "go_stdio" | "go_batch" | "empty";
+
+export interface HandlerSummary {
+  name: string;
+  path: string;
+  manifest_status: ManifestStatus;
+  last_modified: string; // ISO 8601 UTC
+  version: string | null;
+  language: string | null;
+}
+
+export interface SourceFileSummary {
+  name: string;
+  size_bytes: number;
+  is_directory: boolean;
+}
+
+export interface HandlerDetail {
+  summary: HandlerSummary;
+  /** Parsed manifest (raw rowforge-core shape); null when manifest_status != "valid". */
+  manifest: Manifest | null;
+  manifest_errors: ManifestError[];
+  manifest_warnings: ManifestWarning[];
+  source_files: SourceFileSummary[];
+  has_fixtures_dir: boolean;
+}
+
+export interface ScaffoldArgs {
+  name: string;
+  template: ScaffoldTemplate;
+  primary_field: string;
 }

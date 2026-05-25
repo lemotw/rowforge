@@ -11,6 +11,8 @@ import type {
   ExportReport,
   FailedPageQuery,
   FailedRowPage,
+  HandlerDetail,
+  HandlerSummary,
   ManifestReport,
   ManifestSource,
   ProgressSnapshot,
@@ -18,6 +20,7 @@ import type {
   RunHandle,
   RunStartedHandle,
   RunStatus,
+  ScaffoldArgs,
   Settings,
   StartExecArgs,
   Workspace,
@@ -74,4 +77,20 @@ export const ipc = {
 
   manifest_validate: (source: ManifestSource) =>
     invoke<ManifestReport>("manifest_validate", { source }),
+
+  // ===== Plan 7 handler authoring =====
+
+  handler_list: () => invoke<HandlerSummary[]>("handler_list"),
+  handler_show: (args: { name: string }) =>
+    invoke<HandlerDetail>("handler_show", args),
+  handler_open_editor: (args: { name: string }) =>
+    invoke<void>("handler_open_editor", args),
+  handler_reveal: (args: { name: string }) =>
+    invoke<void>("handler_reveal", args),
+  handler_scaffold: (args: ScaffoldArgs) =>
+    invoke<string>("handler_scaffold", { args }),
+  handler_delete: (args: { name: string }) =>
+    invoke<void>("handler_delete", args),
+  handler_rename: (args: { old: string; new: string }) =>
+    invoke<void>("handler_rename", args),
 };
