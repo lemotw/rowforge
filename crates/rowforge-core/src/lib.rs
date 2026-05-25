@@ -9,6 +9,7 @@ pub mod export;
 pub mod execution_store;
 pub mod jsonl_writer;
 pub mod build;
+pub mod handler_log;
 pub mod manifest;
 pub mod meta;
 pub mod pool;
