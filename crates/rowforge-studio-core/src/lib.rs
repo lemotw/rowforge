@@ -195,6 +195,10 @@ pub struct StudioCore {
     /// loads from Settings before calling `open()`. None → resolver
     /// falls through to $VISUAL / $EDITOR / probes.
     preferred_editor: Option<String>,
+    /// Plan 8 T6: in-memory build cache. Keys are handler names; values are
+    /// the most recent BuildOutcome (success OR failure). Dies on Drop.
+    /// Lock is held only briefly — never across the subprocess spawn.
+    build_cache: std::sync::Mutex<std::collections::HashMap<String, rowforge_core::build::BuildOutcome>>,
 }
 
 impl Drop for StudioCore {
@@ -258,6 +262,8 @@ impl StudioCore {
             sessions,
             // Plan 7 T15: sourced from Settings.preferred_editor via OpenOpts.
             preferred_editor: opts.preferred_editor,
+            // Plan 8 T6: empty build cache; populated by handler_build.
+            build_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -279,9 +285,62 @@ impl StudioCore {
     }
 
     /// Plan 7 T3: load a single handler's detail (manifest + source files).
+    /// Injects the cached BuildOutcome (if any) into `detail.last_build`.
     /// Errors: `InvalidHandlerName` (regex fail), `HandlerNotFound` (dir missing).
     pub fn handler_show(&self, name: &str) -> Result<HandlerDetail, UiError> {
-        crate::handler::show(self.workspace.root.as_path(), name)
+        let mut detail = crate::handler::show(self.workspace.root.as_path(), name)?;
+        detail.last_build = self.build_cache.lock().unwrap().get(name).cloned();
+        Ok(detail)
+    }
+
+    /// Plan 8 T6: build a handler by running its `entry.build` command.
+    ///
+    /// Always force-builds (does not call `needs_build`). On success or on
+    /// a `BuildFailed` result, the `BuildOutcome` is written to the in-memory
+    /// cache so `handler_show` can surface it. On `ToolchainMissing` the cache
+    /// is left untouched (no outcome to show).
+    ///
+    /// Errors:
+    /// - `NoBuildCommand`   — manifest has no `entry.build`
+    /// - `BuildFailed`      — process exited non-zero (outcome still cached)
+    /// - `ToolchainMissing` — first token of build command not on PATH
+    /// - `Io`               — manifest load or spawn failure
+    pub fn handler_build(&self, name: &str) -> Result<rowforge_core::build::BuildOutcome, UiError> {
+        // Pre-flight: load manifest & check entry.build before invoking
+        // build_raw, so we surface NoBuildCommand cleanly.
+        let dir = self.workspace.root.as_path().join("handlers").join(name);
+        let (manifest, _) = rowforge_core::manifest::Manifest::load_from_dir(&dir)
+            .map_err(|e| UiError::Io(format!("manifest load: {}", e)))?;
+        if manifest.entry.build.is_none() {
+            return Err(UiError::NoBuildCommand { name: name.to_string() });
+        }
+
+        // build_raw does the heavy lifting; we own cache + UiError mapping.
+        match crate::handler::build_raw(self.workspace.root.as_path(), name) {
+            Ok(outcome) => {
+                self.build_cache
+                    .lock()
+                    .unwrap()
+                    .insert(name.to_string(), outcome.clone());
+                Ok(outcome)
+            }
+            Err(rowforge_core::build::BuildError::BuildFailed { exit_code, outcome, .. }) => {
+                // Cache the failed outcome so the UI can inspect the log.
+                self.build_cache
+                    .lock()
+                    .unwrap()
+                    .insert(name.to_string(), outcome);
+                Err(UiError::BuildFailed { name: name.to_string(), exit_code })
+            }
+            Err(rowforge_core::build::BuildError::ToolchainMissing { tool }) => {
+                // No outcome to cache; the UI shows a "tool not found" message.
+                Err(UiError::ToolchainMissing { name: name.to_string(), tool })
+            }
+            Err(rowforge_core::build::BuildError::NoBuildCommand) => {
+                Err(UiError::NoBuildCommand { name: name.to_string() })
+            }
+            Err(rowforge_core::build::BuildError::Io(e)) => Err(UiError::Io(e)),
+        }
     }
 
     /// Plan 7 T4: open the handler dir in the user's preferred external editor.
