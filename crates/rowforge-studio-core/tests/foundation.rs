@@ -1359,3 +1359,24 @@ async fn active_runs_stream_reflects_started_runs() {
     // the stream yields a tick.
     assert!(tick.active_runs <= 1);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 6 T3: ExecSummary.last_handler_dir projection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exec_summary_carries_last_handler_dir() {
+    use rowforge_studio_core::{OpenOpts, StartExecArgs, StudioCore};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let csv = tmp.path().join("in.csv");
+    std::fs::write(&csv, "row_id\nr1\n").unwrap();
+
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().into())).unwrap();
+    let id = core.start_exec(StartExecArgs::new(csv, "t3_test")).unwrap();
+
+    // Fresh exec: last_handler_dir is None.
+    let summaries = core.list(Default::default()).unwrap();
+    let s = summaries.iter().find(|s| s.id == id).unwrap();
+    assert_eq!(s.last_handler_dir, None);
+}

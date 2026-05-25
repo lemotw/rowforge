@@ -30,6 +30,7 @@ pub struct ExecSummary {
     pub attempts_count: u32,
     pub last_attempt_state: Option<String>,
     pub last_attempt_counts: Option<AttemptCountsStub>,
+    pub last_handler_dir: Option<std::path::PathBuf>,
 }
 
 /// Placeholder for Plan 3's full `AttemptCounts`. Kept as its own type
@@ -78,6 +79,7 @@ impl ExecSummary {
             attempts_count: attempts.len() as u32,
             last_attempt_state,
             last_attempt_counts,
+            last_handler_dir: e.last_handler_dir.clone(),
         })
     }
 }
