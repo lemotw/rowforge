@@ -1555,3 +1555,41 @@ fn handler_show_rejects_invalid_name() {
     assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
         "got: {:?}", err);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 7 T4 — handler_reveal_path + handler_open_editor integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn handler_reveal_path_returns_dir_for_existing_handler() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let h = tmp.path().join("handlers").join("alpha");
+    std::fs::create_dir_all(&h).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+
+    let path = core.handler_reveal_path("alpha").unwrap();
+    assert_eq!(path, h);
+}
+
+#[test]
+fn handler_reveal_path_errors_on_unknown_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_reveal_path("ghost").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }));
+}
+
+#[test]
+fn handler_open_editor_rejects_invalid_name_before_resolver() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    ).unwrap();
+    let err = core.handler_open_editor("../etc").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }));
+}

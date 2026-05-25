@@ -190,6 +190,11 @@ pub struct StudioCore {
     pub(crate) store: std::sync::Arc<std::sync::Mutex<rowforge_core::execution_store::ExecutionStore>>,
     exec_list_cache: Cache<ExecListKey, Vec<ExecSummary>>,
     pub(crate) sessions: std::sync::Arc<crate::session::SessionRegistry>,
+    /// Plan 7: caller-supplied editor command for handler_open_editor.
+    /// Sourced from `OpenOpts.preferred_editor` which the Tauri layer
+    /// loads from Settings before calling `open()`. None → resolver
+    /// falls through to $VISUAL / $EDITOR / probes.
+    preferred_editor: Option<String>,
 }
 
 impl Drop for StudioCore {
@@ -251,6 +256,7 @@ impl StudioCore {
             store,
             exec_list_cache: Cache::new(DEFAULT_TTL),
             sessions,
+            preferred_editor: None,  // T15 will plumb from OpenOpts.preferred_editor
         })
     }
 
@@ -268,6 +274,24 @@ impl StudioCore {
     /// Errors: `InvalidHandlerName` (regex fail), `HandlerNotFound` (dir missing).
     pub fn handler_show(&self, name: &str) -> Result<HandlerDetail, UiError> {
         crate::handler::show(self.workspace.root.as_path(), name)
+    }
+
+    /// Plan 7 T4: open the handler dir in the user's preferred external editor.
+    /// 4-tier resolution per spec 8.4.1. Errors: InvalidHandlerName,
+    /// HandlerNotFound, EditorNotFound, InvalidArg (shell-parse failure),
+    /// Io (spawn failure).
+    pub fn handler_open_editor(&self, name: &str) -> Result<(), UiError> {
+        crate::handler::open_editor(
+            self.workspace.root.as_path(),
+            name,
+            self.preferred_editor.as_deref(),
+        )
+    }
+
+    /// Plan 7 T4: return the handler dir path for the Tauri layer to pass
+    /// to `shell::open()`. Errors: InvalidHandlerName, HandlerNotFound.
+    pub fn handler_reveal_path(&self, name: &str) -> Result<std::path::PathBuf, UiError> {
+        crate::handler::reveal_path(self.workspace.root.as_path(), name)
     }
 
     /// Return the Arc-wrapped session registry for this workspace.

@@ -204,6 +204,119 @@ pub(crate) fn validate_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+// ---------------------------------------------------------------------------
+// Plan 7 T4 — 4-tier editor resolver + open_editor + reveal_path
+// ---------------------------------------------------------------------------
+
+/// 4-tier editor resolution per spec 8.4.1.
+///
+/// `preferred` is `Settings.preferred_editor` (caller-loaded; T15 wires
+/// this via `StudioCore.preferred_editor`). `visual` and `editor` are the
+/// `$VISUAL` / `$EDITOR` env vars (production callers pass
+/// `std::env::var("VISUAL").ok().as_deref()`). `probes` are the
+/// well-known tool names tried in order via `which::which`.
+///
+/// Returns the parsed argv (first element = command, rest = args).
+/// Empty / whitespace-only strings in tiers 1-3 are treated as `None`
+/// and fall through.
+///
+/// `UiError::EditorNotFound` when all 4 tiers exhausted.
+/// `UiError::InvalidArg` when `shell_words::split` fails (e.g. unclosed
+///   quotes in a user-supplied preferred_editor).
+pub(crate) fn resolve_editor(
+    preferred: Option<&str>,
+    visual: Option<&str>,
+    editor: Option<&str>,
+    probes: &[&str],
+) -> Result<Vec<String>, crate::UiError> {
+    // Tier 1: caller-supplied preferred (skip if blank).
+    if let Some(cmd) = preferred {
+        if !cmd.trim().is_empty() {
+            return parse_argv(cmd);
+        }
+    }
+    // Tier 2: $VISUAL.
+    if let Some(cmd) = visual {
+        if !cmd.trim().is_empty() {
+            return parse_argv(cmd);
+        }
+    }
+    // Tier 3: $EDITOR.
+    if let Some(cmd) = editor {
+        if !cmd.trim().is_empty() {
+            return parse_argv(cmd);
+        }
+    }
+    // Tier 4: probe well-known tools via PATH.
+    for name in probes {
+        if which::which(name).is_ok() {
+            return Ok(vec![(*name).to_string()]);
+        }
+    }
+    Err(crate::UiError::EditorNotFound)
+}
+
+fn parse_argv(cmd: &str) -> Result<Vec<String>, crate::UiError> {
+    shell_words::split(cmd).map_err(|e| {
+        crate::UiError::InvalidArg(format!("invalid editor command '{}': {}", cmd, e))
+    })
+}
+
+/// Plan 7 T4: spawn the resolved editor at the handler dir.
+/// Detached — no waiting, no process tracking.
+pub fn open_editor(
+    workspace_root: &Path,
+    name: &str,
+    settings_preferred: Option<&str>,
+) -> Result<(), crate::UiError> {
+    if !validate_name(name) {
+        return Err(crate::UiError::InvalidHandlerName {
+            name: name.to_string(),
+        });
+    }
+    let handler_dir = workspace_root.join("handlers").join(name);
+    if !handler_dir.is_dir() {
+        return Err(crate::UiError::HandlerNotFound {
+            name: name.to_string(),
+        });
+    }
+    let visual = std::env::var("VISUAL").ok();
+    let editor = std::env::var("EDITOR").ok();
+    let argv = resolve_editor(
+        settings_preferred,
+        visual.as_deref(),
+        editor.as_deref(),
+        &["code", "cursor", "subl", "zed"],
+    )?;
+    let (cmd, args) = argv
+        .split_first()
+        .ok_or(crate::UiError::EditorNotFound)?;
+    std::process::Command::new(cmd)
+        .args(args)
+        .arg(&handler_dir)
+        .spawn()
+        .map_err(|e| crate::UiError::Io(format!("spawn editor '{}': {}", cmd, e)))?;
+    Ok(())
+}
+
+/// Plan 7 T4: return the handler's dir path. Tauri layer wraps with
+/// `shell::open()` to launch the OS file manager. Keeps studio-core
+/// OS-policy-free.
+pub fn reveal_path(workspace_root: &Path, name: &str) -> Result<PathBuf, crate::UiError> {
+    if !validate_name(name) {
+        return Err(crate::UiError::InvalidHandlerName {
+            name: name.to_string(),
+        });
+    }
+    let handler_dir = workspace_root.join("handlers").join(name);
+    if !handler_dir.is_dir() {
+        return Err(crate::UiError::HandlerNotFound {
+            name: name.to_string(),
+        });
+    }
+    Ok(handler_dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +338,61 @@ mod tests {
         assert!(!validate_name("a/b"));
         assert!(!validate_name("with_underscore"));
         assert!(!validate_name("foo.bar"));
+    }
+
+    #[test]
+    fn resolver_uses_preferred_editor_first() {
+        let r = resolve_editor(
+            Some("/usr/bin/true"),     // tier 1: preferred (absolute path bypasses PATH probe)
+            Some("/bin/echo"),         // tier 2: VISUAL (ignored — tier 1 wins)
+            Some("/bin/cat"),          // tier 3: EDITOR (ignored)
+            &[],                       // tier 4: empty probe list
+        );
+        assert_eq!(r.unwrap(), vec!["/usr/bin/true".to_string()]);
+    }
+
+    #[test]
+    fn resolver_falls_back_to_visual_then_editor() {
+        // No preferred → VISUAL takes over.
+        let r = resolve_editor(None, Some("/bin/echo arg1"), Some("/bin/cat"), &[]);
+        assert_eq!(r.unwrap(), vec!["/bin/echo".to_string(), "arg1".to_string()]);
+
+        // No preferred, no VISUAL → EDITOR.
+        let r = resolve_editor(None, None, Some("/bin/cat"), &[]);
+        assert_eq!(r.unwrap(), vec!["/bin/cat".to_string()]);
+    }
+
+    #[test]
+    fn resolver_falls_back_to_probes_when_envs_empty() {
+        // No preferred / VISUAL / EDITOR; probe finds a known tool.
+        // `sh` is on PATH on every reasonable Unix machine.
+        let r = resolve_editor(None, None, None, &["sh"]);
+        let argv = r.unwrap();
+        assert_eq!(argv.len(), 1);
+        assert!(argv[0].ends_with("sh") || argv[0] == "sh",
+            "probe should return the tool name or its absolute path; got {}", argv[0]);
+    }
+
+    #[test]
+    fn resolver_errors_when_all_tiers_miss() {
+        let r = resolve_editor(None, None, None, &["__no_such_tool_xyz_123__"]);
+        assert!(matches!(r, Err(crate::UiError::EditorNotFound)));
+    }
+
+    #[test]
+    fn resolver_skips_blank_tier_values() {
+        // Empty string in preferred should be treated as None (fall through).
+        let r = resolve_editor(Some(""), Some("/bin/echo"), None, &[]);
+        assert_eq!(r.unwrap(), vec!["/bin/echo".to_string()]);
+
+        let r = resolve_editor(Some("   "), None, None, &["__nope__"]);
+        assert!(matches!(r, Err(crate::UiError::EditorNotFound)));
+    }
+
+    #[test]
+    fn resolver_errors_on_unparseable_command() {
+        // shell_words::split returns Err on unclosed quotes.
+        let r = resolve_editor(Some("code -w 'unclosed"), None, None, &[]);
+        assert!(matches!(r, Err(crate::UiError::InvalidArg(_))));
     }
 }
