@@ -49,7 +49,11 @@ export type UiErrorKind =
   | "duplicate_exec_name"
   | "export_incomplete"
   | "manifest_invalid"
-  | "toolchain_missing";
+  | "toolchain_missing"
+  | "editor_not_found"
+  | "handler_not_found"
+  | "handler_exists"
+  | "invalid_handler_name";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shapes (confirmed by ipc_contract tests):
@@ -80,7 +84,13 @@ export type UiError =
   | { kind: "duplicate_exec_name"; message: { name: string } }
   | { kind: "export_incomplete"; message: { missing_count: number } }
   | { kind: "manifest_invalid"; message: { errors: ManifestError[] } }
-  | { kind: "toolchain_missing"; message: { token: string } };
+  | { kind: "toolchain_missing"; message: { token: string } }
+  // EditorNotFound: unit variant. serde adjacent tagging emits message: null
+  // (verified by editor_not_found_serializes test in error.rs).
+  | { kind: "editor_not_found"; message: null }
+  | { kind: "handler_not_found"; message: { name: string } }
+  | { kind: "handler_exists"; message: { name: string } }
+  | { kind: "invalid_handler_name"; message: { name: string } };
 
 function isUiError(e: unknown): e is UiError {
   return !!e && typeof e === "object" && "kind" in e && "message" in e;
@@ -113,6 +123,14 @@ export function uiErrorMessage(e: unknown): string {
       return `[manifest_invalid] ${e.message.errors.length} error(s)`;
     case "toolchain_missing":
       return `[toolchain_missing] '${e.message.token}' not on PATH`;
+    case "editor_not_found":
+      return `[editor_not_found] No editor found — set Settings.preferred_editor, or VISUAL/EDITOR env, or install one of code/cursor/subl/zed`;
+    case "handler_not_found":
+      return `[handler_not_found] '${e.message.name}' is not under <workspace>/handlers/`;
+    case "handler_exists":
+      return `[handler_exists] '${e.message.name}' already exists`;
+    case "invalid_handler_name":
+      return `[invalid_handler_name] '${e.message.name}' must match [a-z0-9-]+`;
   }
 }
 
