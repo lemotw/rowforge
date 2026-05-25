@@ -46,7 +46,7 @@ describe("AttemptDetail Live integration", () => {
 
   const fakeSnapshot = {
     processed: 0, total: null, success: 0, failed: 0, crashed: 0,
-    in_flight: 0, queue_depth: 0, phase: "starting",
+    in_flight: 0, queue_depth: 0, phase: "starting", rate_10s: 0,
   };
   const fakeExec = {
     summary: { id: "e1", name: "test-exec", created_at: "2026-05-24T12:00:00Z",
