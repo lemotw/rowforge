@@ -61,6 +61,21 @@ pub struct ScaffoldArgs {
     pub primary_field: String,
 }
 
+impl ScaffoldArgs {
+    /// Construct with all required fields.
+    pub fn new(
+        name: impl Into<String>,
+        template: ScaffoldTemplate,
+        primary_field: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            template,
+            primary_field: primary_field.into(),
+        }
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -373,6 +388,36 @@ pub(crate) fn render(template: &str, name: &str, primary_field: &str) -> String 
     template
         .replace("{{name}}", name)
         .replace("{{primary_field}}", primary_field)
+}
+
+// ============================================================================
+// Plan 7 T6 — scaffold
+// ============================================================================
+
+/// Plan 7 T6: scaffold a new handler from a template.
+///
+/// Validates `args.name` against `[a-z0-9-]+`. Refuses if the destination
+/// `<workspace>/handlers/<name>` already exists (whether file, dir, or
+/// symlink — `exists()` follows symlinks, but a name match alone is
+/// enough to reject).
+///
+/// Writes each template file with `{{name}}` / `{{primary_field}}`
+/// substitution. Returns the canonical name (same as input).
+pub fn scaffold(workspace_root: &Path, args: ScaffoldArgs) -> Result<String, crate::UiError> {
+    if !validate_name(&args.name) {
+        return Err(crate::UiError::InvalidHandlerName { name: args.name });
+    }
+    let dir = workspace_root.join("handlers").join(&args.name);
+    if dir.exists() {
+        return Err(crate::UiError::HandlerExists { name: args.name });
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| crate::UiError::Io(e.to_string()))?;
+    for (filename, template) in template_files(args.template) {
+        let content = render(template, &args.name, &args.primary_field);
+        std::fs::write(dir.join(filename), content)
+            .map_err(|e| crate::UiError::Io(e.to_string()))?;
+    }
+    Ok(args.name)
 }
 
 #[cfg(test)]

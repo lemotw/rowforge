@@ -1593,3 +1593,119 @@ fn handler_open_editor_rejects_invalid_name_before_resolver() {
     let err = core.handler_open_editor("../etc").unwrap_err();
     assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }));
 }
+
+// ---------------------------------------------------------------------------
+// Plan 7 T6 — handler_scaffold
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scaffold_writes_go_stdio_template() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    let name = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "my-handler",
+            rowforge_studio_core::ScaffoldTemplate::GoStdio,
+            "email",
+        ))
+        .unwrap();
+    assert_eq!(name, "my-handler");
+
+    let dir = tmp.path().join("handlers").join("my-handler");
+    assert!(dir.is_dir(), "handler dir should be created");
+
+    // 3 files, with variable substitution.
+    let yaml = std::fs::read_to_string(dir.join("rowforge.yaml")).unwrap();
+    assert!(yaml.contains("name: my-handler"), "rowforge.yaml didn't get {{name}} replaced; got:\n{}", yaml);
+    assert!(yaml.contains("email"), "rowforge.yaml didn't get {{primary_field}} replaced; got:\n{}", yaml);
+    assert!(!yaml.contains("{{name}}"), "rowforge.yaml still has unrendered {{name}}");
+    assert!(!yaml.contains("{{primary_field}}"), "rowforge.yaml still has unrendered {{primary_field}}");
+
+    assert!(dir.join("handler.go").is_file());
+    assert!(dir.join("go.mod").is_file());
+
+    // go.mod should reference the handler name.
+    let gomod = std::fs::read_to_string(dir.join("go.mod")).unwrap();
+    assert!(gomod.contains("my-handler"), "go.mod should reference name; got:\n{}", gomod);
+}
+
+#[test]
+fn scaffold_writes_go_batch_template_with_batch_mode() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-batch").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "batch-handler",
+        rowforge_studio_core::ScaffoldTemplate::GoBatch,
+        "order_id",
+    )).unwrap();
+
+    let dir = tmp.path().join("handlers").join("batch-handler");
+    let yaml = std::fs::read_to_string(dir.join("rowforge.yaml")).unwrap();
+    assert!(yaml.contains("batch"), "go_batch template should mention batch mode; got:\n{}", yaml);
+}
+
+#[test]
+fn scaffold_writes_empty_template_two_files() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-empty").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+
+    core.handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+        "skel",
+        rowforge_studio_core::ScaffoldTemplate::Empty,
+        "id",
+    )).unwrap();
+
+    let dir = tmp.path().join("handlers").join("skel");
+    assert!(dir.join("rowforge.yaml").is_file());
+    assert!(dir.join("handler.go").is_file());
+    // Empty template explicitly does NOT include go.mod.
+    assert!(!dir.join("go.mod").exists(),
+        "Empty template should not write go.mod (user builds however they want)");
+}
+
+#[test]
+fn scaffold_rejects_invalid_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-bn").tempdir().unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "Has Space",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "x",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+
+    // Verify no partial directory was created.
+    assert!(!tmp.path().join("handlers").join("Has Space").exists());
+}
+
+#[test]
+fn scaffold_errors_when_name_already_exists() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-sc-ex").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("taken")).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core
+        .handler_scaffold(rowforge_studio_core::ScaffoldArgs::new(
+            "taken",
+            rowforge_studio_core::ScaffoldTemplate::Empty,
+            "x",
+        ))
+        .unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerExists { .. }),
+        "got: {:?}", err);
+}

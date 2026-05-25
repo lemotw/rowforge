@@ -294,6 +294,13 @@ impl StudioCore {
         crate::handler::reveal_path(self.workspace.root.as_path(), name)
     }
 
+    /// Plan 7 T6: scaffold a new handler from a template. Errors:
+    /// `InvalidHandlerName` (regex fail), `HandlerExists` (destination
+    /// taken), `Io` (filesystem write failure).
+    pub fn handler_scaffold(&self, args: ScaffoldArgs) -> Result<String, UiError> {
+        crate::handler::scaffold(self.workspace.root.as_path(), args)
+    }
+
     /// Return the Arc-wrapped session registry for this workspace.
     ///
     /// Used by the Tauri event bridge to spawn `forward_active_runs` with only
