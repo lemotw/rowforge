@@ -1,14 +1,61 @@
 use crate::error::CoreError;
+use crate::handler_log::{format_line, HandlerLogLine, HandlerStream};
 use crate::manifest::Manifest;
 use crate::pool::RowOutcome;
 use crate::protocol::{BatchEntry, Inbound, Outbound, RowEnvelope};
 use crate::run::ERR_BATCH_PROTOCOL_ERROR;
+use chrono::Utc;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::time::{timeout, Duration, Instant};
 use tracing::debug;
+
+// ---------------------------------------------------------------------------
+// HandlerLogSink — shared tee destination for stdout/stderr log lines
+// ---------------------------------------------------------------------------
+
+/// Callback type for live handler log broadcast (Studio uses this for the Logs tab).
+pub type HandlerLogCallback = Arc<dyn Fn(HandlerLogLine) + Send + Sync>;
+
+/// Shared tee sink — one per pool run, cloned into every worker.
+///
+/// Writing is serialised through the Mutex so multiple workers share a single
+/// `handler_log.log` file without interleaving partial lines.
+#[derive(Clone)]
+pub struct HandlerLogSink {
+    /// File handle for the per-attempt `handler_log.log`.
+    pub file: Arc<tokio::sync::Mutex<tokio::fs::File>>,
+    /// Optional live-broadcast callback (Studio's SessionRegistry subscribes here).
+    pub callback: Option<HandlerLogCallback>,
+    /// When `true`, valid outcome JSON lines on stdout are ALSO written to the
+    /// log (for protocol debugging). Default is `false`.
+    pub capture_raw_stdout: bool,
+}
+
+impl HandlerLogSink {
+    /// Write `entry` to the log file and invoke the callback if present.
+    ///
+    /// The eprintln for CLI back-compat (stderr) is the caller's responsibility
+    /// so it can control the exact prefix format (e.g. `[handler#N]`).
+    pub async fn write(&self, entry: &HandlerLogLine) {
+        let formatted = format_line(entry);
+        {
+            let mut f = self.file.lock().await;
+            // Best-effort: ignore write errors so a full disk doesn't kill the run.
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut *f, formatted.as_bytes()).await;
+        }
+        if let Some(cb) = &self.callback {
+            cb(entry.clone());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Worker
+// ---------------------------------------------------------------------------
 
 /// Wraps one handler subprocess speaking JSON-Lines on stdio.
 pub struct Worker {
@@ -17,6 +64,8 @@ pub struct Worker {
     stdin: ChildStdin,
     stdout: BufReader<tokio::process::ChildStdout>,
     pub handler_version: String,
+    /// Optional log sink — set by `pool_streaming` after spawn.
+    pub log_sink: Option<HandlerLogSink>,
 }
 
 impl Worker {
@@ -57,6 +106,7 @@ impl Worker {
             stdin,
             stdout,
             handler_version: String::new(),
+            log_sink: None,
         };
 
         // send init
@@ -111,7 +161,8 @@ impl Worker {
                     )))
                 }
                 Err(_) => {
-                    // Non-protocol line: treat as log, keep waiting for ready.
+                    // Non-protocol line during startup: treat as log, keep waiting for ready.
+                    // No log_sink yet (it's set after spawn), so just eprintln for CLI back-compat.
                     eprintln!("[handler#{}] {}", id, trimmed);
                 }
             }
@@ -214,11 +265,16 @@ impl Worker {
     /// Read one inbound protocol message. Returns None if stdout closed.
     ///
     /// Non-protocol lines on stdout (e.g., a `print("debug")` from the handler)
-    /// are forwarded to App stderr with `[handler#N]` prefix and skipped — this
-    /// way handler authors can use the most natural log mechanism in their
-    /// language without breaking the wire protocol.
+    /// are tee'd to the `HandlerLogSink` (log file + callback) and forwarded to
+    /// App stderr with `[handler#N]` prefix — this way handler authors can use
+    /// the most natural log mechanism in their language without breaking the wire
+    /// protocol.
+    ///
+    /// When `log_sink.capture_raw_stdout` is `true`, valid protocol lines are
+    /// ALSO written to the log (for protocol debugging). Default is `false`.
     pub async fn recv(&mut self) -> Result<Option<Inbound>, CoreError> {
         let t0 = Instant::now();
+        let wid = self.id as usize;
         loop {
             let mut line = String::new();
             let n = self
@@ -237,10 +293,34 @@ impl Worker {
                 Ok(msg) => {
                     let elapsed_ms = t0.elapsed().as_millis();
                     debug!(worker = self.id, elapsed_ms, bytes = trimmed.len(), "recv");
+                    // If capture_raw_stdout is enabled, also write valid protocol
+                    // lines to the log (for debugging purposes).
+                    if let Some(sink) = &self.log_sink {
+                        if sink.capture_raw_stdout {
+                            let entry = HandlerLogLine {
+                                timestamp: Utc::now(),
+                                worker_id: wid,
+                                stream: HandlerStream::Stdout,
+                                line: trimmed.to_string(),
+                            };
+                            sink.write(&entry).await;
+                        }
+                    }
                     return Ok(Some(msg));
                 }
                 Err(_) => {
-                    // Non-protocol line: treat as log line, keep reading.
+                    // Non-protocol line on stdout: tee to log file + callback, keep reading.
+                    if let Some(sink) = &self.log_sink {
+                        let entry = HandlerLogLine {
+                            timestamp: Utc::now(),
+                            worker_id: wid,
+                            stream: HandlerStream::Stdout,
+                            line: trimmed.to_string(),
+                        };
+                        sink.write(&entry).await;
+                    }
+                    // CLI back-compat: non-protocol stdout lines go to stderr
+                    // (same as before, avoids polluting outcomes pipeline output).
                     eprintln!("[handler#{}] {}", self.id, trimmed);
                 }
             }

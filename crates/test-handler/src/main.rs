@@ -29,6 +29,10 @@
 //!                        sleeping forever. Used to test cancel-during-recv synthesis.
 //!   hang-on-first-batch - reads the first batch envelope but never writes a reply.
 //!                        Used to test cancel-during-recv synthesis in batch mode.
+//!   log-noisy           - emits stderr lines ("log: processing row N") and
+//!                         non-JSON stdout noise ("debug: starting") for each
+//!                         row, then echoes normally. Used by handler_log
+//!                         integration tests to verify tee behavior.
 
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -72,6 +76,10 @@ fn main() {
         writeln!(out, "this is plain text, not JSON").unwrap();
         out.flush().unwrap();
     }
+    // log-noisy: emit a startup stderr line during init.
+    if behavior == "log-noisy" {
+        eprintln!("log-noisy: handler starting");
+    }
 
     writeln!(out, r#"{{"type":"ready","handler_version":"0.0.0"}}"#).unwrap();
     out.flush().unwrap();
@@ -84,6 +92,18 @@ fn main() {
                 let seq = v["seq"].as_u64().unwrap();
                 let data = v["data"].clone();
 
+                if behavior == "log-noisy" {
+                    // Emit a stderr log line and a non-JSON stdout noise line
+                    // for each row, then echo normally.
+                    eprintln!("log: processing row {}", seq);
+                    writeln!(out, "debug: about to process seq {}", seq).unwrap();
+                    out.flush().unwrap();
+                    let resp = json!({"type":"result","seq":seq,"data":{"echoed":data}});
+                    writeln!(out, "{}", resp).unwrap();
+                    out.flush().unwrap();
+                    processed += 1;
+                    continue;
+                }
                 if behavior == "hang-on-first" {
                     // Read the row but never reply — simulates a handler hung
                     // mid-row. Used to test cancel-during-recv crash synthesis.

@@ -220,6 +220,8 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
         stall_timeout: None,
         stall_poll_interval: None,
         on_row_done,
+        on_handler_log: None,
+        capture_raw_stdout: false,
     };
 
     let pool_report = run_pool_streaming(
