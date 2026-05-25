@@ -1380,3 +1380,45 @@ fn exec_summary_carries_last_handler_dir() {
     let s = summaries.iter().find(|s| s.id == id).unwrap();
     assert_eq!(s.last_handler_dir, None);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 6 T4: start_run persists exec.last_handler_dir
+// ---------------------------------------------------------------------------
+
+/// Verifies that `start_run` writes the canonicalized handler dir to sqlite
+/// (via `store.set_last_handler_dir`) under the same lock window that creates
+/// the attempt. The persistence must happen synchronously before the function
+/// returns, so `list()` reflects it immediately after `start_run` succeeds.
+///
+/// The pipeline task will fail asynchronously (./nope doesn't exist), but
+/// that's irrelevant — we only care about the synchronous sqlite write.
+#[tokio::test]
+async fn start_run_persists_last_handler_dir() {
+    use rowforge_studio_core::{ExecutionId, OpenOpts, StudioCore};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let exec_id = create_execution_with_csv(&tmp);
+    let handler = minimal_handler_dir(&tmp);
+
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+
+    // start_run will succeed at the sqlite write level (creates the attempt,
+    // persists last_handler_dir, returns RunStartedHandle). The background
+    // pipeline task will then fail because /nonexistent-binary doesn't exist,
+    // but that's fine — we're testing the synchronous write path.
+    let _started = core
+        .start_run(&ExecutionId::new(exec_id.clone()), RunOpts::new(handler.clone()))
+        .expect("start_run should succeed; pipeline may fail asynchronously");
+
+    let summaries = core.list(Default::default()).unwrap();
+    let s = summaries
+        .iter()
+        .find(|s| s.id == ExecutionId::new(exec_id.clone()))
+        .unwrap();
+    let canon = handler.canonicalize().unwrap();
+    assert_eq!(
+        s.last_handler_dir,
+        Some(canon),
+        "last_handler_dir should be the canonicalized handler dir",
+    );
+}

@@ -243,6 +243,19 @@ impl StudioCore {
                 })
                 .map_err(|e| UiError::Internal(e.to_string()))?;
 
+            // Plan 6 T4: persist the handler dir so the RunButton can default
+            // to it on next visit (replaces the Plan 5 localStorage hack — T7
+            // drops the LS_HANDLER_DIR plumbing). Non-fatal: a sqlite write
+            // failure here shouldn't block the actual run from starting; we
+            // log via tracing and continue.
+            if let Err(e) = store.set_last_handler_dir(execution_id.as_str(), &handler_canon) {
+                tracing::warn!(
+                    execution_id = %execution_id,
+                    error = %e,
+                    "failed to persist last_handler_dir; continuing",
+                );
+            }
+
             (attempt.id, attempt.dir, input_snapshot)
         };
 
