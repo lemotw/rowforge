@@ -182,6 +182,16 @@ pub enum UiError {
 
     #[error("invalid handler name: {name}")]
     InvalidHandlerName { name: String },
+
+    // Plan 8 — build variants (see Part 8 §8.5.4 for details)
+    #[error("build failed for handler '{name}' (exit {exit_code})")]
+    BuildFailed { name: String, exit_code: i32 },
+
+    #[error("build tool '{tool}' for handler '{name}' not found in PATH")]
+    ToolchainMissing { name: String, tool: String },
+
+    #[error("handler '{name}' has no entry.build in its manifest")]
+    NoBuildCommand { name: String },
 }
 ```
 
@@ -194,6 +204,14 @@ Plan 7 variant details:
 | `HandlerExists { name }` | `handler_exists` | `{ name }` | `handler_scaffold` (target dir already exists), `handler_rename` (new name already taken) | Inline banner in the relevant dialog; submit stays disabled until name changes |
 | `InvalidHandlerName { name }` | `invalid_handler_name` | `{ name }` | `handler_scaffold`, `handler_rename` when name fails regex `/^[a-z0-9][a-z0-9-]*$/` | Inline field error; validated client-side during typing, server is authoritative |
 | `InvalidArg(String)` | `invalid_arg` | `{ message }` | `handler_scaffold` when `primary_field` fails identifier regex `^[a-zA-Z_][a-zA-Z0-9_]*$` | Inline field error on the primary_field input; prevents YAML/Go injection in scaffolded files |
+
+Plan 8 variant details:
+
+| Variant | Serialized `kind` | Payload | Emitted by | UI rendering |
+|---|---|---|---|---|
+| `BuildFailed { name, exit_code }` | `build_failed` | `{ name, exit_code }` | `handler_build` when build exits non-zero | Sonner toast: "Build failed for 'NAME' (exit N). See the Last build section for details." |
+| `ToolchainMissing { name, tool }` | `toolchain_missing` | `{ name, tool }` | `handler_build` when `entry.build[0]` not in `PATH` | Toast: "Build tool 'TOOL' not found in PATH. Install it or update entry.build in your manifest." |
+| `NoBuildCommand { name }` | `no_build_command` | `{ name }` | `handler_build` when manifest has no `entry.build` | Toast: "Handler 'NAME' has no entry.build command in rowforge.yaml." |
 
 Composition rules:
 - No blanket `From<anyhow::Error> for UiError`.
@@ -269,7 +287,30 @@ handler_reveal(name)                  -> ()
 handler_scaffold(args)                -> String          // returns new handler name
 handler_delete(name)                  -> ()
 handler_rename(old, new)              -> ()
+
+// Plan 8 — build command (see Part 8 §8.5.3 for details)
+handler_build(name: String)           -> BuildOutcome    // async; emits handlers:list
 ```
+
+`handler_build` note: the command is declared `async` but currently
+blocks the Tauri async runtime for the duration of the build (no
+`spawn_blocking`). Refactor flagged for a later plan; typical Go/Rust
+builds complete in < 30 s.
+
+`BuildOutcome` type (lives in `rowforge-core::build`):
+
+```rust
+struct BuildOutcome {
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    exit_code: i32,
+    command: Vec<String>,   // copy of entry.build at run time
+    stdout: String,
+    stderr: String,
+}
+```
+
+See Part 8 §8.3 for full type context.
 
 Notes on the run lifecycle commands (Plan 5):
 

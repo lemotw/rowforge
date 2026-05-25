@@ -35,35 +35,34 @@ In v1, Studio covers two user goals (Part 1 §1.1):
 
 ## 8.2 Manifest extension
 
-`rowforge-core::Manifest` gains two fields. CLI and Studio share the
-type. The change is co-released with v1.
+`rowforge-core::Manifest::entry` carries two fields that drive execution
+and build. CLI and Studio share the type. The shape was established in
+prior plans; Plan 8 makes `entry.build` actually execute.
 
 ```rust
-struct Manifest {
-    // ... existing fields ...
-    build: Option<String>,    // e.g. "go build -o bin/handler ./..."
-    run:   String,            // e.g. "bin/handler"   (relative to handler dir)
+struct Entry {
+    cmd:   Vec<String>,              // e.g. ["./handler"]  or  ["python3", "handler.py"]
+    build: Option<Vec<String>>,      // e.g. ["go", "build", "-o", "handler", "./..."]
+    // ...other entry fields...
 }
 ```
 
 Semantics:
 
-- `build` is optional. When present, both CLI and Studio invoke it via
-  the OS shell with `cwd = <handler_dir>` before spawning `run`.
-- `run` is required. Same `cwd` semantics. Studio resolves and spawns
-  this for both smoke-test and the CLI-shared exec-run path.
-- Both commands are split via shell-words. `PATH` lookup applies to the
-  first token. Triggers `UiError::ToolchainMissing` if the first token
+- `entry.build` is optional. When present, CLI and Studio run it via
+  `std::process::Command` with `cwd = <handler_dir>` before spawning
+  `entry.cmd`.
+- `entry.cmd` is required. Same `cwd` semantics.
+- `PATH` lookup applies to the first token of each field. Triggers
+  `UiError::ToolchainMissing` if the first token of `entry.build`
   resolves to nothing.
-- Adding `build` is forward-compatible (`Option`, default `None`; Part 4
-  §4.6 tolerant reader). Adding `run` as required is a breaking
-  manifest change — the migration writes `run` for every CLI fixture
-  in the same v1 release.
+- No shell interpolation — tokens are passed directly to `exec`; no
+  quoting or glob expansion.
 
-Validation path: `validate_manifest` (Part 5 §5.4) is extended to
-verify both fields parse and the first token of each resolves in
-`PATH`. PATH resolution failure becomes a `ManifestWarning`, not an
-error (the command may still run on machines with a different `PATH`).
+Validation path: `validate_manifest` (in `rowforge-studio-core`, per
+Plan 7 detail) is extended with two new `ManifestWarning` variants
+(§8.4.2). PATH resolution failure is a warning, not an error, because
+the command may run on machines with a different `PATH`.
 
 ## 8.3 Model
 
@@ -88,7 +87,7 @@ struct HandlerDetail {
     manifest_errors: Vec<ManifestError>,
     manifest_warnings: Vec<ManifestWarning>,
     source_files: Vec<SourceFileSummary>,  // top-level only
-    last_build: Option<BuildRecord>,        // in-memory; see §8.4.7
+    last_build: Option<BuildOutcome>,       // in-memory; see §8.4.7
     has_fixtures_dir: bool,                 // anchor for v1.1 (§8.9 Q1)
 }
 
@@ -98,12 +97,14 @@ struct SourceFileSummary {
     is_directory: bool,
 }
 
-struct BuildRecord {
+/// Plan 8: lives in rowforge-core::build; re-exported by studio-core.
+struct BuildOutcome {
     started_at: DateTime<Utc>,
     finished_at: DateTime<Utc>,
     exit_code: i32,
-    command: String,                       // copy of manifest.build at run
-    stderr_tail: String,                   // ≤ 64 KiB
+    command: Vec<String>,                  // copy of entry.build at run time
+    stdout: String,                        // full stdout captured
+    stderr: String,                        // full stderr captured
 }
 
 struct SmokeTestArgs {
@@ -145,7 +146,7 @@ Cost classes (Part 2 §2.1):
 - `HandlerSummary` list: **warm** (dir scan + per-manifest read; cached
   with mtime probe identical to `ExecSummary`).
 - `HandlerDetail`: **warm**.
-- `BuildRecord`, `SmokeTestReport`: **hot** in-memory; not persisted
+- `BuildOutcome`, `SmokeTestReport`: **hot** in-memory; not persisted
   across Studio restarts (§8.9 Q3/Q4).
 
 ## 8.4 Runtime
@@ -171,19 +172,46 @@ the OS file manager handle it.
 ```
 Pending → Building → BuildSucceeded
                   ↘ BuildFailed
-                  ↘ BuildCancelled
 ```
 
-- `Building`: subprocess running; stderr streams as
-  `BuildEvent::StderrLine` on `handler:build:<name>` (§8.5.2).
-- Terminal states write into in-memory `BuildRecord`, kept per handler
-  until Studio restart.
-- Cancel: 3-second soft threshold (vs Part 3 §3.5's 10 s for exec-run;
-  build is cheap and repeatable). Force-kill below that threshold is
-  available without the typed-token friction Part 7 §7.6.3 requires
-  for exec-run hard cancel.
+Build is synchronous from the caller's perspective. The CLI runs on
+its main thread; Studio's Tauri command is `async` but currently does
+not use `spawn_blocking` — the runtime is blocked for the duration of
+a build. (Refactor flagged for later; typical builds complete in
+seconds.)
+
+No mid-flight cancel in v1. Full `stdout` + `stderr` captured and
+returned in `BuildOutcome`.
+
+`needs_build` (caller-side staleness check, used by CLI):
+- Returns `false` when `entry.build` is `None`.
+- Returns `false` when `entry.cmd[0]` is an absolute path OR a
+  PATH-resolvable bare name (interpreter case: no binary concept).
+- Otherwise treats `entry.cmd[0]` as a relative binary in `handler_dir`.
+  Returns `true` when the binary is missing OR when the max source
+  mtime (`.go .rs .py .js .ts .mjs .java .c .cpp .h .hpp`, top-level
+  only) exceeds binary mtime.
+
+CLI `exec run` honors `needs_build` before spawning workers; build
+failure exits the CLI with code 2. CLI `handler build` subcommand exits
+with the count of failures (capped at 125). Studio always forces (no
+staleness check) on Build button click.
+
+Terminal states write into an in-memory `BuildOutcome` cache
+(`StudioCore.build_cache: Mutex<HashMap<String, BuildOutcome>>`),
+kept per handler until Studio restart.
+
+**Validator warnings** (`validate_manifest` in `rowforge-studio-core`):
+- `BuildToolNotInPath { tool }` — first token of `entry.build` not
+  found in `PATH`.
+- `CmdTargetMissing { path }` — first token of `entry.cmd` is a
+  relative path that doesn't exist on disk. Suppressed when
+  `entry.build` is `Some` (the build step is expected to produce it).
 
 ### 8.4.3 Smoke-test lifecycle
+
+> **Deferred from Plan 8** — see design doc §10. Smoke test will
+> land in a later plan.
 
 ```
 Pending → (Building →) Handshaking → Running → Done
@@ -220,6 +248,9 @@ Cancel: 3 s soft, then hard kill.
 
 ### 8.4.5 Interlock with exec-runs
 
+> **Deferred from Plan 8** — see design doc §10. Smoke test and
+> exec-run interlock will land in a later plan.
+
 While an exec run holds a handler in flight (Part 3), Studio refuses
 build / smoke on the same handler name to avoid rewriting the binary
 mid-run. Symmetrically, the Run launcher (Part 7 §7.3) refuses to
@@ -250,7 +281,7 @@ On Studio quit (Part 3 §3.6):
 
 1. Active build / smoke subprocesses soft-cancelled with 1-second
    deadline, then hard-killed.
-2. In-memory `BuildRecord` / `SmokeTestReport` are discarded. UI must
+2. In-memory `BuildOutcome` / `SmokeTestReport` are discarded. UI must
    not show a stale "last build" after restart.
 
 ## 8.5 API
@@ -284,7 +315,10 @@ impl StudioCore {
     pub fn handler_open_editor(&self, name: &str) -> Result<(), UiError>;
     pub fn handler_reveal(&self, name: &str) -> Result<(), UiError>;
 
-    pub fn handler_build(&self, name: &str) -> Result<BuildHandle, UiError>;
+    /// Plan 8: synchronous; caches outcome in build_cache for handler_show.
+    pub fn handler_build(&self, name: &str) -> Result<BuildOutcome, UiError>;
+
+    // Deferred to a later plan:
     pub fn handler_smoke_test(&self, args: SmokeTestArgs)
         -> Result<SmokeTestHandle, UiError>;
     pub fn handler_cancel_build(&self, h: &BuildHandle, mode: CancelMode)
@@ -302,9 +336,14 @@ impl StudioCore {
 }
 ```
 
+`StudioCore.build_cache: Mutex<HashMap<String, BuildOutcome>>` — in-memory
+per-session store; `handler_show` injects the cached outcome into
+`HandlerDetail.last_build`. Lost on Studio restart (§8.4.7).
+
 `BuildHandle` and `SmokeTestHandle` are opaque IDs analogous to
 `RunHandle` (Part 5 §5.2). Two separate handle types so the type
-system rules out crossed cancels.
+system rules out crossed cancels. (Used only by the deferred smoke-test
+path.)
 
 ### 8.5.2 Events
 
@@ -349,30 +388,45 @@ channel.
 
 ### 8.5.3 Tauri commands
 
+> **Plan 7 shipped:** `handler_list`, `handler_show`, `handler_open_editor`,
+> `handler_reveal`, `handler_scaffold`, `handler_delete`, `handler_rename`.
+>
+> **Plan 8 adds:** `handler_build`.
+
 ```
 handler_list()                              -> Vec<HandlerSummary>
 handler_show(name)                          -> HandlerDetail
 handler_open_editor(name)                   -> ()
 handler_reveal(name)                        -> ()
-handler_build(name)                         -> BuildHandle
-handler_smoke_test(args)                    -> SmokeTestHandle
-handler_cancel_build(handle, mode)          -> ()
-handler_cancel_smoke(handle, mode)          -> ()
+handler_build(name: String)                 -> BuildOutcome     // Plan 8
+handler_smoke_test(args)                    -> SmokeTestHandle  // deferred
+handler_cancel_build(handle, mode)          -> ()               // deferred
+handler_cancel_smoke(handle, mode)          -> ()               // deferred
 handler_scaffold(args)                      -> String
 handler_delete(name)                        -> ()
 handler_rename(old, new)                    -> ()
 ```
 
+`handler_build` side effect: emits `handlers:list` event after build
+(success or failure) so `HandlerSummary.last_modified` picks up the
+new binary mtime.
+
+`handler_build` is declared `async` in Tauri but currently blocks the
+async runtime during the build (no `spawn_blocking`). Known limitation;
+typical builds complete in seconds. Refactor flagged for a later plan.
+
 ### 8.5.4 New `UiError` variants
 
 Extending Part 5 §5.3:
+
+**Plan 7 variants:**
 
 ```rust
 EditorNotFound,
 HandlerBusy { name: String, reason: HandlerBusyReason },
 HandlerScaffoldConflict { name: String },
-ToolchainMissing { cmd: String, expected_for: String },  // e.g. cmd="go" for "build"
-SmokeRowsTooMany { limit: u32 },                          // > 100 in v1
+ToolchainMissing { name: String, tool: String },  // Plan 8 reworked payload
+SmokeRowsTooMany { limit: u32 },                   // > 100 in v1
 
 enum HandlerBusyReason {
     BuildInFlight,
@@ -381,6 +435,27 @@ enum HandlerBusyReason {
     WorkspaceLimit,
 }
 ```
+
+**Plan 8 variants:**
+
+```rust
+/// Build subprocess exited non-zero.
+BuildFailed { name: String, exit_code: i32 },
+
+/// First token of entry.build not resolvable via `which`.
+ToolchainMissing { name: String, tool: String },
+
+/// Build attempted on a handler whose manifest has no entry.build.
+NoBuildCommand { name: String },
+```
+
+Plan 8 variant details:
+
+| Variant | Serialized `kind` | Payload | Emitted by | UI copy |
+|---|---|---|---|---|
+| `BuildFailed { name, exit_code }` | `build_failed` | `{ name, exit_code }` | `handler_build` when build exits non-zero | "Build failed for 'NAME' (exit N). See the Last build section for details." |
+| `ToolchainMissing { name, tool }` | `toolchain_missing` | `{ name, tool }` | `handler_build` when `entry.build[0]` is missing from `PATH` | "Build tool 'TOOL' not found in PATH. Install it or update entry.build in your manifest." |
+| `NoBuildCommand { name }` | `no_build_command` | `{ name }` | `handler_build` when manifest has no `entry.build` | "Handler 'NAME' has no entry.build command in rowforge.yaml." |
 
 All carry `#[non_exhaustive]` per Part 5 §5.7.
 
@@ -543,7 +618,7 @@ Extending Part 7 §7.10:
    Interlock §8.4.5.
 4. **No smoke-test event coalescing.** Every outcome must render
    (§8.5.2).
-5. **No persistence of `BuildRecord` / `SmokeTestReport` across
+5. **No persistence of `BuildOutcome` / `SmokeTestReport` across
    restarts.** v1 in-memory; UI must not display stale "last build"
    after a Studio relaunch.
 
@@ -557,7 +632,7 @@ Extending Part 7 §7.10:
    enough?
 3. **Smoke-test history on disk.** Persist last N reports per handler
    so a restart does not erase debugging context.
-4. **`BuildRecord` on disk.** Same question for builds. Tied to Q3.
+4. **`BuildOutcome` on disk.** Same question for builds. Tied to Q3.
 5. **`rowforge pack` from Studio.** Currently CLI-only.
 6. **Manifest write-back / structured editor.** Original
    `ManifestSource::Draft` anchor (Part 5 §5.4) was for this. Needs a
