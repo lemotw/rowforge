@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { BootGate } from "./pages/BootGate";
 import { ExecDetailPage } from "./pages/ExecDetail";
 import { AttemptDetailPage } from "./pages/AttemptDetail";
+import { HandlerDetailPage } from "./pages/HandlerDetailPage";
 import { HandlersPage } from "./pages/HandlersPage";
 import { NewExecutionWizardPage } from "./pages/NewExecutionWizard";
 import { SettingsPage } from "./pages/Settings";
@@ -16,6 +17,7 @@ export default function App() {
         <Route path="/exec/:id" element={<ExecDetailPage />} />
         <Route path="/exec/:id/attempt/:aid" element={<AttemptDetailPage />} />
         <Route path="/handlers" element={<HandlersPage />} />
+        <Route path="/handlers/:name" element={<HandlerDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<BootGate />} />
       </Routes>
