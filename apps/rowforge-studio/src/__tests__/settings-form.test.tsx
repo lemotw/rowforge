@@ -36,7 +36,7 @@ beforeEach(() => { vi.clearAllMocks(); });
 describe("SettingsForm", () => {
   it("loads + renders the four sections", async () => {
     render(wrap(<SettingsForm />));
-    expect(await screen.findByText(/workspace/i)).toBeInTheDocument();
+    expect(await screen.findByText(/^workspace$/i)).toBeInTheDocument();
     expect(await screen.findByDisplayValue("2")).toBeInTheDocument();   // default_workers
     expect(await screen.findByDisplayValue("3")).toBeInTheDocument();   // max_concurrent_runs
     expect(screen.getByText(/telemetry/i)).toBeInTheDocument();
