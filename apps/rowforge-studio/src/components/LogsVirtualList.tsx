@@ -38,9 +38,10 @@ export function LogsVirtualList({ lines, autoScroll }: Props) {
                 transform: `translateY(${item.start}px)`,
               }}
               className="flex gap-2 px-2 py-0.5 hover:bg-zinc-800/40 cursor-text"
+              title={line.timestamp}
             >
-              <span className="text-muted-foreground shrink-0 w-20">
-                {new Date(line.timestamp).toLocaleTimeString()}
+              <span className="text-muted-foreground shrink-0 w-24 tabular-nums overflow-hidden whitespace-nowrap">
+                {formatTime(line.timestamp)}
               </span>
               <WorkerBadge id={line.worker_id} />
               <StreamChip stream={line.stream} />
@@ -51,6 +52,13 @@ export function LogsVirtualList({ lines, autoScroll }: Props) {
       </div>
     </div>
   );
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
 }
 
 function WorkerBadge({ id }: { id: number }) {
