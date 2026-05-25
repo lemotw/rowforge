@@ -47,6 +47,9 @@ pub use workspace::{OpenOpts, Workspace};
 // Re-export export types so the Tauri shell can import them from this crate
 // without needing a direct rowforge-core dependency.
 pub use rowforge_core::export::{ExportFormat, ExportOpts, ExportReport, ExportWarning};
+// Re-export build types (Plan 8 T7) so the Tauri shell and ipc_contract tests
+// can reference BuildOutcome without a direct rowforge-core dependency.
+pub use rowforge_core::build::BuildOutcome;
 
 // StartExecArgs is defined below (inline in lib.rs) and exported here.
 // Re-export is done at the bottom of the `pub use` section for discoverability.

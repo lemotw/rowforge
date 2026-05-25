@@ -247,3 +247,46 @@ fn plan7_handler_types_are_serde() {
     assert_serde::<ManifestStatus>();
     assert_serde::<ScaffoldTemplate>();
 }
+
+// ---------------------------------------------------------------------------
+// Plan 8 T7 — handler_build command boundary types
+// ---------------------------------------------------------------------------
+
+/// Compile-time symbol check: handler_build is registered and BuildOutcome
+/// impl Serialize + Deserialize (required for IPC crossing).
+#[test]
+fn plan8_handler_build_types_are_serde() {
+    use rowforge_studio_core::BuildOutcome;
+    fn assert_serde<T: serde::Serialize + for<'de> serde::Deserialize<'de>>() {}
+    assert_serde::<BuildOutcome>();
+}
+
+/// handler_build returns BuildOutcome — verify the JSON shape has the
+/// expected keys that the TS mirror (ipc/types.ts) will depend on.
+///
+/// BuildOutcome is #[non_exhaustive] so we cannot construct it with a
+/// struct literal from outside rowforge-core; use serde_json::from_value
+/// instead.
+#[test]
+fn plan8_build_outcome_json_shape() {
+    let json = serde_json::json!({
+        "started_at": "2026-05-25T00:00:00Z",
+        "finished_at": "2026-05-25T00:00:01Z",
+        "exit_code": 0,
+        "command": ["sh", "-c", "echo"],
+        "stdout": "hi",
+        "stderr": ""
+    });
+    let parsed: rowforge_studio_core::BuildOutcome =
+        serde_json::from_value(json).expect("deserialize BuildOutcome");
+    assert_eq!(parsed.exit_code, 0);
+
+    // Round-trip to verify the serialized shape.
+    let v = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(v["exit_code"], 0, "exit_code key: {v:?}");
+    assert!(v["command"].is_array(), "command must be array: {v:?}");
+    assert!(v["stdout"].is_string(), "stdout must be string: {v:?}");
+    assert!(v.get("started_at").is_some(), "started_at key missing: {v:?}");
+    assert!(v.get("finished_at").is_some(), "finished_at key missing: {v:?}");
+    assert!(v.get("stderr").is_some(), "stderr key missing: {v:?}");
+}

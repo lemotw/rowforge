@@ -7,11 +7,11 @@
 use std::path::PathBuf;
 
 use rowforge_studio_core::{
-    AttemptDetail, AttemptId, CancelMode, ExecDetail, ExecRollup, ExecSummary, ExecutionId,
-    ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, HandlerDetail, HandlerSummary,
-    ListFilter, ManifestReport, ManifestSource, OpenOpts, ProgressSnapshot, RowHistory,
-    RunHandle, RunOpts, RunStartedHandle, RunStatus, ScaffoldArgs, Settings, StartExecArgs,
-    StudioCore, UiError, Workspace,
+    AttemptDetail, AttemptId, BuildOutcome, CancelMode, ExecDetail, ExecRollup, ExecSummary,
+    ExecutionId, ExportOpts, ExportReport, FailedPageQuery, FailedRowPage, HandlerDetail,
+    HandlerSummary, ListFilter, ManifestReport, ManifestSource, OpenOpts, ProgressSnapshot,
+    RowHistory, RunHandle, RunOpts, RunStartedHandle, RunStatus, ScaffoldArgs, Settings,
+    StartExecArgs, StudioCore, UiError, Workspace,
 };
 use tauri::Emitter;
 use tauri::State;
@@ -424,5 +424,37 @@ pub fn handler_rename(
     }
     let _ = app.emit("handlers:list", ());
     Ok(())
+}
+
+// ===== Plan 8 handler build =====
+
+#[tauri::command]
+pub async fn handler_build(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<BuildOutcome, UiError> {
+    // handler_build shells out to an external build tool (go build, cargo, …)
+    // which can take seconds. We make the command async so Tauri dispatches it
+    // on its worker-thread pool and the main IPC reactor stays free.
+    //
+    // AppState.core is Mutex<Option<StudioCore>> (not Arc-wrapped), so we
+    // cannot move it into spawn_blocking. Instead we hold the mutex only for
+    // the synchronous call — no .await inside, so there is no risk of holding
+    // a guard across an await point.
+    let result = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_build(&name)
+    };
+
+    // Emit list-refresh hint so HandlerSummary.last_modified (which folds
+    // over top-level entries, including the new binary) gets picked up by the
+    // UI after a successful (or failed-but-cached) build.
+    let _ = app.emit("handlers:list", ());
+
+    result
 }
 
