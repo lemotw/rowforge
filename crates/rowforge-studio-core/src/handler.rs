@@ -317,6 +317,58 @@ pub fn reveal_path(workspace_root: &Path, name: &str) -> Result<PathBuf, crate::
     Ok(handler_dir)
 }
 
+// ============================================================================
+// Scaffold templates (Plan 7 T5)
+// ============================================================================
+//
+// 3 templates embedded at compile time via include_str!. Variables
+// {{name}} and {{primary_field}} are replaced by simple string substitute
+// — no Tera/Handlebars dep. T6 (handler_scaffold) consumes these.
+
+const TPL_GO_STDIO_YAML: &str = include_str!("handler_templates/go_stdio/rowforge.yaml");
+const TPL_GO_STDIO_GO: &str = include_str!("handler_templates/go_stdio/handler.go");
+const TPL_GO_STDIO_MOD: &str = include_str!("handler_templates/go_stdio/go.mod");
+
+const TPL_GO_BATCH_YAML: &str = include_str!("handler_templates/go_batch/rowforge.yaml");
+const TPL_GO_BATCH_GO: &str = include_str!("handler_templates/go_batch/handler.go");
+const TPL_GO_BATCH_MOD: &str = include_str!("handler_templates/go_batch/go.mod");
+
+const TPL_EMPTY_YAML: &str = include_str!("handler_templates/empty/rowforge.yaml");
+const TPL_EMPTY_GO: &str = include_str!("handler_templates/empty/handler.go");
+
+/// Maps a template kind to its (filename, contents) tuples. Variables
+/// are NOT yet replaced — call `render` per file.
+pub(crate) fn template_files(template: ScaffoldTemplate) -> Vec<(&'static str, &'static str)> {
+    match template {
+        ScaffoldTemplate::GoStdio => vec![
+            ("rowforge.yaml", TPL_GO_STDIO_YAML),
+            ("handler.go", TPL_GO_STDIO_GO),
+            ("go.mod", TPL_GO_STDIO_MOD),
+        ],
+        ScaffoldTemplate::GoBatch => vec![
+            ("rowforge.yaml", TPL_GO_BATCH_YAML),
+            ("handler.go", TPL_GO_BATCH_GO),
+            ("go.mod", TPL_GO_BATCH_MOD),
+        ],
+        ScaffoldTemplate::Empty => vec![
+            ("rowforge.yaml", TPL_EMPTY_YAML),
+            ("handler.go", TPL_EMPTY_GO),
+        ],
+    }
+}
+
+/// Simple two-variable substitution. No quoting / escaping — the
+/// templates are designed so {{name}} and {{primary_field}} land in
+/// positions where bare YAML / Go literals are safe (validate_name
+/// already restricts to [a-z0-9-]+; primary_field will be similarly
+/// constrained at the scaffold UI level, though T6's contract is to
+/// accept it verbatim).
+pub(crate) fn render(template: &str, name: &str, primary_field: &str) -> String {
+    template
+        .replace("{{name}}", name)
+        .replace("{{primary_field}}", primary_field)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +446,32 @@ mod tests {
         // shell_words::split returns Err on unclosed quotes.
         let r = resolve_editor(Some("code -w 'unclosed"), None, None, &[]);
         assert!(matches!(r, Err(crate::UiError::InvalidArg(_))));
+    }
+
+    #[test]
+    fn render_replaces_variables() {
+        let out = render("name: {{name}}\nfield: {{primary_field}}", "my-h", "email");
+        assert_eq!(out, "name: my-h\nfield: email");
+    }
+
+    #[test]
+    fn render_replaces_multiple_occurrences() {
+        let out = render("{{name}} once, {{name}} twice", "h", "");
+        assert_eq!(out, "h once, h twice");
+    }
+
+    #[test]
+    fn template_files_returns_expected_counts() {
+        assert_eq!(template_files(ScaffoldTemplate::GoStdio).len(), 3);
+        assert_eq!(template_files(ScaffoldTemplate::GoBatch).len(), 3);
+        assert_eq!(template_files(ScaffoldTemplate::Empty).len(), 2);
+    }
+
+    #[test]
+    fn template_files_for_go_stdio_includes_yaml_with_name_placeholder() {
+        let files = template_files(ScaffoldTemplate::GoStdio);
+        let yaml = files.iter().find(|(n, _)| *n == "rowforge.yaml").unwrap().1;
+        assert!(yaml.contains("{{name}}"));
+        assert!(yaml.contains("{{primary_field}}"));
     }
 }
