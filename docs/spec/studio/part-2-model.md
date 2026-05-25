@@ -53,6 +53,16 @@ struct ExecSummary {
 - `last_attempt_counts` is NOT a rollup across attempts. The rollup is
   `ExecRollup` and is cold-computed because it requires scanning all
   attempts.
+- **Lazy rename semantics (Plan 7):** `handler_rename` performs only
+  `fs::rename`; the SQLite `executions` table is NOT updated. A
+  `last_handler_dir` snapshot taken at run time therefore continues to
+  reference the old directory name after a rename. This is intentional:
+  handlers are content-addressed via the snapshot captured when the run
+  started, and `last_handler_dir` is informational rather than load-bearing.
+  Practically: ExecHistory rows that reference a renamed handler still show
+  the old name in the history view; new runs through the handler will use the
+  new name. The same semantics apply to `handler_delete` — deleting a handler
+  does not purge past `last_handler_dir` references from `executions` rows.
 
 ### 2.2.3 `ExecDetail`
 ```rust
@@ -151,10 +161,23 @@ struct Settings {
     workspace_root: Option<PathBuf>,
     max_concurrent_runs: Option<u32>,    // default 3
     telemetry_opt_in: bool,              // default false; not collected in v1
+    preferred_editor: Option<String>,    // Plan 7: editor command override, e.g. "code", "cursor"
 }
 ```
 Type lives in `studio-core::settings`; load/save path resolution lives in
 the Tauri layer (uses Tauri's `app_data_dir`).
+
+`preferred_editor` is tier-1 of the four-tier editor resolver used by
+`handler_open_editor` (Part 8 §8.4.1): preferred → `$VISUAL` → `$EDITOR`
+→ probe `code`/`cursor`/`subl`/`zed`. Stored in `settings.json` alongside
+the other Settings fields; `schema_version` stays 1. Live-updated into
+`StudioCore` on `workspace_settings_save` — no workspace re-open required.
+
+> **Note — implementer correction (Plan 7):** §8.6.4 in Part 8 originally
+> described a `schema_version` bump from 1 to 2 for this field. Plan 7
+> landed `preferred_editor` without bumping the schema version (the tolerant
+> reader makes it a non-breaking addition). The authoritative statement is
+> this note; §8.6.4 preserves the original design prose for context.
 
 ## 2.3 What is deliberately not an entity
 

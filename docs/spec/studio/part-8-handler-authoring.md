@@ -246,6 +246,26 @@ On Studio quit (Part 3 §3.6):
 
 ## 8.5 API
 
+> **Plan 7 shipped.** All items in §8.5.1–§8.5.3 are landed. Landed file
+> paths:
+>
+> - `crates/rowforge-studio-core/src/handler.rs` — module home
+>   (`handler_list`, `handler_show`, `handler_open_editor`, `handler_reveal`,
+>   `handler_scaffold`, `handler_delete`, `handler_rename`, `resolve_editor`)
+> - `crates/rowforge-studio-core/src/handler_templates/` — embedded scaffold
+>   templates (GoStdio, GoBatch, Empty)
+> - `crates/rowforge-studio-core/src/error.rs` — `UiError` variants incl.
+>   Plan 7 additions
+> - `apps/rowforge-studio/src-tauri/src/commands.rs` — Tauri command shells
+>   for all 7 new commands
+> - `apps/rowforge-studio/src/ipc/types.ts` — TypeScript mirrors
+> - `apps/rowforge-studio/src/ipc/use-handlers.ts` — TanStack Query hooks
+> - `apps/rowforge-studio/src/pages/HandlersPage.tsx`
+> - `apps/rowforge-studio/src/pages/HandlerDetailPage.tsx`
+> - `apps/rowforge-studio/src/components/ScaffoldDialog.tsx`
+> - `apps/rowforge-studio/src/components/RenameHandlerDialog.tsx`
+> - `apps/rowforge-studio/src/components/DeleteHandlerDialog.tsx`
+
 ### 8.5.1 `StudioCore` additions
 
 ```rust
@@ -357,17 +377,21 @@ All carry `#[non_exhaustive]` per Part 5 §5.7.
 
 ## 8.6 UI (extends Part 7)
 
+> **Plan 7 shipped.** `/handlers` and `/handlers/:name` are active routes.
+> See Part 7 §7.3 for the IA update and §7.4 Flows H–J for scaffold/rename/
+> delete user flows.
+
 Sidebar / shell from Part 7 §7.3 is otherwise unchanged. The
 **Authoring** group is no longer disabled.
 
 ### 8.6.1 IA additions
 
-- Sidebar `AUTHORING / ● Handlers` becomes active.
-- Routes:
-  - `/handlers` — Handler list.
-  - `/handlers/:name` — Handler detail. Tabs: **Source** (file list),
+- Sidebar `AUTHORING / ● Handlers` becomes active (Plan 7: shipped).
+- Routes (Plan 7: all active):
+  - `/handlers` — Handler list (`HandlersPage.tsx`).
+  - `/handlers/:name` — Handler detail (`HandlerDetailPage.tsx`). Tabs: **Source** (file list),
     **Manifest** (validation report), **Smoke test**, **Build log**.
-  - `/handlers/new` — Scaffold wizard (modal-as-route).
+  - `/handlers/new` — Scaffold wizard (modal-as-route; `ScaffoldDialog.tsx`).
 - Run launcher (Part 7 §7.3): `HandlerSource` picker becomes a dropdown
   populated from `handler_list()`. "Browse external folder…" remains
   as a fallback. Internally still constructs `HandlerSource::Dir`
@@ -425,14 +449,16 @@ Extending Part 2 §2.2.9 and Part 5 §5.6:
 ```rust
 struct Settings {
     // ... existing
-    preferred_editor: Option<String>,              // e.g. "code", "cursor"
-    smoke_test_default_timeout_secs: Option<u32>,  // default 30
+    preferred_editor: Option<String>,              // e.g. "code", "cursor"  [Plan 7: shipped]
+    smoke_test_default_timeout_secs: Option<u32>,  // default 30             [deferred]
 }
 ```
 
-`schema_version` bumps from 1 to 2. Tolerant reader handles old files
-(missing fields default to `None`); a v1 Studio refuses to open a v2
-settings file with `WorkspaceLocked { by: "newer settings schema" }`.
+> **Implementer correction (Plan 7):** `preferred_editor` was added without
+> bumping `schema_version`. The original design above specified a bump from 1
+> to 2; Plan 7 instead landed it as a tolerant-reader addition at schema
+> version 1. The authoritative description is in Part 2 §2.2.9.
+> `smoke_test_default_timeout_secs` is deferred; not shipped in Plan 7.
 
 ### 8.6.5 Wireframes (illustrative)
 

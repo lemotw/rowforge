@@ -166,8 +166,30 @@ pub enum UiError {
 
     #[error("internal: {0}")]
     Internal(String),
+
+    // Plan 7 — handler 管理變體（完整 handler 錯誤集見第 8 部分 §8.5.4）
+    #[error("editor not found")]
+    EditorNotFound,
+
+    #[error("handler not found: {name}")]
+    HandlerNotFound { name: String },
+
+    #[error("handler already exists: {name}")]
+    HandlerExists { name: String },
+
+    #[error("invalid handler name: {name}")]
+    InvalidHandlerName { name: String },
 }
 ```
+
+Plan 7 變體說明：
+
+| 變體 | 序列化 `kind` | payload | 由何 emit | UI 呈現 |
+|---|---|---|---|---|
+| `EditorNotFound` | `editor_not_found` | 無（`message: null`） | `handler_open_editor`，preferred / `$VISUAL` / `$EDITOR` / 探測全部失敗時 | Toast 或 inline error；文案引導使用者前往 Settings → Editor 或設定 `$VISUAL`/`$EDITOR` |
+| `HandlerNotFound { name }` | `handler_not_found` | `{ name }` | `handler_show`、`handler_open_editor`、`handler_reveal`、`handler_delete`、`handler_rename`，目標目錄不存在時 | 詳情頁：「Handler '<name>' not found. It may have been deleted or renamed.」加返回 `/handlers` 連結 |
+| `HandlerExists { name }` | `handler_exists` | `{ name }` | `handler_scaffold`（目標目錄已存在）、`handler_rename`（新名稱已被使用） | 對應 dialog 的 inline banner；名稱未修改前 submit 停用 |
+| `InvalidHandlerName { name }` | `invalid_handler_name` | `{ name }` | `handler_scaffold`、`handler_rename`，名稱未通過正則 `/^[a-z0-9][a-z0-9-]*$/` 時 | Inline 欄位錯誤；打字時即在前端驗證，後端為最終依據 |
 
 組合規則：
 - 不提供 blanket `From<anyhow::Error> for UiError`。
@@ -229,6 +251,15 @@ run_snapshot(handle)                  -> ProgressSnapshot
 attempt_active_handle(attempt_id)     -> Option<RunHandle>
 
 manifest_validate(source)             -> ManifestReport
+
+// Plan 7 — handler 管理 commands（完整清單見第 8 部分 §8.5.3）
+handler_list()                        -> Vec<HandlerSummary>
+handler_show(name)                    -> HandlerDetail
+handler_open_editor(name)             -> ()
+handler_reveal(name)                  -> ()
+handler_scaffold(args)                -> String          // 回傳新 handler 名稱
+handler_delete(name)                  -> ()
+handler_rename(old, new)              -> ()
 ```
 
 Run 生命週期指令說明（Plan 5）：
@@ -254,6 +285,7 @@ Run 生命週期指令說明（Plan 5）：
 ```
 run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (第 6 部分 §6.6)
+handlers:list                         ()                      // Plan 7：scaffold/delete/rename 後 emit 的粗粒度 refresh 提示
 ```
 
 ## 5.6 設定

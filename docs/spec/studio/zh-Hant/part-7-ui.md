@@ -113,6 +113,9 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 - **Sidebar「Authoring」群組** — *本部分原寫為* disabled「Coming soon」。
   **第 8 部分取代此立場**:v1 Authoring 群組為可用,含 Handlers 路由。
   下方剩餘的錨點項目(Manifest editor、Pack)仍適用。
+- **`/handlers` 與 `/handlers/:name`** — **Plan 7：v1 兩路由均已上線。**
+  Sidebar Handlers 項目已啟用；清單與詳情頁均已出貨。完整 IA 說明見第 8
+  部分 §8.6.1，關聯 user flow 見下方 §7.4 Flow H–J。
 - **`ListFilter` filter bar** — exec list 上方保留區域；v1 隱藏
   （第 5 部分 §5.2 `ListFilter`）。
 - **`HandlerSource` picker** — v1 僅 `Dir`，picker 為單欄位。v2 升級
@@ -121,7 +124,7 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 ### 全域導航
 
 - **左側 sidebar（持久）：** Workspace 群組（Executions、Settings）
-  + Authoring 群組（disabled）。
+  + Authoring 群組（Handlers 已啟用 — Plan 7）。
 - **頂部 header（持久）：** workspace 名稱 + 路徑 tooltip；麵包屑
   （`Executions / <exec> / Attempt #N / Failed rows`）；右側 **Active
   runs pill**。
@@ -192,6 +195,41 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 | 5 | 選 `format = Both`；勾 `require_complete` | — |
 | 6 | 確認 → progress toast | `exec_export` |
 | 7 | 完成時 toast 提供「Reveal output dir」via `ExportReport.output_dir` | — |
+
+### Flow H — 新建 handler（scaffold，Plan 7）
+
+| # | 步驟 | Command |
+|---|---|---|
+| 1 | Sidebar Handlers → `/handlers` | `handler_list` |
+| 2 | 點「New Handler」→ `ScaffoldDialog` 開啟 | — |
+| 3 | 輸入名稱（正則 `/^[a-z0-9][a-z0-9-]*$/`，前端即時驗證）、選模板（`GoStdio` / `GoBatch` / `Empty`）、輸入 `primary_field` | — |
+| 4 | 提交 → `handler_scaffold` mutation | `handler_scaffold` |
+| 5 | 成功：toast + 關閉 dialog + 導向 `/handlers/<name>` | `handler_show` |
+
+負向路徑：`HandlerExists` / `InvalidHandlerName` 錯誤以 inline 方式顯示在 dialog 中；使用者更正名稱或取消前 dialog 保持開啟。
+
+### Flow I — 改名 handler（惰性，Plan 7）
+
+| # | 步驟 | Command |
+|---|---|---|
+| 1 | `/handlers/:name` → 「Rename…」→ `RenameHandlerDialog`（預填目前名稱） | — |
+| 2 | 修改名稱（必須與目前不同且通過正則）→ 點「Rename」 | — |
+| 3 | `handler_rename` mutation | `handler_rename` |
+| 4 | 成功：toast + 關閉 dialog + 導向 `/handlers/<新名稱>` | — |
+
+惰性語意：SQLite 不更新；舊有 `ExecSummary.last_handler_dir` 列仍引用舊名稱（資訊性，非可載入依據——見第 2 部分 §2.2.2 惰性改名說明）。
+
+### Flow J — 刪除 handler（輸入 token 確認，Plan 7）
+
+| # | 步驟 | Command |
+|---|---|---|
+| 1 | `/handlers/:name` → 「Delete…」→ `DeleteHandlerDialog` | — |
+| 2 | 使用者輸入完整 handler 名稱（區分大小寫）以啟用 Delete 按鈕 | — |
+| 3 | 點「Delete」→ `handler_delete` mutation | `handler_delete` |
+| 4 | 成功：toast + 關閉 dialog + 導向 `/handlers` | `handler_list` |
+
+惰性語意：`executions` 列中舊有的 `last_handler_dir` 引用在刪除後仍保留。
+符號連結防護：三層 — (1) 正則驗證名稱、(2) 路徑 canonicalize、(3) 斷言以 workspace `handlers/` 父目錄為前綴。
 
 ## 7.5 顏色與狀態映射
 
@@ -372,6 +410,10 @@ Live tab 時也能看到。
 | `RunBusy { execution_id, scope }` | PerExec：inline disabled 按鈕 + tooltip；Workspace：toast | 不重試循環;使用者必須處理 |
 | `Io(String)` | Toast（error）+ 複製細節 | 通常可重試 |
 | `Internal(String)` | Toast（error）+ 複製細節 + 「Report issue」 | 後端 bug;UI 不解釋 |
+| `EditorNotFound` | Toast（error）+ Settings → Editor 連結 | Plan 7；僅 `handler_open_editor` |
+| `HandlerNotFound { name }` | `/handlers/:name` inline empty state 加返回連結 | Plan 7；書籤過期或同時被刪除 |
+| `HandlerExists { name }` | ScaffoldDialog / RenameHandlerDialog 的 inline banner | Plan 7；名稱已被使用 |
+| `InvalidHandlerName { name }` | ScaffoldDialog / RenameHandlerDialog 的 inline 欄位錯誤 | Plan 7；未通過 `/^[a-z0-9][a-z0-9-]*$/` |
 
 `AbortReason`（第 6 部分 §6.5）是至少 9 變體的 union;Aborted banner
 分支到對應的 reason 詳情面板（例如 `AllWorkersCrashed` 開啟
@@ -412,6 +454,11 @@ Settings 頁逐欄位暴露 `Settings`(第 2 部分 §2.2.9）。
 - `max_concurrent_runs` — 數字輸入,預設 3（第 3 部分 §3.4）。
   降至低於目前 active 數時顯示確認警告。
 - `telemetry_opt_in` — switch,預設關;tooltip 註明 v1 不收集。
+- **`preferred_editor`**（Plan 7）— 文字輸入，placeholder `"code"`。
+  可為空；空時解析器依序嘗試 `$VISUAL` / `$EDITOR` / 探測
+  （第 8 部分 §8.4.1）。顯示於 Settings 表單第四個「Editor」區塊。
+  透過 `workspace_settings_save` 儲存，下次 `handler_open_editor`
+  呼叫即生效（不需重啟）。
 
 注意:`default_workers` **不是** Settings 欄位。Per-run worker 數
 在 RunButton 選項面板配置;studio-core 的 `start_run` 從來沒讀過
