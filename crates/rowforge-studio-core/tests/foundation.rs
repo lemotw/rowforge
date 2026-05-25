@@ -2623,3 +2623,72 @@ fn execution_delete_succeeds_when_dir_already_missing() {
         "expected NotFound after delete"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 10 T2 — execution_delete_bulk
+// ---------------------------------------------------------------------------
+
+/// All-succeed: bulk-delete two executions with no active runs.
+/// Both ids appear in `deleted`; `failed` is empty.
+#[test]
+fn execution_delete_bulk_all_succeed() {
+    let tmp = empty_workspace();
+    let id_a = seed_exec(&tmp, "bulk-all-succeed-a");
+    let id_b = seed_exec(&tmp, "bulk-all-succeed-b");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let result = core.execution_delete_bulk(&[id_a.clone(), id_b.clone()]);
+
+    assert_eq!(result.deleted.len(), 2, "expected 2 deleted, got: {:?}", result.deleted);
+    assert!(result.failed.is_empty(), "expected no failures, got: {:?}", result.failed);
+}
+
+/// Partial failure: one exec has an active run and must end up in `failed[]`
+/// with a reason containing "active run"; the other succeeds in `deleted[]`.
+#[test]
+fn execution_delete_bulk_partial_failure() {
+    let tmp = empty_workspace();
+    let id_a = seed_exec(&tmp, "bulk-partial-a");
+    let id_b = seed_exec(&tmp, "bulk-partial-b");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Mark id_a as having an active run so execution_delete refuses it.
+    core.sessions().register_fake_session_for_test(&id_a);
+
+    let result = core.execution_delete_bulk(&[id_a.clone(), id_b.clone()]);
+
+    // id_b is the one that was actually deleted (id_a had an active run).
+    assert_eq!(result.deleted, vec![id_b.clone()],
+        "expected only id_b in deleted, got: {:?}", result.deleted);
+    assert_eq!(result.failed.len(), 1,
+        "expected 1 failure, got: {:?}", result.failed);
+    assert_eq!(result.failed[0].exec_id, id_a,
+        "failure exec_id mismatch");
+    assert!(
+        result.failed[0].reason.contains("active run"),
+        "expected 'active run' in reason, got: {:?}", result.failed[0].reason
+    );
+}
+
+/// Empty input: an empty slice produces an empty result (no panic, no error).
+#[test]
+fn execution_delete_bulk_empty_input_returns_empty_result() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let result = core.execution_delete_bulk(&[]);
+
+    assert!(result.deleted.is_empty(), "expected no deleted, got: {:?}", result.deleted);
+    assert!(result.failed.is_empty(), "expected no failed, got: {:?}", result.failed);
+}

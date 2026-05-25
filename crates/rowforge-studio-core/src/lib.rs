@@ -107,6 +107,39 @@ impl StartExecArgs {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 10 — bulk-delete result types
+// ---------------------------------------------------------------------------
+
+/// Outcome of a [`StudioCore::execution_delete_bulk`] call.
+///
+/// `#[non_exhaustive]` so that future fields (e.g. `skipped`) can be added
+/// without a breaking change. Cross-crate code that needs to construct this
+/// (e.g. Tauri ipc_contract tests) should round-trip through `serde_json`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ExecDeleteBulkResult {
+    /// Ids of executions that were successfully deleted, in input order.
+    pub deleted: Vec<String>,
+    /// Per-item failure descriptors for executions that could not be deleted,
+    /// in input order relative to the original slice.
+    pub failed: Vec<ExecDeleteFailure>,
+}
+
+/// A single per-item failure within an [`ExecDeleteBulkResult`].
+///
+/// `#[non_exhaustive]` for the same future-compatibility reason as the parent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ExecDeleteFailure {
+    /// The execution id that could not be deleted.
+    pub exec_id: String,
+    /// Human-readable reason string derived from the underlying `UiError`
+    /// (`format!("{}", err)`). Compatible with `uiErrorMessage` in the TS
+    /// layer.
+    pub reason: String,
+}
+
+// ---------------------------------------------------------------------------
 // Orphan recovery (spec §3.7)
 // ---------------------------------------------------------------------------
 
@@ -849,6 +882,32 @@ impl StudioCore {
         }
 
         Ok(())
+    }
+
+    /// Serial bulk-delete wrapper over [`execution_delete`].
+    ///
+    /// Iterates `exec_ids` in order, calling `execution_delete` for each.
+    /// Never aborts on individual failures — every item produces either a
+    /// `deleted` or `failed` entry. Input order is preserved within each
+    /// output vector.
+    ///
+    /// Returns an [`ExecDeleteBulkResult`] containing the ids of all
+    /// successfully deleted executions and per-item failure descriptors for
+    /// those that could not be deleted (e.g. active run, not found, traversal
+    /// attempt).
+    pub fn execution_delete_bulk(&self, exec_ids: &[String]) -> ExecDeleteBulkResult {
+        let mut deleted = Vec::new();
+        let mut failed = Vec::new();
+        for id in exec_ids {
+            match self.execution_delete(id) {
+                Ok(()) => deleted.push(id.clone()),
+                Err(e) => failed.push(ExecDeleteFailure {
+                    exec_id: id.clone(),
+                    reason: format!("{}", e),
+                }),
+            }
+        }
+        ExecDeleteBulkResult { deleted, failed }
     }
 
     // -------------------------------------------------------------------------
