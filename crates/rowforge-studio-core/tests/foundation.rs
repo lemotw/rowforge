@@ -1709,3 +1709,88 @@ fn scaffold_errors_when_name_already_exists() {
     assert!(matches!(err, rowforge_studio_core::UiError::HandlerExists { .. }),
         "got: {:?}", err);
 }
+
+#[test]
+fn delete_removes_handler_dir() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del").tempdir().unwrap();
+    let dir = tmp.path().join("handlers").join("doomed");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rowforge.yaml"), "name: doomed\nversion: 0.1.0\nentry:\n  cmd: [\"./x\"]\n").unwrap();
+    std::fs::write(dir.join("handler.go"), "package main").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    core.handler_delete("doomed").unwrap();
+
+    assert!(!dir.exists(), "handler dir should be gone");
+    // Sibling handlers/ dir still exists (we only removed the one named dir).
+    assert!(tmp.path().join("handlers").is_dir());
+}
+
+#[test]
+fn delete_errors_on_unknown_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del-nf").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_delete("ghost").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }));
+}
+
+#[test]
+fn delete_rejects_invalid_name_before_any_fs_op() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del-bn").tempdir().unwrap();
+    // Regression: even if a path like ../etc were ALLOWED through validation,
+    // we'd be opening fs::remove_dir_all on a user-controllable absolute
+    // path. The regex fence guarantees we never get there.
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_delete("../etc").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_rejects_symlinked_dir_pointing_outside_workspace() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-del-sym").tempdir().unwrap();
+    let outside = tempfile::Builder::new().prefix("rfs-plan7-del-victim").tempdir().unwrap();
+
+    // Build a victim dir OUTSIDE the workspace that we should not be able
+    // to delete by symlinking into handlers/.
+    let victim = outside.path().join("precious");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("important.txt"), "do not delete me").unwrap();
+
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    symlink(&victim, tmp.path().join("handlers").join("evil"))
+        .expect("symlink creation should succeed on unix");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let result = core.handler_delete("evil");
+
+    // Two acceptable outcomes:
+    // (a) Err with UiError::InvalidArg or similar — we refused to follow
+    //     the symlink because canonicalize() resolved to outside the
+    //     workspace. The symlink and victim both remain untouched.
+    // (b) Ok — the symlink itself was removed (NOT followed), and the
+    //     victim dir is untouched.
+    //
+    // BOTH options preserve the victim. Assert the victim wasn't recursed.
+    assert!(victim.is_dir(), "victim dir should NOT have been deleted");
+    assert!(victim.join("important.txt").is_file(),
+        "victim's contents should NOT have been removed");
+
+    // Whatever outcome handler_delete chose, the symlink should not be
+    // resolved as the canonical target for remove_dir_all.
+    let _ = result;
+}

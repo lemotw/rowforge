@@ -301,6 +301,14 @@ impl StudioCore {
         crate::handler::scaffold(self.workspace.root.as_path(), args)
     }
 
+    /// Plan 7 T7: delete a handler directory. Three-layer defense against
+    /// path traversal (regex / canonicalize / starts_with). Errors:
+    /// `InvalidHandlerName`, `HandlerNotFound`, `InvalidArg` (resolved
+    /// outside workspace), `Io` (filesystem op failure).
+    pub fn handler_delete(&self, name: &str) -> Result<(), UiError> {
+        crate::handler::delete(self.workspace.root.as_path(), name)
+    }
+
     /// Return the Arc-wrapped session registry for this workspace.
     ///
     /// Used by the Tauri event bridge to spawn `forward_active_runs` with only

@@ -420,6 +420,79 @@ pub fn scaffold(workspace_root: &Path, args: ScaffoldArgs) -> Result<String, cra
     Ok(args.name)
 }
 
+// ---------------------------------------------------------------------------
+// Plan 7 T7 — delete with three-layer defense
+// ---------------------------------------------------------------------------
+
+/// Remove a handler directory under `<workspace>/handlers/`.
+///
+/// Three layers of defense protect against path traversal:
+/// 1. `validate_name([a-z0-9-]+)` — rejects `../etc`, `a/b`, leading
+///    dots — before any path is constructed.
+/// 2. `canonicalize()` on the resolved path — follows symlinks. Catches
+///    `<workspace>/handlers/evil` → `/etc`.
+/// 3. `canon_target.starts_with(canon_handlers)` — after canonicalize,
+///    the target must still be inside the workspace handlers dir.
+///
+/// If any layer rejects, returns `UiError` without touching the
+/// filesystem (or, for layer 3, after touching only metadata, not data).
+///
+/// On success, `fs::remove_dir_all` recursively wipes the handler dir.
+/// Does NOT update sqlite (handler_instances stays content-addressed;
+/// the lazy decision applies to delete as well as rename — past attempts
+/// continue to reference the removed dir, which is acceptable per spec
+/// part-2 footnote).
+pub fn delete(workspace_root: &Path, name: &str) -> Result<(), crate::UiError> {
+    // Layer 1: regex.
+    if !validate_name(name) {
+        return Err(crate::UiError::InvalidHandlerName {
+            name: name.to_string(),
+        });
+    }
+    let handlers_dir = workspace_root.join("handlers");
+    let target = handlers_dir.join(name);
+
+    // Pre-check: report HandlerNotFound rather than IO error if the
+    // user-facing dir doesn't exist (use symlink_metadata so we don't
+    // follow a dangling symlink here — a symlinked entry with a missing
+    // target is still "found" enough to attempt deletion of the link).
+    if std::fs::symlink_metadata(&target).is_err() {
+        return Err(crate::UiError::HandlerNotFound {
+            name: name.to_string(),
+        });
+    }
+
+    // Layer 2 + 3: canonicalize + starts_with.
+    let canon_handlers = handlers_dir
+        .canonicalize()
+        .map_err(|e| crate::UiError::Io(format!("canonicalize handlers dir: {}", e)))?;
+    // If `target` is a symlink, canonicalize follows it.
+    let canon_target = target
+        .canonicalize()
+        .map_err(|e| crate::UiError::Io(format!("canonicalize handler dir: {}", e)))?;
+    if !canon_target.starts_with(&canon_handlers) {
+        return Err(crate::UiError::InvalidArg(format!(
+            "handler '{}' resolves outside the workspace's handlers/ directory",
+            name
+        )));
+    }
+
+    // All three layers passed. Remove. We remove via the symlink-or-dir
+    // path (not the canonical target) so a symlink WITHIN the workspace
+    // is removed as a link, not as its target's contents.
+    if std::fs::symlink_metadata(&target)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        std::fs::remove_file(&target)
+            .map_err(|e| crate::UiError::Io(format!("remove symlink: {}", e)))?;
+    } else {
+        std::fs::remove_dir_all(&target)
+            .map_err(|e| crate::UiError::Io(format!("remove handler dir: {}", e)))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
