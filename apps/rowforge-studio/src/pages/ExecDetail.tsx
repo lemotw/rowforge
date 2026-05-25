@@ -45,7 +45,7 @@ export function ExecDetailPage() {
                 <Button onClick={() => setExportOpen(true)} variant="outline">Export</Button>
                 <RunButton
                   executionId={id!}
-                  lastHandlerDir={null}
+                  lastHandlerDir={detail.data?.summary.last_handler_dir ?? null}
                 />
               </div>
               <ExportDialog open={exportOpen} execId={id!} onClose={() => setExportOpen(false)} />

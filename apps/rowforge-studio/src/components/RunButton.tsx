@@ -8,8 +8,6 @@ import { useExecRollup, useRunStart } from "@/ipc/queries";
 import { uiErrorMessage } from "@/ipc/types";
 import type { ExecutionId } from "@/ipc/types";
 
-const LS_HANDLER_DIR = "studio.lastHandlerDir";
-
 /**
  * Run launcher.
  *
@@ -35,27 +33,23 @@ export function RunButton({
   const [error, setError] = useState<string | null>(null);
 
   const [optionsOpen, setOptionsOpen] = useState(false);
-  // Seed from prop, then localStorage, then null. localStorage persists the
-  // last picked dir across sessions so users don't re-pick every time.
-  const [handlerDir, setHandlerDir] = useState<string | null>(() => {
-    if (lastHandlerDir) return lastHandlerDir;
-    try {
-      return localStorage.getItem(LS_HANDLER_DIR);
-    } catch {
-      return null;
-    }
-  });
+  // Seed from sqlite-backed prop (exec.summary.last_handler_dir). The old
+  // localStorage fallback has been removed — Plan 6 T7.
+  const [handlerDir, setHandlerDir] = useState<string | null>(lastHandlerDir ?? null);
   const [sample, setSample] = useState<string>("");
   const [workers, setWorkers] = useState<string>("");
   const [dryRun, setDryRun] = useState<boolean>(false);
   const [skipAttempted, setSkipAttempted] = useState<boolean>(false);
 
-  // Mirror handlerDir changes into localStorage.
+  // One-time upgrade hygiene: remove the stale localStorage key written by
+  // Plan 5 so existing installs don't carry phantom state across upgrades.
   useEffect(() => {
     try {
-      if (handlerDir) localStorage.setItem(LS_HANDLER_DIR, handlerDir);
-    } catch { /* ignore quota / privacy mode */ }
-  }, [handlerDir]);
+      localStorage.removeItem("studio.lastHandlerDir");
+    } catch {
+      /* privacy mode / quota — ignore */
+    }
+  }, []);
 
   // Rollup tells us how many rows are NeverAttempted (= remaining when
   // skip_attempted is on). Lazy: only fetched once the options panel opens.

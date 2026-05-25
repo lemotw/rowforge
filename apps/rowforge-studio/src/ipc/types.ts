@@ -15,6 +15,7 @@ export interface ExecSummary {
   attempts_count: number;
   last_attempt_state: string | null;
   last_attempt_counts: AttemptCountsStub | null;
+  last_handler_dir: string | null;
 }
 
 export interface AttemptCountsStub {
