@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 rowforge-core = { path = "../rowforge-core" }
+rowforge-studio-core = { path = "../rowforge-studio-core" }
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
