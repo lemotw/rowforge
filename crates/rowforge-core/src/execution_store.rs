@@ -54,6 +54,7 @@ impl ExecutionState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Execution {
     pub id: String,
     pub name: Option<String>,
