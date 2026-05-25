@@ -145,7 +145,6 @@ enum RunStatus { Pending, Starting, Running, Cancelling, Done, Aborted, Crashed 
 struct Settings {
     schema_version: u8,                  // v1 為 1
     workspace_root: Option<PathBuf>,
-    default_workers: Option<u32>,
     max_concurrent_runs: Option<u32>,    // 預設 3
     telemetry_opt_in: bool,              // 預設 false；v1 不收集
 }

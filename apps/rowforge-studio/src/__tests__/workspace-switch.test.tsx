@@ -12,7 +12,6 @@ vi.mock("@/ipc/client", () => ({
     workspace_settings_load: vi.fn().mockResolvedValue({
       schema_version: 1,
       workspace_root: "/tmp/old",
-      default_workers: null,
       max_concurrent_runs: null,
       telemetry_opt_in: false,
     }),
@@ -71,7 +70,7 @@ describe("WorkspaceSwitchButton", () => {
     // Seed stale state from the OLD workspace.
     qc.setQueryData(["settings"], {
       schema_version: 1, workspace_root: "/tmp/old",
-      default_workers: null, max_concurrent_runs: null, telemetry_opt_in: false,
+      max_concurrent_runs: null, telemetry_opt_in: false,
     });
     qc.setQueryData(["workspace"], { root: "/tmp/old", schema_version: 3 });
     qc.setQueryData(["exec_list"], [{ id: "e_OLD", name: "from-old-workspace" }]);
