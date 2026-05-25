@@ -88,7 +88,22 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
   預覽「Will dispatch N rows」。呼叫 `run_start`。
 - **Export dialog** — 構造 `ExportOpts`，呼叫 `exec_export`。
 - **Settings** `/settings` — 實體：`Settings`。呼叫：
-  `workspace_settings_load`、`workspace_settings_save`。
+  `workspace_settings_load`、`workspace_settings_save`、`run_active`
+  （透過 workspace 切換按鈕）、`workspace_open`（切換時）。
+
+  版面：單欄表單，分三個區塊。
+  1. **Workspace** — 以唯讀等寬文字顯示目前的 `workspace_root`；
+     **Switch workspace…** 按鈕開啟目錄選取器。當 `run_active().len()
+     > 0` 時按鈕停用並顯示琥珀色警告（頁面掛載時每 2 秒刷新）
+     — 切換會使進行中的 run 成為孤兒。
+  2. **Concurrency** — `default_workers` 與 `max_concurrent_runs`
+     數字輸入框。當 `max_concurrent_runs` 的值與已載入伺服器值不同時，
+     輸入框下方顯示藍色「Will apply on next workspace open」banner，
+     因為此欄位僅在 `workspace_open` 時才會被讀取（第 5 部分 §5.6）。
+  3. **Telemetry** — `telemetry_opt_in` 核取方塊。
+
+  底部有 Save / Cancel 按鈕。Save 透過 `workspace_settings_save` 持久化
+  並使快取查詢失效；Cancel 從已載入值還原。
 
 ### 已留錨點、v1 不建
 

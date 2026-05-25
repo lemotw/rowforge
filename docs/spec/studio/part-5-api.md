@@ -279,6 +279,16 @@ runs:active                           RunRollupTick payload   (Part 6 §6.6)
   `Settings::save_to(writer)` taking `Read`/`Write` to keep itself
   filesystem-policy-free.
 
+**`max_concurrent_runs` reload semantic:** the value is read at
+`workspace_open` time and passed to `SessionRegistry::new` as the
+workspace-scoped limit (Part 3 §3.4). Changing it via
+`workspace_settings_save` does NOT affect the active SessionRegistry —
+the new limit only takes effect on the next `workspace_open` (which
+happens during boot autoload or via the Settings page's "Switch
+workspace" button). The Settings page surfaces this with a
+"Will apply on next workspace open" dirty banner when the form
+value differs from the loaded value.
+
 ## 5.7 Versioning and API stability
 
 - `rowforge-studio-core` is an **internal** crate; not published to

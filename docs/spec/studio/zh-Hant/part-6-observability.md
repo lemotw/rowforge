@@ -215,6 +215,11 @@ struct RunRollupTick {
 組成 — 嚴格僅計數視圖,沒有任何單列資料跨 run。供全域標頭 / dock badge
 與「執行中」下拉使用。
 
+`slowest_run`：最近 10 秒 `rate_10s`（每秒列數）最低且為正值的 active session
+所對應的 `RunHandle`。`rate_10s == 0` 的 session 排除在外 — 它們仍在暖機滑動
+視窗（啟動後 < ~10s），否則會誤判為「最慢」。當所有 session 都在暖機，或
+沒有 active session 時，回傳 `None`。
+
 明確**不**提供：
 - 跨 run 合併時間線 / 比較視圖（不在範圍;BI 領域）。
 - 跨 Studio 重啟的持久 active-runs roll-up(`executions.db` registry

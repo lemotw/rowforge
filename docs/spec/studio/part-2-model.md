@@ -47,6 +47,7 @@ struct ExecSummary {
     attempts_count: u32,
     last_attempt_state: Option<AttemptState>,
     last_attempt_counts: Option<AttemptCounts>,   // success/failed/crashed of last attempt only
+    last_handler_dir: Option<PathBuf>,             // Plan 6: handler dir from most recent run; powers RunButton default
 }
 ```
 - `last_attempt_counts` is NOT a rollup across attempts. The rollup is

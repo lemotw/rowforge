@@ -265,6 +265,13 @@ runs:active                           RunRollupTick payload   (第 6 部分 §6.
   `Settings::save_to(writer)`,接 `Read`/`Write`,使自身不涉檔案
   系統政策。
 
+**`max_concurrent_runs` 重載語意：** 此值在 `workspace_open` 時讀取，並以
+workspace 範圍限制傳入 `SessionRegistry::new`（第 3 部分 §3.4）。透過
+`workspace_settings_save` 更改此值**不會**影響正在運行的 SessionRegistry —
+新限制只在下次 `workspace_open` 時生效（發生於 boot autoload 或透過 Settings
+頁的「Switch workspace」按鈕）。Settings 頁在表單值與已載入伺服器值不同時，
+會顯示「Will apply on next workspace open」提示 banner。
+
 ## 5.7 版本管理與 API 穩定性
 
 - `rowforge-studio-core` 是**內部** crate;不發布到 crates.io。版本

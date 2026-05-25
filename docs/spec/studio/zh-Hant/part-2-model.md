@@ -46,6 +46,7 @@ struct ExecSummary {
     attempts_count: u32,
     last_attempt_state: Option<AttemptState>,
     last_attempt_counts: Option<AttemptCounts>,   // 只是最後一次 attempt 的 success/failed/crashed
+    last_handler_dir: Option<PathBuf>,             // Plan 6：最近一次 run 的 handler 目錄；供 RunButton 預設值使用
 }
 ```
 - `last_attempt_counts` 不是跨 attempt 的 rollup。Rollup 是
