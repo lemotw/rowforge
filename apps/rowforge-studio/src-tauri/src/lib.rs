@@ -35,6 +35,13 @@ pub fn run() {
             commands::run_active,
             commands::run_snapshot,
             commands::attempt_active_handle,
+            commands::handler_list,
+            commands::handler_show,
+            commands::handler_open_editor,
+            commands::handler_reveal,
+            commands::handler_scaffold,
+            commands::handler_delete,
+            commands::handler_rename,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
