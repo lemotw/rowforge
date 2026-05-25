@@ -479,3 +479,14 @@ export interface ScaffoldArgs {
   template: ScaffoldTemplate;
   primary_field: string;
 }
+
+// ===== Plan 9 handler logs =====
+
+export type HandlerStream = "stdout" | "stderr";
+
+export interface HandlerLogLine {
+  timestamp: string; // ISO 8601
+  worker_id: number;
+  stream: HandlerStream;
+  line: string;
+}
