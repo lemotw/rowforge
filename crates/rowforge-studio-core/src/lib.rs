@@ -857,7 +857,22 @@ impl StudioCore {
             return Err(UiError::Io(format!("invalid exec_id: {}", exec_id)));
         }
 
-        // Step 2: active-run gate.
+        // Step 2a: cross-process active-attempt gate (sqlite is source of truth).
+        // A CLI process opens a fresh StudioCore with an empty in-memory
+        // SessionRegistry; without this check it would silently bypass the
+        // in-process gate below and delete an exec that is running in Studio.
+        {
+            let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            let sqlite_active = store
+                .has_active_attempt(exec_id)
+                .map_err(|e| UiError::Internal(format!("active-attempt check: {}", e)))?;
+            if sqlite_active {
+                return Err(UiError::ExecutionInUse { exec_id: exec_id.to_string() });
+            }
+        }
+
+        // Step 2b: in-process active-run gate (catches the brief window
+        // between attempt-start and the sqlite state being committed).
         if self.sessions.has_active_run_for_exec(exec_id) {
             return Err(UiError::ExecutionInUse { exec_id: exec_id.to_string() });
         }

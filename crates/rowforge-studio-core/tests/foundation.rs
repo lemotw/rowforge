@@ -2508,12 +2508,130 @@ fn seed_exec(tmp: &tempfile::TempDir, name: &str) -> String {
         .id
 }
 
-/// Happy-path: delete removes the sqlite row, child attempts, and the
-/// on-disk execution directory.
+/// Seed an execution that already has one completed attempt row so that the
+/// cascade DELETE is exercised for real.
+///
+/// Returns `(exec_id, attempt_id)`.
+fn seed_exec_with_completed_attempt(tmp: &tempfile::TempDir, name: &str) -> (String, String) {
+    use rowforge_core::execution_store::{
+        FinishAttempt, NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source,
+    };
+    let csv = tmp.path().join(format!("{name}.csv"));
+    std::fs::write(&csv, "id\nr1\n").unwrap();
+    let mut store = rowforge_core::execution_store::ExecutionStore::open(tmp.path()).unwrap();
+    let exec = store
+        .create_execution(NewExecution {
+            name: Some(name.into()),
+            input_csv_id: "csv1".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        })
+        .unwrap();
+    let hi = store
+        .register_handler_instance(NewHandlerInstance {
+            handler_id: "h_cascade".into(),
+            manifest_hash: "sha256:cascade".into(),
+            source_snapshot_dir: std::path::PathBuf::from("/tmp/snap"),
+            binary_hash: None,
+        })
+        .unwrap();
+    let attempt = store
+        .create_attempt(NewAttempt {
+            execution_id: exec.id.clone(),
+            handler_instance_id: hi.id,
+            parent_attempt_id: None,
+            run_type: RunType {
+                source: Source::Full,
+                simulation: Simulation::Real,
+            },
+        })
+        .unwrap();
+    // Finish the attempt so its state is terminal (completed) — deletion must
+    // not be blocked by the sqlite active-attempt gate.
+    store
+        .finish_attempt(
+            &attempt.id,
+            FinishAttempt {
+                success_count: 1,
+                failed_count: 0,
+                aborted: false,
+                aborted_reason: None,
+            },
+        )
+        .unwrap();
+    (exec.id, attempt.id)
+}
+
+/// Seed an execution with one attempt left in the non-terminal "running" state.
+///
+/// Returns `(exec_id, attempt_id)`.
+fn seed_exec_with_running_attempt(tmp: &tempfile::TempDir, name: &str) -> (String, String) {
+    use rowforge_core::execution_store::{
+        NewAttempt, NewExecution, NewHandlerInstance, RunType, Simulation, Source,
+    };
+    let csv = tmp.path().join(format!("{name}.csv"));
+    std::fs::write(&csv, "id\nr1\n").unwrap();
+    let mut store = rowforge_core::execution_store::ExecutionStore::open(tmp.path()).unwrap();
+    let exec = store
+        .create_execution(NewExecution {
+            name: Some(name.into()),
+            input_csv_id: "csv1".into(),
+            input_csv_path: csv,
+            current_handler_instance_id: None,
+        })
+        .unwrap();
+    let hi = store
+        .register_handler_instance(NewHandlerInstance {
+            handler_id: "h_running".into(),
+            manifest_hash: "sha256:running".into(),
+            source_snapshot_dir: std::path::PathBuf::from("/tmp/snap"),
+            binary_hash: None,
+        })
+        .unwrap();
+    // create_attempt writes state = "running"; intentionally not finished.
+    let attempt = store
+        .create_attempt(NewAttempt {
+            execution_id: exec.id.clone(),
+            handler_instance_id: hi.id,
+            parent_attempt_id: None,
+            run_type: RunType {
+                source: Source::Full,
+                simulation: Simulation::Real,
+            },
+        })
+        .unwrap();
+    (exec.id, attempt.id)
+}
+
+/// Count the number of attempts rows for `exec_id` directly via sqlite.
+///
+/// Opens a fresh `ExecutionStore` so the count is always authoritative
+/// regardless of any in-process cache state.
+fn count_attempts_for_exec(tmp: &tempfile::TempDir, exec_id: &str) -> usize {
+    let store = rowforge_core::execution_store::ExecutionStore::open(tmp.path()).unwrap();
+    store
+        .list_attempts_for_execution(exec_id)
+        .unwrap()
+        .len()
+}
+
+/// Happy-path: delete removes the sqlite execution row, all child attempt
+/// rows (cascade), and the on-disk execution directory.
+///
+/// An attempt row is inserted before deletion so the cascade DELETE on
+/// `attempts` is exercised for real (previously it ran on 0 rows and
+/// therefore vacuously succeeded without testing the cascade).
 #[test]
 fn execution_delete_removes_row_attempts_and_dir() {
     let tmp = empty_workspace();
-    let exec_id = seed_exec(&tmp, "exec-delete-happy");
+    let (exec_id, _attempt_id) = seed_exec_with_completed_attempt(&tmp, "exec-delete-happy");
+
+    // Verify the attempt row is actually there BEFORE delete.
+    assert_eq!(
+        count_attempts_for_exec(&tmp, &exec_id),
+        1,
+        "setup: must have 1 attempt before delete"
+    );
 
     let core = rowforge_studio_core::StudioCore::open(
         rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
@@ -2526,7 +2644,7 @@ fn execution_delete_removes_row_attempts_and_dir() {
 
     core.execution_delete(&exec_id).expect("delete should succeed");
 
-    // Sqlite row should be gone — show() returns NotFound.
+    // Sqlite execution row should be gone — show() returns NotFound.
     let id = rowforge_studio_core::ExecutionId::new(exec_id.clone());
     assert!(
         matches!(core.show(&id), Err(rowforge_studio_core::UiError::NotFound(_))),
@@ -2534,6 +2652,12 @@ fn execution_delete_removes_row_attempts_and_dir() {
     );
     // On-disk dir should be gone.
     assert!(!exec_dir.exists(), "exec dir should have been removed");
+    // Cascade: attempts rows for this exec must be gone too.
+    assert_eq!(
+        count_attempts_for_exec(&tmp, &exec_id),
+        0,
+        "cascade: attempts must be deleted alongside the execution"
+    );
 }
 
 /// Active-run gate: execution_delete must refuse when a session is registered
@@ -2556,6 +2680,63 @@ fn execution_delete_refuses_when_active_run() {
     assert!(
         matches!(err, rowforge_studio_core::UiError::ExecutionInUse { .. }),
         "expected ExecutionInUse, got: {:?}", err
+    );
+}
+
+/// Cross-process BLOCKER regression: execution_delete must refuse via the
+/// sqlite gate even when the in-process SessionRegistry is empty.
+///
+/// Simulates the scenario where Studio has a running attempt recorded in
+/// sqlite but the CLI opens a fresh StudioCore (empty registry) and tries to
+/// delete the same exec.
+#[test]
+fn execution_delete_refuses_when_sqlite_has_running_attempt() {
+    let tmp = empty_workspace();
+    let (exec_id, _attempt_id) = seed_exec_with_running_attempt(&tmp, "exec-sqlite-active");
+
+    // Open a fresh StudioCore with an empty in-process SessionRegistry —
+    // this mimics what the CLI does.
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // The registry is empty (no register_fake_session_for_test called), but
+    // sqlite shows state='running' → must still refuse.
+    let err = core.execution_delete(&exec_id).unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::ExecutionInUse { .. }),
+        "expected ExecutionInUse via sqlite gate, got: {:?}", err
+    );
+}
+
+/// End-to-end cross-process scenario: two StudioCore instances on the same
+/// workspace root (core_a ≈ Studio, core_b ≈ CLI).
+///
+/// core_a has a running attempt visible in sqlite. core_b's execution_delete
+/// must refuse via the sqlite check — its own SessionRegistry is empty.
+#[test]
+fn cli_delete_refuses_externally_active_exec() {
+    let tmp = empty_workspace();
+    let (exec_id, _attempt_id) = seed_exec_with_running_attempt(&tmp, "exec-cross-proc");
+
+    // core_a represents Studio — it opened the workspace but we don't need to
+    // inject a fake session because the attempt is already in sqlite as 'running'.
+    let _core_a = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // core_b represents the CLI: fresh process, empty SessionRegistry.
+    let core_b = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let err = core_b.execution_delete(&exec_id).unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::ExecutionInUse { .. }),
+        "expected ExecutionInUse from core_b (CLI process), got: {:?}", err
     );
 }
 

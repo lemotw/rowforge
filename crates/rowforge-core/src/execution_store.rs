@@ -656,6 +656,26 @@ impl ExecutionStore {
         rows.into_iter().map(Ok).collect()
     }
 
+    /// Returns `true` if at least one attempt for this execution is in a
+    /// non-terminal state (i.e. still running).
+    ///
+    /// This is the **cross-process** source of truth for active-run detection:
+    /// SQLite is visible to every process sharing the workspace, unlike the
+    /// in-process `SessionRegistry` which is empty in a fresh CLI invocation.
+    ///
+    /// Terminal states (the inverse set): `"completed"`, `"aborted"`.
+    /// Any row that does NOT have one of these states is considered active.
+    pub fn has_active_attempt(&self, exec_id: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM attempts
+             WHERE execution_id = ?1
+               AND state NOT IN ('completed', 'aborted')",
+            params![exec_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     /// Hard-delete an execution and all its child rows in a single transaction.
     ///
     /// The schema has no `ON DELETE CASCADE` on the `attempts.execution_id` FK

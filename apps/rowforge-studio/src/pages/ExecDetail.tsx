@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
+import { listen } from "@tauri-apps/api/event";
+import { useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,6 +18,22 @@ export function ExecDetailPage() {
   const ws = useWorkspace();
   const detail = useExecDetail(id ?? null);
   const [exportOpen, setExportOpen] = useState(false);
+  const qc = useQueryClient();
+
+  // When another window or the CLI deletes an execution, Tauri emits
+  // exec_list:refresh. Invalidating the exec_show query for this id causes
+  // a refetch; if the exec is gone the existing not_found branch renders.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen("exec_list:refresh", () => {
+      qc.invalidateQueries({ queryKey: ["exec_show", id] });
+    }).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [qc, id]);
 
   if (ws.data === null && !ws.isLoading) return <Navigate to="/" replace />;
 
