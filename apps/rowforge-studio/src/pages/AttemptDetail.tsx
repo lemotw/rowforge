@@ -17,6 +17,7 @@ import { PhaseChipBar } from "@/components/PhaseChipBar";
 import { LifecycleBanners } from "@/components/LifecycleBanner";
 import { CancelDialog } from "@/components/CancelDialog";
 import { useRun } from "@/ipc/use-run";
+import { AttemptLogsTab } from "@/pages/AttemptLogsTab";
 
 export function AttemptDetailPage() {
   const { id, aid } = useParams<{ id: string; aid: string }>();
@@ -168,6 +169,7 @@ export function AttemptDetailPage() {
                 <TabsTrigger value="summary">Summary</TabsTrigger>
                 <TabsTrigger value="failed">Failed rows</TabsTrigger>
                 <TabsTrigger value="errors">Errors by code</TabsTrigger>
+                <TabsTrigger value="logs">Logs</TabsTrigger>
                 <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
               </TabsList>
 
@@ -198,6 +200,19 @@ export function AttemptDetailPage() {
 
               <TabsContent value="errors">
                 <ErrorsByCodeList data={detail.data.by_error_code} />
+              </TabsContent>
+
+              <TabsContent value="logs">
+                <AttemptLogsTab
+                  execId={id!}
+                  attemptId={aid!}
+                  isLive={!isTerminal}
+                  logFilePath={
+                    workspace
+                      ? `${workspace.root}/executions/${id}/attempts/${aid}/handler_log.log`
+                      : undefined
+                  }
+                />
               </TabsContent>
 
               <TabsContent value="artifacts">
