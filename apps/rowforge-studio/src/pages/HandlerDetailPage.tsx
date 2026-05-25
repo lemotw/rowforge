@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
@@ -16,6 +16,8 @@ import {
   type HandlerDetail,
   type SourceFileSummary,
 } from "@/ipc/types";
+import { DeleteHandlerDialog } from "@/components/DeleteHandlerDialog";
+import { RenameHandlerDialog } from "@/components/RenameHandlerDialog";
 
 export function HandlerDetailPage() {
   const { name = "" } = useParams<{ name: string }>();
@@ -24,6 +26,8 @@ export function HandlerDetailPage() {
   const { data, isLoading, isError, error } = useHandlerShow(name);
   const openEditor = useHandlerOpenEditor();
   const reveal = useHandlerReveal();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -82,10 +86,22 @@ export function HandlerDetailPage() {
           detail={data}
           onOpenEditor={() => openEditor.mutate({ name })}
           onReveal={() => reveal.mutate({ name })}
+          onRename={() => setRenameOpen(true)}
+          onDelete={() => setDeleteOpen(true)}
         />
         <ManifestSection detail={data} />
         <SourceFilesSection detail={data} />
       </div>
+      <RenameHandlerDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        oldName={data.summary.name}
+      />
+      <DeleteHandlerDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        name={data.summary.name}
+      />
     </AppShell>
   );
 }
@@ -94,10 +110,14 @@ function DetailHeader({
   detail,
   onOpenEditor,
   onReveal,
+  onRename,
+  onDelete,
 }: {
   detail: HandlerDetail;
   onOpenEditor: () => void;
   onReveal: () => void;
+  onRename: () => void;
+  onDelete: () => void;
 }) {
   return (
     <div className="space-y-3">
@@ -121,22 +141,10 @@ function DetailHeader({
           <Button variant="outline" onClick={onReveal}>
             Reveal
           </Button>
-          <Button
-            variant="outline"
-            onClick={() =>
-              // TODO(T14): open RenameDialog
-              console.warn("RenameDialog not yet wired (Plan 7 T14)")
-            }
-          >
+          <Button variant="outline" onClick={onRename}>
             Rename…
           </Button>
-          <Button
-            variant="outline"
-            onClick={() =>
-              // TODO(T14): open DeleteDialog
-              console.warn("DeleteDialog not yet wired (Plan 7 T14)")
-            }
-          >
+          <Button variant="outline" onClick={onDelete}>
             Delete…
           </Button>
         </div>
