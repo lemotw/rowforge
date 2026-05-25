@@ -402,3 +402,40 @@ export interface ProgressSnapshot {
   /** Plan 6 T5: sliding-window 10s rate. 0 while still warming up. */
   rate_10s: number;
 }
+
+// ===== Plan 7 handler authoring =====
+
+export type ManifestStatus = "valid" | "invalid" | "missing";
+
+export type ScaffoldTemplate = "go_stdio" | "go_batch" | "empty";
+
+export interface HandlerSummary {
+  name: string;
+  path: string;
+  manifest_status: ManifestStatus;
+  last_modified: string; // ISO 8601 UTC
+  version: string | null;
+  language: string | null;
+}
+
+export interface SourceFileSummary {
+  name: string;
+  size_bytes: number;
+  is_directory: boolean;
+}
+
+export interface HandlerDetail {
+  summary: HandlerSummary;
+  /** Parsed manifest (raw rowforge-core shape); null when manifest_status != "valid". */
+  manifest: Manifest | null;
+  manifest_errors: ManifestError[];
+  manifest_warnings: ManifestWarning[];
+  source_files: SourceFileSummary[];
+  has_fixtures_dir: boolean;
+}
+
+export interface ScaffoldArgs {
+  name: string;
+  template: ScaffoldTemplate;
+  primary_field: string;
+}
