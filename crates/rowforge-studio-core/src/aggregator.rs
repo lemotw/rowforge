@@ -33,6 +33,10 @@ pub struct ProgressSnapshot {
     pub in_flight: u32,
     pub queue_depth: u32,
     pub phase: Option<Phase>,
+    /// Sliding-window 10s rate (rows per second), computed from the
+    /// same 40-sample buffer that drives Tick events. Stays at 0.0
+    /// for the first ~10s of a run until the window fills.
+    pub rate_10s: f32,
 }
 
 pub struct ProgressAggregator {
@@ -78,7 +82,12 @@ impl ProgressAggregator {
     }
 
     pub fn snapshot(&self) -> ProgressSnapshot {
-        self.inner.lock().unwrap_or_else(|p| p.into_inner()).snapshot.clone()
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let mut s = inner.snapshot.clone();
+        // 40 samples × 250ms = 10s window; sum / 10.0 = rows/sec.
+        let sum: u64 = inner.rate_10s_buf.iter().sum();
+        s.rate_10s = (sum as f32) / 10.0;
+        s
     }
 
     pub fn set_total(&self, total: u64) {
@@ -226,6 +235,25 @@ impl ProgressAggregator {
         }
     }
 
+    /// Test-only: poke a synthetic rate into the 10s window buffer so
+    /// that `snapshot()` returns approximately `rate_10s` rows/sec.
+    ///
+    /// Each of the 40 buckets is set to `floor(rate_10s * 10 / 40)`.
+    /// This means `sum / 10.0` reconstructs the original rate with at
+    /// most ±2.5 rows/sec rounding loss (integer floor per bucket).
+    ///
+    /// Examples:
+    ///   rate=100 → per_bucket=25, sum=1000, snapshot=100.0 ✓
+    ///   rate=50  → per_bucket=12, sum=480,  snapshot=48.0  (≈50, within slack)
+    ///   rate=0   → per_bucket=0,  sum=0,    snapshot=0.0   ✓
+    #[cfg(test)]
+    pub fn set_rate_for_test(&self, rate_10s: f32) {
+        let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        // Set every bucket so the 10s window sum equals (rate_10s * 10) rounded.
+        let per_bucket = ((rate_10s * 10.0 / 40.0) as u64).max(0);
+        inner.rate_10s_buf.iter_mut().for_each(|x| *x = per_bucket);
+    }
+
     pub fn emit(&self, event: ProgressEvent) {
         let _ = self.tx.send(event);
     }
@@ -334,5 +362,24 @@ mod tests {
             ProgressEvent::PhaseChanged { phase: Phase::Running, .. }
         ));
         assert_eq!(agg.snapshot().phase, Some(Phase::Running));
+    }
+
+    #[test]
+    fn snapshot_default_rate_10s_is_zero() {
+        let agg = ProgressAggregator::new();
+        assert_eq!(agg.snapshot().rate_10s, 0.0);
+    }
+
+    #[test]
+    fn snapshot_rate_10s_reflects_set_rate_for_test() {
+        let agg = ProgressAggregator::new();
+        agg.set_rate_for_test(100.0);
+        let snap = agg.snapshot();
+        // Allow ±2.5 rows/sec slack for rounding (per_bucket integer math).
+        assert!(
+            (snap.rate_10s - 100.0).abs() < 5.0,
+            "rate_10s should be ~100, got {}",
+            snap.rate_10s,
+        );
     }
 }
