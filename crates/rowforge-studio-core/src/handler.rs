@@ -493,6 +493,56 @@ pub fn delete(workspace_root: &Path, name: &str) -> Result<(), crate::UiError> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Plan 7 T8 — rename (lazy on sqlite)
+// ---------------------------------------------------------------------------
+
+/// Rename a handler directory. `fs::rename` only — does NOT touch
+/// `handler_instances.source_snapshot_dir` in sqlite. Existing attempts
+/// continue to reference the old path; this is acceptable because
+/// handler_instance is content-addressed (binary_hash + manifest_hash
+/// determine identity; path is informational). See spec part 2 footnote.
+///
+/// Validates BOTH names against `[a-z0-9-]+` (path traversal fence).
+/// Errors:
+/// - `InvalidHandlerName` (regex fail on either name)
+/// - `HandlerNotFound` (source dir missing)
+/// - `HandlerExists` (destination already exists — atomic check before
+///   `fs::rename` which would otherwise overwrite or fail with an
+///   unfriendly OS error)
+/// - `Io` (filesystem op failure)
+pub fn rename(workspace_root: &Path, old: &str, new: &str) -> Result<(), crate::UiError> {
+    if !validate_name(old) {
+        return Err(crate::UiError::InvalidHandlerName {
+            name: old.to_string(),
+        });
+    }
+    if !validate_name(new) {
+        return Err(crate::UiError::InvalidHandlerName {
+            name: new.to_string(),
+        });
+    }
+    let handlers = workspace_root.join("handlers");
+    let src = handlers.join(old);
+    let dst = handlers.join(new);
+
+    if !src.is_dir() {
+        return Err(crate::UiError::HandlerNotFound {
+            name: old.to_string(),
+        });
+    }
+    if dst.exists() {
+        return Err(crate::UiError::HandlerExists {
+            name: new.to_string(),
+        });
+    }
+
+    std::fs::rename(&src, &dst).map_err(|e| {
+        crate::UiError::Io(format!("rename '{}' -> '{}': {}", old, new, e))
+    })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

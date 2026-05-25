@@ -309,6 +309,15 @@ impl StudioCore {
         crate::handler::delete(self.workspace.root.as_path(), name)
     }
 
+    /// Plan 7 T8: rename a handler directory. Lazy on sqlite — past
+    /// `handler_instances.source_snapshot_dir` rows continue to reference
+    /// the old path (handler_instance is content-addressed; the path field
+    /// is informational). Errors: InvalidHandlerName, HandlerNotFound,
+    /// HandlerExists, Io.
+    pub fn handler_rename(&self, old: &str, new: &str) -> Result<(), UiError> {
+        crate::handler::rename(self.workspace.root.as_path(), old, new)
+    }
+
     /// Return the Arc-wrapped session registry for this workspace.
     ///
     /// Used by the Tauri event bridge to spawn `forward_active_runs` with only

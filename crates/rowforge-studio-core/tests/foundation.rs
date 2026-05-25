@@ -1794,3 +1794,85 @@ fn delete_rejects_symlinked_dir_pointing_outside_workspace() {
     // resolved as the canonical target for remove_dir_all.
     let _ = result;
 }
+
+#[test]
+fn rename_moves_handler_dir() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn").tempdir().unwrap();
+    let src = tmp.path().join("handlers").join("old-name");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("rowforge.yaml"),
+        "name: old-name\nversion: 0.1.0\nentry:\n  cmd: [\"./old-name\"]\n",
+    ).unwrap();
+    std::fs::write(src.join("handler.go"), "package main").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    core.handler_rename("old-name", "new-name").unwrap();
+
+    let dst = tmp.path().join("handlers").join("new-name");
+    assert!(!src.is_dir(), "old dir should be gone");
+    assert!(dst.is_dir(), "new dir should exist");
+    // Contents preserved (rename, not copy).
+    assert!(dst.join("rowforge.yaml").is_file());
+    assert!(dst.join("handler.go").is_file());
+    // Note: rowforge.yaml's `name:` field is NOT auto-rewritten —
+    // that's user's responsibility after rename. The dir was renamed,
+    // the file contents are byte-identical.
+}
+
+#[test]
+fn rename_errors_on_unknown_source() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-nf").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("ghost", "new-name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }),
+        "got: {:?}", err);
+}
+
+#[test]
+fn rename_errors_when_destination_exists() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-ex").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("a")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("b")).unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("a", "b").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::HandlerExists { .. }),
+        "got: {:?}", err);
+
+    // Both dirs still there — rename was a no-op.
+    assert!(tmp.path().join("handlers").join("a").is_dir());
+    assert!(tmp.path().join("handlers").join("b").is_dir());
+}
+
+#[test]
+fn rename_rejects_invalid_old_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-bo").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("../etc", "new-name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }));
+}
+
+#[test]
+fn rename_rejects_invalid_new_name() {
+    let tmp = tempfile::Builder::new().prefix("rfs-plan7-rn-bn").tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("handlers").join("ok")).unwrap();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
+    ).unwrap();
+    let err = core.handler_rename("ok", "Bad Name").unwrap_err();
+    assert!(matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "got: {:?}", err);
+    // Source still intact — pre-flight regex blocked anything from happening.
+    assert!(tmp.path().join("handlers").join("ok").is_dir());
+}
