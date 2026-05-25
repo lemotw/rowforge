@@ -66,14 +66,14 @@ describe("ExecList — Select mode", () => {
     await screen.findByText("alpha");
 
     // No checkboxes yet
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
 
     // Click Select button
     fireEvent.click(screen.getByRole("button", { name: /^Select$/i }));
 
-    // Checkbox column should appear
+    // Checkbox column should appear: 1 master + 1 row = 2 total
     await waitFor(() => {
-      expect(screen.getByRole("checkbox")).toBeInTheDocument();
+      expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     });
   });
 
@@ -91,14 +91,15 @@ describe("ExecList — Select mode", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Select$/i }));
 
     await waitFor(() => {
+      // 1 master + 2 row checkboxes = 3 total
       const checkboxes = screen.getAllByRole("checkbox");
-      expect(checkboxes.length).toBe(2);
+      expect(checkboxes.length).toBe(3);
     });
 
     const checkboxes = screen.getAllByRole("checkbox");
-    // Find the one for the running exec — it's listed first in our mock data
-    const runningCheckbox = checkboxes[0] as HTMLInputElement;
-    const idleCheckbox = checkboxes[1] as HTMLInputElement;
+    // Master is rendered first (header row). Skip it; row checkboxes follow.
+    const runningCheckbox = checkboxes[1] as HTMLButtonElement;
+    const idleCheckbox = checkboxes[2] as HTMLButtonElement;
 
     expect(runningCheckbox.disabled).toBe(true);
     expect(runningCheckbox.title).toBe("Cancel active run first");
@@ -131,12 +132,13 @@ describe("ExecList — Select mode", () => {
     // Enter select mode
     fireEvent.click(screen.getByRole("button", { name: /^Select$/i }));
 
-    // Select the row (click the checkbox)
+    // Select the row (click the row checkbox, not the master)
     await waitFor(() => {
-      expect(screen.getByRole("checkbox")).toBeInTheDocument();
+      expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     });
 
-    fireEvent.click(screen.getByRole("checkbox"));
+    const rowCheckbox = screen.getAllByRole("checkbox")[1];
+    fireEvent.click(rowCheckbox);
 
     // Delete button should now show count 1 and be enabled
     await waitFor(() => {
@@ -161,7 +163,41 @@ describe("ExecList — Select mode", () => {
     expect(screen.getByText("5.0 MB")).toBeInTheDocument();
   });
 
-  // Test 6: Name cell has title attribute equal to exec_id
+  // Test 6: Master checkbox selects all non-active rows
+  it("master checkbox toggles all selectable rows; active rows stay unchecked", async () => {
+    mockInvoke([
+      makeExec({ id: "e-active", name: "running-exec", last_attempt_state: "running" }),
+      makeExec({ id: "e1", name: "idle-1" }),
+      makeExec({ id: "e2", name: "idle-2" }),
+    ]);
+    render(wrap(<ExecListPage />));
+
+    await screen.findByText("idle-1");
+    fireEvent.click(screen.getByRole("button", { name: /^Select$/i }));
+
+    await waitFor(() => {
+      // 1 master + 3 rows = 4
+      expect(screen.getAllByRole("checkbox")).toHaveLength(4);
+    });
+
+    // Click master → should select e1 + e2 but NOT e-active
+    const master = screen.getAllByRole("checkbox")[0];
+    fireEvent.click(master);
+
+    await waitFor(() => {
+      const deleteBtn = screen.getByRole("button", { name: /Delete 2 executions/i });
+      expect(deleteBtn).not.toBeDisabled();
+    });
+
+    // Click master again → deselects all
+    fireEvent.click(master);
+    await waitFor(() => {
+      const deleteBtn = screen.getByRole("button", { name: /Delete 0 execution/i });
+      expect(deleteBtn).toBeDisabled();
+    });
+  });
+
+  // Test 7: Name cell has title attribute equal to exec_id
   it("Name cell has title equal to exec_id for hover tooltip", async () => {
     mockInvoke([makeExec({ id: "exec-id-full-string", name: "my-exec" })]);
     render(wrap(<ExecListPage />));

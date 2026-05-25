@@ -8,6 +8,7 @@ import { AppShell } from "@/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { uiErrorMessage } from "@/ipc/types";
 import { formatBytes } from "@/lib/format";
 import { DeleteExecutionsDialog } from "@/components/DeleteExecutionsDialog";
@@ -66,6 +67,29 @@ export function ExecListPage() {
       else next.add(id);
       return next;
     });
+  };
+
+  // Selectable = not currently active. Drives the master checkbox state +
+  // the select-all behavior (active rows are never auto-selected).
+  const selectableExecs = useMemo(
+    () => (list.data ?? []).filter((e) => !activeExecIds.has(e.id)),
+    [list.data, activeExecIds],
+  );
+
+  const selectAllState = useMemo<boolean | "indeterminate">(() => {
+    if (selectableExecs.length === 0) return false;
+    const selectedCount = selectableExecs.filter((e) => selectedIds.has(e.id)).length;
+    if (selectedCount === 0) return false;
+    if (selectedCount === selectableExecs.length) return true;
+    return "indeterminate";
+  }, [selectableExecs, selectedIds]);
+
+  const toggleSelectAll = () => {
+    if (selectAllState === true) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(selectableExecs.map((e) => e.id)));
+    }
   };
 
   const exitSelectMode = () => {
@@ -190,7 +214,16 @@ export function ExecListPage() {
           <Table>
             <Thead>
               <Tr>
-                {selectMode && <Th className="w-8"></Th>}
+                {selectMode && (
+                  <Th className="w-8">
+                    <Checkbox
+                      checked={selectAllState}
+                      onCheckedChange={toggleSelectAll}
+                      disabled={selectableExecs.length === 0}
+                      aria-label="Select all"
+                    />
+                  </Th>
+                )}
                 <Th>Name</Th>
                 <Th className="text-right">Rows</Th>
                 <Th className="text-right">Attempts</Th>
@@ -212,17 +245,17 @@ export function ExecListPage() {
                     }}
                   >
                     {selectMode && (
-                      <Td>
-                        <input
-                          type="checkbox"
+                      <Td onClick={(ev) => ev.stopPropagation()}>
+                        <Checkbox
                           checked={isSelected}
                           disabled={isActive}
+                          onCheckedChange={() => toggleSelect(e.id)}
+                          aria-label={
+                            isActive
+                              ? "Cancel active run first"
+                              : `Select ${e.name ?? e.id}`
+                          }
                           title={isActive ? "Cancel active run first" : undefined}
-                          onChange={() => {}}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            toggleSelect(e.id);
-                          }}
                         />
                       </Td>
                     )}
