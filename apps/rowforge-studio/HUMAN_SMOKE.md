@@ -321,3 +321,148 @@ The handler is **not** picked here — it is selected per-Run on ExecDetail
 - No Settings hot-reload — `max_concurrent_runs` only takes effect on next workspace open (intentional; surfaced via dirty banner)
 - No multi-workspace recents / "Recently opened" picker
 - `slowest_run` heuristic is min positive rate_10s; ETA-based and stall-aware variants deferred
+
+## Plan 07 additions — Handler authoring (static surface)
+
+### Pre-populate fixtures
+
+Before launching, drop a couple of handler dirs into the workspace so the
+list page has rows. From a terminal (replace `<workspace>` with your path):
+
+```bash
+WS=<workspace>
+mkdir -p "$WS/handlers/alpha"
+cat > "$WS/handlers/alpha/rowforge.yaml" <<'EOF'
+name: alpha
+version: 0.1.0
+language: go
+kind: row
+primary_field: id
+entry:
+  cmd: ["./handler"]
+EOF
+touch "$WS/handlers/alpha/handler.go"
+
+# Invalid: missing required field
+mkdir -p "$WS/handlers/broken"
+echo "kind: row" > "$WS/handlers/broken/rowforge.yaml"
+
+# Missing manifest entirely
+mkdir -p "$WS/handlers/no-manifest"
+echo "// notes" > "$WS/handlers/no-manifest/notes.txt"
+```
+
+### Sidebar link + list page
+
+1. Sidebar **Handlers** entry no longer shows "Coming soon" — clicking it
+   routes to `/handlers`.
+2. List page renders 3 rows: `alpha` (green "valid"), `broken` (yellow
+   "invalid"), `no-manifest` (red "missing").
+3. Each row shows mono name, status badge, version, language, relative
+   timestamp, and per-row Edit / Reveal buttons.
+
+### Detail page
+
+4. Click `alpha` row → routes to `/handlers/alpha`.
+5. Header shows mono name, full path, and 4 action buttons:
+   Open in editor / Reveal / Rename… / Delete…
+6. **Manifest** section: green "valid" badge + key-value table
+   (kind, primary_field, entry.cmd).
+7. **Files** section: lists `rowforge.yaml`, `handler.go` with byte sizes.
+8. Back to list → click `broken` → red error list shows manifest parse
+   errors.
+9. Back to list → click `no-manifest` → "No rowforge.yaml in this handler
+   directory." copy.
+
+### Edit + Reveal
+
+10. Detail page → **Open in editor**. With no Settings.preferred_editor and
+    no $VISUAL/$EDITOR set, the resolver falls through to `which` probes
+    (code → cursor → nvim → vim → nano). The first match opens the
+    handler dir.
+11. **Reveal** → OS file manager opens at the handler dir.
+12. **Negative path**: clear all editor envs and Settings.preferred_editor;
+    move `code` / `cursor` etc. out of PATH (or just unset PATH for the
+    Studio session). Open in editor → toast with `editor_not_found` copy:
+    "No editor found. Set `$VISUAL` or `$EDITOR`, or configure 'Preferred
+    editor' in Settings."
+
+### Scaffold (New Handler)
+
+13. List page → **New Handler** → ScaffoldDialog opens.
+14. Type `BadName` → inline regex error; Create disabled.
+15. Clear, type `gamma`, leave **Go (row mode)** selected, leave
+    primary_field `id` → Create enables.
+16. Click **Create** → toast "Handler 'gamma' created"; dialog closes;
+    routes to `/handlers/gamma`.
+17. Verify the new handler shows: valid manifest, `primary_field: id`,
+    `kind: row`. Files section lists `rowforge.yaml`, `handler.go`,
+    `go.mod`.
+18. Open in editor on the new handler → confirm `{{name}}` /
+    `{{primary_field}}` were substituted (no literal `{{` left in source).
+19. Repeat with **Go (batch mode)** → name it `delta` → manifest shows
+    `batch_size: 5`.
+20. Repeat with **Empty** → name it `epsilon` → Files section shows only
+    `rowforge.yaml` (no .go or .mod).
+21. Try scaffold a name that already exists (`alpha`) → `HandlerExists`
+    inline error; dialog stays open.
+
+### Rename
+
+22. Go to `/handlers/gamma` → **Rename…** → dialog opens with `gamma`
+    pre-filled. Rename button disabled (unchanged).
+23. Edit to `gamma-renamed` → Rename enables.
+24. Click **Rename** → toast "Handler renamed to 'gamma-renamed'"; URL
+    updates to `/handlers/gamma-renamed`; detail page reflects new path.
+25. List page now shows `gamma-renamed`, no `gamma`.
+26. **Negative**: rename to `alpha` (existing) → `HandlerExists` banner;
+    dialog stays open.
+27. **Negative**: rename to `Bad-Name` → inline regex error; button
+    disabled.
+
+### Delete (typed-token)
+
+28. Go to `/handlers/delta` → **Delete…**.
+29. Type `Delta` (wrong case) → Delete stays disabled (case-sensitive).
+30. Type `delta` exactly → Delete enables with red destructive styling.
+31. Click **Delete** → toast "Handler 'delta' deleted"; routes to
+    `/handlers`; list no longer contains `delta`.
+32. **Symlink defense**: create a symlink pointing outside the workspace,
+    e.g. `ln -s /tmp/external "$WS/handlers/evil"`. Try to delete via the
+    UI → backend rejects with Io error (path-traversal: canonicalize
+    starts_with workspace check). No external files touched.
+
+### Settings.preferred_editor
+
+33. Settings page → confirm a new **Editor** section between Concurrency
+    and Telemetry.
+34. Type `code --wait` → **Save** → toast "Settings saved".
+35. Handler detail → Open in editor → resolver now uses `code --wait` (VS
+    Code opens; the spawn doesn't return until you close the file).
+36. Clear the Editor field → Save → field normalizes back to null. Open in
+    editor falls back to $VISUAL/$EDITOR/auto-probe.
+
+### `handlers:list` event refresh
+
+37. Open `/handlers` in the app. From inside the app, trigger a scaffold
+    / delete / rename. The list refreshes immediately without manual
+    reload (Tauri event `handlers:list` emitted by mutation commands).
+38. (Plan 7 is static — no filesystem watcher. External edits via terminal
+    do NOT auto-refresh; that's expected.)
+
+### Lazy rename semantics
+
+39. If past executions reference a renamed handler, those rows still show
+    the OLD handler name on ExecHistoryPage (lazy semantics —
+    `executions.last_handler_dir` snapshot preserved). Rename only touches
+    the filesystem; sqlite is untouched.
+
+### Known Plan 7 limitations (deferred to Plan 8+)
+
+- No manifest editor — manifests are read-only in Studio; users edit them
+  via Open in editor / external tools
+- No Pack / smoke-test surface — handler verification is filesystem-only
+- No filesystem watcher — list/detail refresh only on app-side mutations
+  or manual reload
+- No detail-page file-click-to-open — files are display-only; Open in
+  editor on the page header opens the whole dir
