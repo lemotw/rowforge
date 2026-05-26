@@ -575,6 +575,10 @@ impl StudioCore {
                 // Plan 14: set hard_cancel FIRST, then fire the token. The worker
                 // loop observes the cancel token, then checks hard_cancel.load()
                 // and branches to killpg() instead of graceful shutdown.
+                //
+                // Relaxed is sufficient: the cancel_token's internal Release on
+                // cancel() / Acquire on is_cancelled() establishes the happens-
+                // before edge that makes this store visible to the worker.
                 session
                     .hard_cancel
                     .store(true, std::sync::atomic::Ordering::Relaxed);

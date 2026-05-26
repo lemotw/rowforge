@@ -207,7 +207,7 @@ export interface ExecDetail {
 export interface AttemptSummary {
   id: AttemptId;
   state: string;
-  /** Plan 14: when state is `cancelled`, distinguishes hard-kill from soft cancel. */
+  /** Plan 14: when state is `aborted`, distinguishes hard-kill from soft cancel. */
   cancelled_reason: string | null;
   started_at: string;
   finished_at: string | null;
@@ -219,7 +219,7 @@ export interface AttemptDetail {
   id: AttemptId;
   execution_id: ExecutionId;
   state: string;
-  /** Plan 14: when state is `cancelled`, distinguishes hard-kill from soft cancel. */
+  /** Plan 14: when state is `aborted`, distinguishes hard-kill from soft cancel. */
   cancelled_reason: string | null;
   run_type: string;
   started_at: string;

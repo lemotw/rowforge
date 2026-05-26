@@ -196,7 +196,7 @@ function StateChip({
   state: string;
   cancelledReason: string | null;
 }) {
-  if (state === "cancelled" && cancelledReason === "hard_cancel") {
+  if (state === "aborted" && cancelledReason === "hard_cancel") {
     return <span className="text-red-400">● force-killed</span>;
   }
   const tone =

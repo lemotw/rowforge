@@ -154,7 +154,7 @@ export function AttemptDetailPage() {
               <h1 className="text-xl font-medium">Attempt {detail.data.id}</h1>
               <div className="mt-1 text-sm text-muted-foreground">
                 state:{" "}
-                {detail.data.state === "cancelled" &&
+                {detail.data.state === "aborted" &&
                 detail.data.cancelled_reason === "hard_cancel" ? (
                   <span className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">
                     force-killed

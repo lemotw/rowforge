@@ -45,7 +45,7 @@ pub struct AttemptSummary {
     pub finished_at: Option<DateTime<Utc>>,
     pub run_type: String,
     pub stats: Option<AttemptCountsStub>,
-    /// Plan 14: when state is `cancelled`, this carries the reason
+    /// Plan 14: when state is `aborted`, this carries the reason
     /// (`Some("hard_cancel")` for force-killed, `None` for soft cancel).
     pub cancelled_reason: Option<String>,
 }
