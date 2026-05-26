@@ -786,6 +786,7 @@ impl StudioCore {
                     .and_then(|v| v.as_str().map(String::from))
                     .unwrap_or_else(|| format!("{:?}", a.run_type).to_lowercase()),
                 stats: None, // backfilled in attempt() detail call (Task 9)
+                cancelled_reason: a.cancelled_reason.clone(),
             })
             .collect();
 
@@ -867,6 +868,7 @@ impl StudioCore {
                 handler_stderr_log: attempt_dir.join("handler.stderr.log"),
             },
             is_terminal,
+            cancelled_reason: attempt.cancelled_reason.clone(),
         })
     }
 
