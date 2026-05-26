@@ -326,3 +326,33 @@ fn plan9_handler_log_line_json_shape() {
     assert_eq!(v["stream"], "stderr", "stream must be snake_case: {v:?}");
     assert_eq!(v["line"], "hello", "line key: {v:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Plan 10 T4 — execution_delete commands
+// ---------------------------------------------------------------------------
+
+/// Compile-time symbol check: both Plan 10 delete commands are registered
+/// and callable via the commands module.
+#[test]
+fn plan10_execution_delete_commands_registered() {
+    let _ = rowforge_studio_lib::commands::execution_delete;
+    let _ = rowforge_studio_lib::commands::execution_delete_bulk;
+}
+
+/// ExecDeleteBulkResult is #[non_exhaustive] — use round-trip via JSON instead
+/// of struct literal construction. Verifies the JSON shape the TS mirror will
+/// depend on.
+#[test]
+fn plan10_exec_delete_bulk_result_json_shape() {
+    let json = serde_json::json!({
+        "deleted": ["e_1", "e_2"],
+        "failed": [
+            { "exec_id": "e_3", "reason": "active run" }
+        ],
+    });
+    let parsed: rowforge_studio_core::ExecDeleteBulkResult =
+        serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.deleted, vec!["e_1".to_string(), "e_2".to_string()]);
+    assert_eq!(parsed.failed.len(), 1);
+    assert_eq!(parsed.failed[0].exec_id, "e_3");
+}

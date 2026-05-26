@@ -48,6 +48,14 @@ pub enum ExecCmd {
     /// Merge all attempt outputs into a single success.csv / failed.csv
     /// per the RowResolution rules (spec § Row Resolution).
     Export(ExportArgs),
+    /// Delete an execution and all its attempt data (sqlite + dir).
+    Delete {
+        /// Execution id (mutually exclusive with --all-completed).
+        exec_id: Option<String>,
+        /// Delete every execution that has no active run.
+        #[arg(long, conflicts_with = "exec_id")]
+        all_completed: bool,
+    },
 }
 
 #[derive(Args)]
@@ -272,6 +280,8 @@ pub async fn run(args: ExecArgs) -> Result<i32> {
         }
         ExecCmd::Attempt(a) => show_attempt(&store, &a.attempt_id),
         ExecCmd::Export(a) => do_export(&store, a),
+        // Delete is intercepted in main.rs before reaching this function.
+        ExecCmd::Delete { .. } => unreachable!("Delete is handled in main before exec_cmd::run"),
     }
 }
 

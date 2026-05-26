@@ -78,6 +78,11 @@ impl StudioCore {
     pub fn export(&self, e: &ExecutionId, opts: ExportOpts)
         -> Result<ExportReport, UiError>;
 
+    // Execution deletion (Plan 10; see Part 3 §3.10)
+    pub fn execution_delete(&self, exec_id: &str) -> Result<(), UiError>;
+    pub fn execution_delete_bulk(&self, exec_ids: Vec<String>)
+        -> Result<ExecDeleteBulkResult, UiError>;
+
     // Handler-authoring anchor points (Part 5 §5.4)
     pub fn validate_manifest(&self, source: ManifestSource)
         -> Result<ManifestReport, UiError>;
@@ -199,6 +204,10 @@ pub enum UiError {
 
     #[error("handler '{name}' has no entry.build in its manifest")]
     NoBuildCommand { name: String },
+
+    // Plan 10 — execution deletion
+    #[error("execution is in use: {exec_id}")]
+    ExecutionInUse { exec_id: String },
 }
 ```
 
@@ -219,6 +228,12 @@ Plan 8 variant details:
 | `BuildFailed { name, exit_code }` | `build_failed` | `{ name, exit_code }` | `handler_build` when build exits non-zero | Sonner toast: "Build failed for 'NAME' (exit N). See the Last build section for details." |
 | `ToolchainMissing { name, tool }` | `toolchain_missing` | `{ name, tool }` | `handler_build` when `entry.build[0]` not in `PATH` | Toast: "Build tool 'TOOL' not found in PATH. Install it or update entry.build in your manifest." |
 | `NoBuildCommand { name }` | `no_build_command` | `{ name }` | `handler_build` when manifest has no `entry.build` | Toast: "Handler 'NAME' has no entry.build command in rowforge.yaml." |
+
+Plan 10 variant details:
+
+| Variant | Serialized `kind` | Payload | Emitted by | UI rendering |
+|---|---|---|---|---|
+| `ExecutionInUse { exec_id }` | `execution_in_use` | `{ exec_id }` | `execution_delete` / `execution_delete_bulk` (per-item) when `SessionRegistry::has_active_run_for_exec` returns `true` | Checkbox disabled in ExecList select mode with tooltip "Cancel active run first"; bulk-fail yellow alert above the list showing which exec_ids could not be deleted |
 
 Composition rules:
 - No blanket `From<anyhow::Error> for UiError`.
@@ -307,6 +322,16 @@ handler_log_subscribe(exec_id, attempt_id)          -> ()
     // events (100 ms / 64-line batch). Errors if attempt is not active.
 handler_log_unsubscribe(attempt_id)                 -> ()
     // Cancels the pump started by handler_log_subscribe.
+
+// Plan 10 — execution deletion (see Part 3 §3.10)
+execution_delete(exec_id)                           -> ()
+    // Deletes one execution. Emits exec_list:refresh on success.
+    // Returns ExecutionInUse if a session is active for the exec.
+    // Returns NotFound if the exec does not exist.
+execution_delete_bulk(exec_ids)                     -> ExecDeleteBulkResult
+    // Deletes multiple executions serially. Emits exec_list:refresh after
+    // any successful delete. Never aborts early; partial failures are
+    // returned in ExecDeleteBulkResult.failed.
 ```
 
 `handler_build` note: the command is declared `async` but currently
@@ -359,6 +384,7 @@ run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (Part 6 §6.6)
 handlers:list                         ()                      // Plan 7: coarse refresh hint emitted after scaffold/delete/rename
 handler_log:<attempt_id>              HandlerLogBatch payload // Plan 9: batched 100 ms / 64-line
+exec_list:refresh                     ()                      // Plan 10: emitted after any successful execution_delete / execution_delete_bulk; React invalidates exec_list query
 ```
 
 `HandlerLogBatch` payload:
@@ -394,6 +420,25 @@ pub struct HandlerLogLine {
     pub line: String,
 }
 ```
+
+**`ExecDeleteBulkResult` and `ExecDeleteFailure` types (Plan 10):**
+
+```typescript
+interface ExecDeleteBulkResult {
+  deleted: string[];             // exec_ids successfully removed
+  failed: ExecDeleteFailure[];
+}
+
+interface ExecDeleteFailure {
+  exec_id: string;
+  reason: string;                // e.g. "execution is in use" or "not found"
+}
+```
+
+TypeScript mirrors of Part 2 §2.2.10. The `useExecutionDeleteBulk` hook
+wraps `execution_delete_bulk` and invalidates the `exec_list` query on
+any successful delete (including partial success where `deleted.length >
+0`).
 
 ## 5.6 Settings
 

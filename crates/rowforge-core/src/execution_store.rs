@@ -655,6 +655,45 @@ impl ExecutionStore {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows.into_iter().map(Ok).collect()
     }
+
+    /// Returns `true` if at least one attempt for this execution is in a
+    /// non-terminal state (i.e. still running).
+    ///
+    /// This is the **cross-process** source of truth for active-run detection:
+    /// SQLite is visible to every process sharing the workspace, unlike the
+    /// in-process `SessionRegistry` which is empty in a fresh CLI invocation.
+    ///
+    /// Terminal states (the inverse set): `"completed"`, `"aborted"`.
+    /// Any row that does NOT have one of these states is considered active.
+    pub fn has_active_attempt(&self, exec_id: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM attempts
+             WHERE execution_id = ?1
+               AND state NOT IN ('completed', 'aborted')",
+            params![exec_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Hard-delete an execution and all its child rows in a single transaction.
+    ///
+    /// The schema has no `ON DELETE CASCADE` on the `attempts.execution_id` FK
+    /// (MIGRATION_V2), so we delete children manually before the parent.
+    ///
+    /// Cascade order: `attempts` → `executions`.
+    ///
+    /// Returns `Ok(true)` when the execution was deleted, `Ok(false)` when it
+    /// did not exist (caller decides whether that is an error).
+    pub fn delete_execution(&mut self, exec_id: &str) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        // 1. Delete child rows first (no ON DELETE CASCADE configured).
+        tx.execute("DELETE FROM attempts WHERE execution_id = ?1", params![exec_id])?;
+        // 2. Delete the execution itself; rows_affected == 0 means not found.
+        let rows = tx.execute("DELETE FROM executions WHERE id = ?1", params![exec_id])?;
+        tx.commit()?;
+        Ok(rows > 0)
+    }
 }
 
 const MIGRATION_V1: &str = r#"

@@ -221,6 +221,53 @@ pool-streaming tee 為附加行為：`on_handler_log` 為 `None` 的 CLI 路徑
 中，stderr 仍像以往透過 `eprintln!` 印到終端機。`capture_raw_stdout` 旗
 標在 CLI 路徑中無關，預設 `false`。
 
+## 3.10 執行刪除（Plan 10）
+
+### 進行中執行的防護閘
+
+`StudioCore::execution_delete(exec_id)` 首先驗證 `exec_id` 通過
+`is_valid_id_component` 檢查（與其他地方的 id 驗證使用相同正則），再查詢
+`SessionRegistry::has_active_run_for_exec`。若該執行存在任何活躍的
+session，呼叫立即回傳 `UiError::ExecutionInUse { exec_id }` — 不做任何
+部分操作。
+
+### SQLite 串接刪除（手動；無 `ON DELETE CASCADE`）
+
+目前的 schema **不**在 `attempts` 到 `executions` 的外鍵上使用
+`ON DELETE CASCADE`。因此在單一交易中手動執行刪除：
+
+1. `DELETE FROM attempts WHERE execution_id = ?`
+2. `DELETE FROM executions WHERE id = ?`
+
+兩個陳述式以原子方式執行。任一失敗即回滾交易並回傳錯誤。
+
+### 檔案系統清理
+
+SQLite 交易提交後，Studio 對
+`<workspace_root>/executions/<exec_id>/` 呼叫 `fs::remove_dir_all`。
+此步驟為**盡力而為**：
+
+- 若目錄不存在（已由外部刪除），錯誤靜默忽略。
+- 若 `remove_dir_all` 因其他原因失敗（權限、OS 錯誤），錯誤**記錄但不回傳給呼叫端**
+  — SQLite 記錄為唯一的真相來源。孤兒目錄不會出現在後續
+  `exec_list` 結果中，但仍保留在磁碟上。
+
+### 冪等性
+
+嘗試刪除不存在的執行會回傳
+`UiError::NotFound { kind: "execution", id }`。這是進行中執行防護閘
+通過後唯一的失敗模式（IO 錯誤除外），呼叫端可將「刪除成功後再次刪除」
+視為可預測的 `NotFound`。
+
+### 批量刪除
+
+`StudioCore::execution_delete_bulk(exec_ids: Vec<String>)` 依串列迭代清單，
+對每個 id 呼叫 `execution_delete`。失敗會累積至
+`ExecDeleteBulkResult::failed`；迴圈**永不提早中止**。無論前面的失敗，
+剩餘 id 仍會繼續嘗試。函式始終回傳 `Ok(ExecDeleteBulkResult)` —
+`Result` 的錯誤臂僅用於適用於整個呼叫的引數驗證錯誤（例如 id 清單為空），
+而非每項的失敗。
+
 ## 3.8 背景與閒置行為
 
 - macOS App Nap 預設不關閉。Studio 在背景時長時間執行的 attempts 可能

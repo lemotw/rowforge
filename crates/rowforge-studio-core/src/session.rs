@@ -151,6 +151,44 @@ impl SessionRegistry {
         self.inner.lock().unwrap_or_else(|p| p.into_inner()).len()
     }
 
+    /// Return `true` if any active session belongs to `execution_id`.
+    ///
+    /// Used by `StudioCore::execution_delete` to refuse deletion while a run
+    /// is in progress on that execution.
+    pub fn has_active_run_for_exec(&self, execution_id: &str) -> bool {
+        let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        inner.values().any(|s| s.execution_id == execution_id)
+    }
+
+    /// Register a minimal fake session for a given `execution_id`.
+    ///
+    /// Used by integration tests (outside this crate) to exercise the active-run
+    /// gate without going through the full `start_run` pipeline. `Session` is
+    /// `#[non_exhaustive]`, so cross-crate construction is forbidden; this helper
+    /// fills that gap.
+    ///
+    /// Returns the `RunHandle` so callers can reference or remove the session.
+    #[doc(hidden)]
+    pub fn register_fake_session_for_test(&self, execution_id: &str) -> RunHandle {
+        use std::time::Instant;
+        let (tick_stop, _) = tokio::sync::watch::channel(false);
+        let (handler_log_tx, _) = broadcast::channel(HANDLER_LOG_CHANNEL_CAP);
+        let session = std::sync::Arc::new(Session {
+            handle: RunHandle::new(),
+            execution_id: execution_id.to_string(),
+            attempt_id: format!("a_fake_{}", execution_id),
+            aggregator: std::sync::Arc::new(crate::aggregator::ProgressAggregator::new()),
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            tick_stop,
+            status: std::sync::Mutex::new(crate::run_handle::RunStatus::Running),
+            started_at: Instant::now(),
+            handler_log_tx,
+        });
+        let handle = session.handle.clone();
+        self.register(session);
+        handle
+    }
+
     pub fn workspace_limit(&self) -> u32 {
         self.workspace_limit
     }

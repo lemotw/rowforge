@@ -718,3 +718,168 @@ Studio Logs tab states (bootstrap / live / filters / auto-scroll / pause
 - The broadcast channel cap is 4096 lines; a handler emitting faster
   than the Tauri event pump can drain will see drops. The file is
   unaffected.
+
+---
+
+# Manual smoke check — Plan 10 (execution delete)
+
+Plan 10 adds single and bulk execution deletion, Select mode on the Exec
+list, an on-disk Size column, and `rowforge exec delete` CLI subcommands.
+
+## 1. Setup
+
+1. Open a fresh workspace (or use an existing one). Create 3 executions
+   via "New execution" — give them distinct names such as `smoke-a`,
+   `smoke-b`, `smoke-c`. Use a small CSV input (5–10 rows) so runs
+   finish quickly.
+
+2. Start a run on `smoke-a` and let it proceed but do **not** cancel it
+   yet — you need an active run for the active-run gate tests below
+   (step 11 and step 18). If the run finishes before you reach those
+   steps, start it again.
+
+## 2. ExecList column display
+
+3. The ExecList should show columns in this order:
+   **Name | Rows | Attempts | Size | Created**
+   Verify no "Status" or other column has slipped in, and that "Size"
+   appears between Attempts and Created.
+
+4. Hover over any Name cell. A tooltip appears showing the full
+   `exec_id` (e.g. `e_01JXXXXXXXXXXXXXXX`). The cell text shows the
+   human-readable name, not the id.
+
+5. The Size column shows formatted bytes (e.g. `3.2 KB`, `5.0 MB`).
+   Executions that have never run will show a small size (just the
+   SQLite row; no attempt dir). If an execution's directory is missing
+   from disk, the cell shows `—`.
+
+6. The Created column is rightmost. Values are human-friendly timestamps
+   (e.g. "2 minutes ago" or an absolute date — whichever the component
+   uses).
+
+## 3. Select mode
+
+7. Click the **Select** button in the Exec list header. The button label
+   changes to **Cancel**; a checkbox column appears as the leftmost
+   column.
+
+8. Verify every row now has a checkbox on the left. Unselected rows have
+   an unchecked box; no rows are pre-selected.
+
+9. Click a non-running row → the checkbox ticks; the row background
+   highlights. Click it again → unchecked. Clicking the row no longer
+   navigates to the detail page in Select mode.
+
+10. Click **Cancel** in the header → Select mode exits, checkboxes
+    disappear, the button label reverts to **Select**, and no rows remain
+    highlighted.
+
+11. With `smoke-a` still running: re-enter Select mode. The `smoke-a`
+    row's checkbox should be **disabled** (grayed out). Hover over the
+    checkbox area → tooltip: "Cancel active run first". You cannot tick
+    it.
+
+## 4. Single delete via Select
+
+12. Re-enter Select mode. Select `smoke-b` (the one that is not running).
+    The header shows **Delete 1 execution**. Click it.
+
+13. `DeleteExecutionsDialog` opens with title **Delete 1 execution?**.
+    It lists `smoke-b`'s name, its size in formatted bytes, and the
+    message "Are you sure? This action cannot be undone."
+
+14. Click the destructive **Delete** button. The dialog closes; a Sonner
+    toast says "1 execution deleted". The Exec list refreshes and
+    `smoke-b` is gone. Verify on disk:
+    ```bash
+    ls <workspace>/executions/
+    ```
+    The `e_...` directory for `smoke-b` should no longer exist.
+
+## 5. Bulk delete (happy path)
+
+15. Select both `smoke-c` and any other completed execution (not the
+    active one). The header shows **Delete 2 executions**. Click it.
+
+16. The dialog title is **Delete 2 executions?**. It lists both names.
+    The total size shown is the sum of both. Confirm → toast "2
+    executions deleted"; the list refreshes; both are gone.
+
+17. Verify both directories are removed from disk:
+    ```bash
+    ls <workspace>/executions/
+    ```
+    Only `smoke-a`'s directory (the one with the active run) should
+    remain, along with any executions you created after step 14.
+
+## 6. Active-run gate (bulk partial fail path)
+
+18. Create two new executions `smoke-d` and `smoke-e`. Start a run on
+    `smoke-d` and leave it running. Enter Select mode. Select both
+    `smoke-d` (active) and `smoke-e`. Notice `smoke-d`'s checkbox is
+    disabled — you cannot select it. This means the UI already prevents
+    you from queueing an active exec for deletion.
+
+    (Alternative path if you want to hit the server-side gate directly:
+    use the CLI in step 21.)
+
+19. Instead of fighting the UI gate, cancel the run on `smoke-d` first
+    (or let it finish), then proceed to delete both via Select mode.
+    Both should delete cleanly. This confirms the gate clears after the
+    run ends.
+
+## 7. ExecDetail — deleted-elsewhere 404 fallback
+
+20. Open two browser tabs / windows pointing to the same Studio instance.
+    In tab 1, navigate to the detail page of an existing execution (e.g.
+    `/exec/<id>`). In tab 2, delete that execution via Select mode.
+
+    Tab 1 should react to the `exec_list:refresh` event (the React Query
+    cache invalidates). Navigate to the detail page in tab 1 (or refresh
+    it). The page renders:
+
+    > This execution has been deleted or is unavailable.
+
+    with a **← Back** link to the Executions list. No crash, no spinner
+    stuck forever.
+
+## 8. CLI
+
+21. Run:
+    ```bash
+    rowforge exec delete <exec_id>
+    ```
+    where `<exec_id>` is a valid execution in the workspace. Expected:
+    - stderr: `[<id>] deleted`
+    - exit code: `0`
+
+    Then run with a non-existent id:
+    ```bash
+    rowforge exec delete e_00000000000000000000000000
+    ```
+    Expected: stderr error line, exit code 1.
+
+22. Run:
+    ```bash
+    rowforge exec delete --all-completed
+    ```
+    This deletes every execution that does not have an active run. Each
+    successfully deleted execution prints one stderr line:
+    `[<id>] deleted`. Any failures print an error line. The exit code
+    equals the number of failures (capped at 125). Verify the workspace's
+    `executions/` directory contains only directories for active or
+    never-run executions (or is empty if none remain).
+
+### Known Plan 10 limitations
+
+- No trash / undo. Deletion is immediate and permanent.
+- Partial-attempt deletion is not supported — deletion is at the
+  execution level only (all attempts are removed together).
+- Bulk delete is serial, not parallel. Deleting 100 executions takes
+  100 × (SQLite round-trip + fs removal) time.
+- Active-run refusal requires manual cancel first; there is no
+  auto-cancel-then-delete shortcut.
+- The Size column value is populated lazily via `walkdir` during
+  `exec_list` — it reflects the size at list-load time, not a live
+  counter.

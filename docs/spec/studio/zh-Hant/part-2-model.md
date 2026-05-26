@@ -47,6 +47,7 @@ struct ExecSummary {
     last_attempt_state: Option<AttemptState>,
     last_attempt_counts: Option<AttemptCounts>,   // 只是最後一次 attempt 的 success/failed/crashed
     last_handler_dir: Option<PathBuf>,             // Plan 6：最近一次 run 的 handler 目錄；供 RunButton 預設值使用
+    size_bytes: Option<u64>,             // Plan 10：執行目錄的磁碟佔用大小；目錄不存在或尚未量測時為 None
 }
 ```
 - `last_attempt_counts` 不是跨 attempt 的 rollup。Rollup 是
@@ -181,6 +182,24 @@ workspace。
 > 需將 `schema_version` 由 1 升至 2。Plan 7 採容忍 reader 方式加入
 > `preferred_editor`，未升版號。以本注意事項為準；§8.6.4 保留原設計
 > 文字以供參照。
+
+### 2.2.10 `ExecDeleteBulkResult` 與 `ExecDeleteFailure`（Plan 10）
+
+```rust
+struct ExecDeleteBulkResult {
+    deleted: Vec<String>,          // 成功刪除的 exec_id 清單
+    failed: Vec<ExecDeleteFailure>,
+}
+
+struct ExecDeleteFailure {
+    exec_id: String,
+    reason: String,                // 人類可讀；例如 "execution is in use" 或 "not found"
+}
+```
+
+`ExecDeleteBulkResult` 由 `execution_delete_bulk` 回傳。串列執行：若某一筆
+失敗，剩餘項目仍繼續嘗試，操作不會提早中止。呼叫端可檢查 `failed`，在
+UI 顯示部分失敗警告。
 
 ## 2.3 故意不作為實體
 

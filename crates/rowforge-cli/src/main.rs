@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 
 use rowforge_cli::pack_cmd;
 mod exec_cmd;
+mod exec_delete_cmd;
 mod handler_build_cmd;
 mod run_cmd;
 
@@ -67,13 +68,34 @@ async fn main() {
                 3
             }
         },
-        Cmd::Exec(args) => match exec_cmd::run(args).await {
-            Ok(code) => code,
-            Err(e) => {
-                eprintln!("[rowforge] error: {:#}", e);
-                3
+        Cmd::Exec(args) => {
+            // Intercept `exec delete` before the async exec_cmd path so that
+            // exec_delete_cmd can live in main.rs scope (no async needed).
+            if let exec_cmd::ExecCmd::Delete { exec_id, all_completed } = args.cmd {
+                let workspace = match rowforge_workspace() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("[rowforge] error: {:#}", e);
+                        std::process::exit(3);
+                    }
+                };
+                match exec_delete_cmd::run(&workspace, exec_id, all_completed) {
+                    Ok(code) => code,
+                    Err(e) => {
+                        eprintln!("[rowforge] error: {:#}", e);
+                        3
+                    }
+                }
+            } else {
+                match exec_cmd::run(args).await {
+                    Ok(code) => code,
+                    Err(e) => {
+                        eprintln!("[rowforge] error: {:#}", e);
+                        3
+                    }
+                }
             }
-        },
+        }
         Cmd::Handler { action } => {
             let workspace = match rowforge_workspace() {
                 Ok(p) => p,

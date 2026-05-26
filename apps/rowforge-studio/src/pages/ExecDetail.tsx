@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
+import { listen } from "@tauri-apps/api/event";
+import { useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, Thead, Tr, Th, Td } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,6 +18,22 @@ export function ExecDetailPage() {
   const ws = useWorkspace();
   const detail = useExecDetail(id ?? null);
   const [exportOpen, setExportOpen] = useState(false);
+  const qc = useQueryClient();
+
+  // When another window or the CLI deletes an execution, Tauri emits
+  // exec_list:refresh. Invalidating the exec_show query for this id causes
+  // a refetch; if the exec is gone the existing not_found branch renders.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen("exec_list:refresh", () => {
+      qc.invalidateQueries({ queryKey: ["exec_show", id] });
+    }).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [qc, id]);
 
   if (ws.data === null && !ws.isLoading) return <Navigate to="/" replace />;
 
@@ -29,9 +47,26 @@ export function ExecDetailPage() {
     <AppShell workspace={workspace} crumbs={crumbs}>
       <div className="p-6">
         {detail.isLoading && <Skeleton className="h-32 w-full" />}
-        {detail.isError && (
-          <div className="text-red-300">{uiErrorMessage(detail.error)}</div>
-        )}
+        {detail.isError && (() => {
+          const msg = uiErrorMessage(detail.error);
+          const isNotFound =
+            typeof detail.error === "object" &&
+            detail.error !== null &&
+            "kind" in detail.error &&
+            (detail.error as { kind: string }).kind === "not_found";
+          return isNotFound ? (
+            <div className="space-y-3">
+              <div className="text-red-300">
+                This execution has been deleted or is unavailable.
+              </div>
+              <Link to="/" className="text-blue-400 hover:underline">
+                ← Back to executions
+              </Link>
+            </div>
+          ) : (
+            <div className="text-red-300">{msg}</div>
+          );
+        })()}
         {detail.data && (
           <>
             <header className="mb-6 flex items-start justify-between">
@@ -59,34 +94,7 @@ export function ExecDetailPage() {
               </TabsList>
 
               <TabsContent value="attempts">
-                {detail.data.attempts.length === 0 ? (
-                  <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-                    This execution has never been run.
-                  </div>
-                ) : (
-                  <Table>
-                    <Thead>
-                      <Tr><Th>#</Th><Th>State</Th><Th>Started</Th><Th>Run type</Th><Th></Th></Tr>
-                    </Thead>
-                    <tbody>
-                      {detail.data.attempts.map((a, i) => (
-                        <Tr key={a.id}>
-                          <Td>{i + 1}</Td>
-                          <Td><StateChip state={a.state} /></Td>
-                          <Td className="font-mono">
-                            {new Date(a.started_at).toISOString().replace("T", " ").slice(0, 16)}
-                          </Td>
-                          <Td>{a.run_type}</Td>
-                          <Td>
-                            <Link to={`/exec/${id}/attempt/${a.id}`} className="text-primary hover:underline">
-                              open ⏵
-                            </Link>
-                          </Td>
-                        </Tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                )}
+                <AttemptsList attempts={detail.data.attempts} execId={id!} />
               </TabsContent>
 
               <TabsContent value="rollup">
@@ -107,6 +115,77 @@ export function ExecDetailPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+function AttemptsList({
+  attempts,
+  execId,
+}: {
+  attempts: import("@/ipc/types").AttemptSummary[];
+  execId: string;
+}) {
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+
+  const sorted = useMemo(() => {
+    const copy = [...attempts];
+    copy.sort((a, b) => {
+      const ta = new Date(a.started_at).getTime();
+      const tb = new Date(b.started_at).getTime();
+      return sortDir === "desc" ? tb - ta : ta - tb;
+    });
+    return copy;
+  }, [attempts, sortDir]);
+
+  if (attempts.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
+        This execution has never been run.
+      </div>
+    );
+  }
+
+  const toggleSort = () => setSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
+  const arrow = sortDir === "desc" ? "▼" : "▲";
+
+  return (
+    <Table>
+      <Thead>
+        <Tr>
+          <Th>State</Th>
+          <Th>Run type</Th>
+          <Th>
+            <button
+              type="button"
+              onClick={toggleSort}
+              className="inline-flex items-center gap-1 hover:text-foreground"
+              aria-label={`Sort by Started ${sortDir === "desc" ? "ascending" : "descending"}`}
+            >
+              Started <span className="text-muted-foreground text-[10px]">{arrow}</span>
+            </button>
+          </Th>
+          <Th></Th>
+        </Tr>
+      </Thead>
+      <tbody>
+        {sorted.map((a) => (
+          <Tr key={a.id}>
+            <Td>
+              <StateChip state={a.state} />
+            </Td>
+            <Td>{a.run_type}</Td>
+            <Td className="font-mono">
+              {new Date(a.started_at).toISOString().replace("T", " ").slice(0, 16)}
+            </Td>
+            <Td>
+              <Link to={`/exec/${execId}/attempt/${a.id}`} className="text-primary hover:underline">
+                open ⏵
+              </Link>
+            </Td>
+          </Tr>
+        ))}
+      </tbody>
+    </Table>
   );
 }
 

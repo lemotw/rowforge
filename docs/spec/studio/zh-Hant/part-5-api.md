@@ -76,6 +76,11 @@ impl StudioCore {
     pub fn export(&self, e: &ExecutionId, opts: ExportOpts)
         -> Result<ExportReport, UiError>;
 
+    // Execution 刪除（Plan 10；見第 3 部分 §3.10）
+    pub fn execution_delete(&self, exec_id: &str) -> Result<(), UiError>;
+    pub fn execution_delete_bulk(&self, exec_ids: Vec<String>)
+        -> Result<ExecDeleteBulkResult, UiError>;
+
     // Handler 撰寫的錨點（第 5 部分 §5.4）
     pub fn validate_manifest(&self, source: ManifestSource)
         -> Result<ManifestReport, UiError>;
@@ -196,6 +201,10 @@ pub enum UiError {
 
     #[error("handler '{name}' has no entry.build in its manifest")]
     NoBuildCommand { name: String },
+
+    // Plan 10 — 執行刪除
+    #[error("execution is in use: {exec_id}")]
+    ExecutionInUse { exec_id: String },
 }
 ```
 
@@ -216,6 +225,12 @@ Plan 8 變體說明：
 | `BuildFailed { name, exit_code }` | `build_failed` | `{ name, exit_code }` | `handler_build` 建置以非零值結束時 | Sonner toast："Build failed for 'NAME' (exit N). See the Last build section for details." |
 | `ToolchainMissing { name, tool }` | `toolchain_missing` | `{ name, tool }` | `handler_build` 當 `entry.build[0]` 不在 `PATH` 時 | Toast："Build tool 'TOOL' not found in PATH. Install it or update entry.build in your manifest." |
 | `NoBuildCommand { name }` | `no_build_command` | `{ name }` | `handler_build` 當 manifest 無 `entry.build` 時 | Toast："Handler 'NAME' has no entry.build command in rowforge.yaml." |
+
+Plan 10 變體說明：
+
+| 變體 | 序列化 `kind` | Payload | 由何 emit | UI 呈現 |
+|---|---|---|---|---|
+| `ExecutionInUse { exec_id }` | `execution_in_use` | `{ exec_id }` | `execution_delete` / `execution_delete_bulk`（每項）當 `SessionRegistry::has_active_run_for_exec` 回傳 `true` 時 | ExecList 選取模式中核取方塊停用，提示文字「Cancel active run first」；批量部分失敗時，清單上方顯示黃色警告，列出無法刪除的 exec_id |
 
 組合規則：
 - 不提供 blanket `From<anyhow::Error> for UiError`。
@@ -299,6 +314,15 @@ handler_log_subscribe(exec_id, attempt_id)          -> ()
     // 64 行批次）發送行。attempt 非 active 時回傳錯誤。
 handler_log_unsubscribe(attempt_id)                 -> ()
     // 取消由 handler_log_subscribe 啟動的泵。
+
+// Plan 10 — 執行刪除（見第 3 部分 §3.10）
+execution_delete(exec_id)                           -> ()
+    // 刪除單一執行。成功時 emit exec_list:refresh。
+    // session 正在執行時回傳 ExecutionInUse。
+    // 不存在時回傳 NotFound。
+execution_delete_bulk(exec_ids)                     -> ExecDeleteBulkResult
+    // 串列刪除多個執行。任何成功刪除後 emit exec_list:refresh。
+    // 不提早中止；部分失敗回傳至 ExecDeleteBulkResult.failed。
 ```
 
 `handler_build` 說明：此 command 宣告為 `async` 但目前在建置期間
@@ -345,6 +369,7 @@ run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (第 6 部分 §6.6)
 handlers:list                         ()                      // Plan 7：scaffold/delete/rename 後 emit 的粗粒度 refresh 提示
 handler_log:<attempt_id>              HandlerLogBatch payload // Plan 9：批次 100 ms / 64 行
+exec_list:refresh                     ()                      // Plan 10：任何成功的 execution_delete / execution_delete_bulk 後 emit；React 使 exec_list query 失效
 ```
 
 `HandlerLogBatch` payload：
@@ -380,6 +405,24 @@ pub struct HandlerLogLine {
     pub line: String,
 }
 ```
+
+**`ExecDeleteBulkResult` 與 `ExecDeleteFailure` 型別（Plan 10）：**
+
+```typescript
+interface ExecDeleteBulkResult {
+  deleted: string[];             // 成功刪除的 exec_id 清單
+  failed: ExecDeleteFailure[];
+}
+
+interface ExecDeleteFailure {
+  exec_id: string;
+  reason: string;                // 例如 "execution is in use" 或 "not found"
+}
+```
+
+第 2 部分 §2.2.10 的 TypeScript 鏡像。`useExecutionDeleteBulk` hook
+包裝 `execution_delete_bulk`，任何成功刪除（包含 `deleted.length > 0`
+的部分成功）後使 `exec_list` query 失效。
 
 ## 5.6 設定
 

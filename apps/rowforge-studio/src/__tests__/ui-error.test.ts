@@ -100,6 +100,10 @@ describe("uiErrorMessage", () => {
     ).toContain("entry.build");
   });
 
+  it("renders execution_in_use copy", () => {
+    expect(uiErrorMessage({ kind: "execution_in_use", message: { exec_id: "e_test" } })).toContain("active run");
+  });
+
   it("falls back to String() for non-UiError inputs", () => {
     expect(uiErrorMessage("plain string")).toBe("plain string");
     expect(uiErrorMessage(null)).toBe("null");

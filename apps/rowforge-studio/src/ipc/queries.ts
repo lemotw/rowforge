@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ipc } from "./client";
-import type { AttemptId, CancelMode, ExecutionId, FailedPageQuery, RunHandle, RunStartedHandle, Settings } from "./types";
+import type { AttemptId, CancelMode, ExecDeleteBulkResult, ExecutionId, FailedPageQuery, RunHandle, RunStartedHandle, Settings } from "./types";
 
 export const useSettings = () =>
   useQuery({
@@ -114,3 +114,38 @@ export const useActiveRuns = () =>
     queryFn: ipc.run_active,
     refetchInterval: 2000, // 2s poll fallback if runs:active event missed
   });
+
+// ===== Plan 10 exec delete =====
+
+/**
+ * Delete a single execution by id.
+ * Invalidates exec_list on success.
+ * Tauri also emits exec_list:refresh after deletion; T7 wires the event
+ * listener at the ExecList page level for cross-window invalidation.
+ */
+export const useExecutionDelete = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { execId: string }) => ipc.execution_delete(args),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["exec_list"] });
+    },
+  });
+};
+
+/**
+ * Delete multiple executions in a single command.
+ * Invalidates exec_list only when at least one deletion succeeded.
+ * Callers should inspect result.failed for partial-failure reporting.
+ */
+export const useExecutionDeleteBulk = () => {
+  const qc = useQueryClient();
+  return useMutation<ExecDeleteBulkResult, Error, { execIds: string[] }>({
+    mutationFn: (args) => ipc.execution_delete_bulk(args),
+    onSuccess: (result) => {
+      if (result.deleted.length > 0) {
+        qc.invalidateQueries({ queryKey: ["exec_list"] });
+      }
+    },
+  });
+};

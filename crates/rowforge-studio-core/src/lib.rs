@@ -107,6 +107,39 @@ impl StartExecArgs {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 10 — bulk-delete result types
+// ---------------------------------------------------------------------------
+
+/// Outcome of a [`StudioCore::execution_delete_bulk`] call.
+///
+/// `#[non_exhaustive]` so that future fields (e.g. `skipped`) can be added
+/// without a breaking change. Cross-crate code that needs to construct this
+/// (e.g. Tauri ipc_contract tests) should round-trip through `serde_json`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ExecDeleteBulkResult {
+    /// Ids of executions that were successfully deleted, in input order.
+    pub deleted: Vec<String>,
+    /// Per-item failure descriptors for executions that could not be deleted,
+    /// in input order relative to the original slice.
+    pub failed: Vec<ExecDeleteFailure>,
+}
+
+/// A single per-item failure within an [`ExecDeleteBulkResult`].
+///
+/// `#[non_exhaustive]` for the same future-compatibility reason as the parent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ExecDeleteFailure {
+    /// The execution id that could not be deleted.
+    pub exec_id: String,
+    /// Human-readable reason string derived from the underlying `UiError`
+    /// (`format!("{}", err)`). Compatible with `uiErrorMessage` in the TS
+    /// layer.
+    pub reason: String,
+}
+
+// ---------------------------------------------------------------------------
 // Orphan recovery (spec §3.7)
 // ---------------------------------------------------------------------------
 
@@ -699,12 +732,18 @@ impl StudioCore {
         let executions = store
             .list_executions()
             .map_err(|e| UiError::Internal(e.to_string()))?;
-        let summaries: Vec<ExecSummary> = executions
+        let mut summaries: Vec<ExecSummary> = executions
             .iter()
             .map(|e| ExecSummary::from_execution(e, &store))
             .collect::<Result<_, _>>()
             .map_err(|e: rowforge_core::error::CoreError| UiError::Internal(e.to_string()))?;
         drop(store);
+        // Populate size_bytes lazily by walking each execution directory.
+        let exec_root = self.workspace.root.as_path().join("executions");
+        for summary in &mut summaries {
+            let dir = exec_root.join(summary.id.as_str());
+            summary.size_bytes = crate::exec_view::dir_size_bytes(&dir);
+        }
         self.exec_list_cache.put(ExecListKey, summaries.clone(), &db_path);
         Ok(summaries)
     }
@@ -793,6 +832,103 @@ impl StudioCore {
             .create_execution(new)
             .map_err(|e| UiError::Internal(e.to_string()))?;
         Ok(ExecutionId::new(exec.id))
+    }
+
+    // -------------------------------------------------------------------------
+    // Plan 10 — execution delete
+    // -------------------------------------------------------------------------
+
+    /// Hard-delete a single execution by id.
+    ///
+    /// Operations in order:
+    /// 1. Validate `exec_id` format via `is_valid_id_component` (traversal defense).
+    /// 2. Refuse with `UiError::ExecutionInUse` if `SessionRegistry` reports an
+    ///    active run for this execution.
+    /// 3. Sqlite cascade in a transaction via `ExecutionStore::delete_execution`:
+    ///    DELETE attempts → DELETE executions (manual cascade; schema has no
+    ///    `ON DELETE CASCADE` on `attempts.execution_id`).
+    ///    Returns `UiError::NotFound` when the execution row didn't exist.
+    /// 4. `fs::remove_dir_all` on `<workspace>/executions/<exec_id>/` — best-effort.
+    ///    Missing directory is silently ignored. Any other I/O error is logged via
+    ///    `tracing::warn` but does **not** propagate — sqlite is authoritative.
+    pub fn execution_delete(&self, exec_id: &str) -> Result<(), UiError> {
+        // Step 1: reject malformed IDs before any fs or db operation.
+        if !is_valid_id_component(exec_id) {
+            return Err(UiError::Io(format!("invalid exec_id: {}", exec_id)));
+        }
+
+        // Step 2a: cross-process active-attempt gate (sqlite is source of truth).
+        // A CLI process opens a fresh StudioCore with an empty in-memory
+        // SessionRegistry; without this check it would silently bypass the
+        // in-process gate below and delete an exec that is running in Studio.
+        {
+            let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            let sqlite_active = store
+                .has_active_attempt(exec_id)
+                .map_err(|e| UiError::Internal(format!("active-attempt check: {}", e)))?;
+            if sqlite_active {
+                return Err(UiError::ExecutionInUse { exec_id: exec_id.to_string() });
+            }
+        }
+
+        // Step 2b: in-process active-run gate (catches the brief window
+        // between attempt-start and the sqlite state being committed).
+        if self.sessions.has_active_run_for_exec(exec_id) {
+            return Err(UiError::ExecutionInUse { exec_id: exec_id.to_string() });
+        }
+
+        // Step 3: sqlite cascade (manual; no ON DELETE CASCADE in schema).
+        let found = {
+            let mut store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            store
+                .delete_execution(exec_id)
+                .map_err(|e| UiError::Internal(e.to_string()))?
+        };
+        if !found {
+            return Err(UiError::NotFound(format!("execution '{}' not found", exec_id)));
+        }
+
+        // Step 4: best-effort dir removal; never propagate this error.
+        let exec_dir = self.workspace.root.as_path()
+            .join("executions")
+            .join(exec_id);
+        if exec_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&exec_dir) {
+                tracing::warn!(
+                    exec_id = %exec_id,
+                    error = %e,
+                    "execution_delete: fs::remove_dir_all failed (dir orphaned; sqlite already authoritative)"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Serial bulk-delete wrapper over [`execution_delete`].
+    ///
+    /// Iterates `exec_ids` in order, calling `execution_delete` for each.
+    /// Never aborts on individual failures — every item produces either a
+    /// `deleted` or `failed` entry. Input order is preserved within each
+    /// output vector.
+    ///
+    /// Returns an [`ExecDeleteBulkResult`] containing the ids of all
+    /// successfully deleted executions and per-item failure descriptors for
+    /// those that could not be deleted (e.g. active run, not found, traversal
+    /// attempt).
+    pub fn execution_delete_bulk(&self, exec_ids: &[String]) -> ExecDeleteBulkResult {
+        let mut deleted = Vec::new();
+        let mut failed = Vec::new();
+        for id in exec_ids {
+            match self.execution_delete(id) {
+                Ok(()) => deleted.push(id.clone()),
+                Err(e) => failed.push(ExecDeleteFailure {
+                    exec_id: id.clone(),
+                    reason: format!("{}", e),
+                }),
+            }
+        }
+        ExecDeleteBulkResult { deleted, failed }
     }
 
     // -------------------------------------------------------------------------
