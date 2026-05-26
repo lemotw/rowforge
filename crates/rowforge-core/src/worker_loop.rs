@@ -60,6 +60,7 @@ pub async fn run_worker_loop(
     grace: Duration,
     cancel: Option<CancellationToken>,
     on_row_done: Option<Arc<dyn Fn(u64, bool) + Send + Sync>>,
+    _hard_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), CoreError> {
     // Closure capturing on_row_done — fires for every row in a BatchOutcome
     // *after* it has been durably appended to outcomes.jsonl. seq + success
@@ -377,6 +378,7 @@ mod tests {
             Duration::from_secs(2),
             cancel,
             None,
+            None,
         )
         .await
         .expect("run_worker_loop returned Err");
@@ -481,6 +483,7 @@ mod tests {
             Duration::from_secs(2),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -540,6 +543,7 @@ mod tests {
             Arc::clone(&jsonl),
             Duration::from_secs(2),
             Some(cancel),
+            None,
             None,
         )
         .await

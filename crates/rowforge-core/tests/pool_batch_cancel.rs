@@ -118,6 +118,7 @@ async fn cancel_before_dispatch_aborts_run_leaving_unsent_rows_absent() {
         on_row_done: None,
         on_handler_log: None,
         capture_raw_stdout: false,
+        hard_cancel: None,
     };
 
     // Pre-fire cancel before the run starts.
@@ -196,6 +197,7 @@ async fn cancel_mid_run_aborts_run_in_flight_batch_completes() {
         on_row_done: None,
         on_handler_log: None,
         capture_raw_stdout: false,
+        hard_cancel: None,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());

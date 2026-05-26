@@ -810,6 +810,7 @@ async fn run_pipeline_in_process(
         fsync_outcomes: false,
         capture_raw_stdout,
         only_row_ids,
+        hard_cancel: None,
     };
 
     aggregator.set_phase(Phase::Snapshotting);

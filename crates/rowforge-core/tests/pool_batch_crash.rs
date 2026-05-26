@@ -111,6 +111,7 @@ async fn batch_crash_idempotent_true_yields_worker_crash() {
         on_row_done: None,
         on_handler_log: None,
         capture_raw_stdout: false,
+        hard_cancel: None,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());
@@ -173,6 +174,7 @@ async fn batch_crash_idempotent_false_yields_worker_crash_unsafe() {
         on_row_done: None,
         on_handler_log: None,
         capture_raw_stdout: false,
+        hard_cancel: None,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());

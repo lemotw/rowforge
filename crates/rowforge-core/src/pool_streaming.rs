@@ -100,6 +100,9 @@ pub struct StreamingPoolConfig {
     /// avoids duplicating outcomes that already live in `outcomes.jsonl`.
     /// Set to `true` for protocol debugging.
     pub capture_raw_stdout: bool,
+    /// Plan 14: when set AND `cancel` token fires, workers receive SIGKILL
+    /// to their process group instead of graceful shutdown.
+    pub hard_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Report returned by [`run_pool_streaming`].
@@ -287,6 +290,7 @@ pub async fn run_pool_streaming(
                 let cancel_clone = cancel.clone();
                 let mode_clone = mode.clone();
                 let on_row_done_clone = cfg.on_row_done.clone();
+                let hard_cancel_clone = cfg.hard_cancel.clone();
 
                 let h = tokio::spawn(async move {
                     run_worker_loop(
@@ -298,6 +302,7 @@ pub async fn run_pool_streaming(
                         grace,
                         Some(cancel_clone),
                         on_row_done_clone,
+                        hard_cancel_clone,
                     )
                     .await
                 });
@@ -666,6 +671,7 @@ mod tests {
             on_row_done: None,
             on_handler_log: None,
             capture_raw_stdout: false,
+            hard_cancel: None,
         }
     }
 
