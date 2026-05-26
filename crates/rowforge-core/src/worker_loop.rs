@@ -60,7 +60,7 @@ pub async fn run_worker_loop(
     grace: Duration,
     cancel: Option<CancellationToken>,
     on_row_done: Option<Arc<dyn Fn(u64, bool) + Send + Sync>>,
-    _hard_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    hard_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), CoreError> {
     // Closure capturing on_row_done — fires for every row in a BatchOutcome
     // *after* it has been durably appended to outcomes.jsonl. seq + success
@@ -214,7 +214,19 @@ pub async fn run_worker_loop(
     }
 
     // Shutdown handler even on cancel (§8.2: "shutdown handler").
-    let _ = worker.shutdown(grace).await;
+    // Plan 14: if hard_cancel flag is set, SIGKILL the process group instead of
+    // waiting for a graceful shutdown.
+    let do_hard_kill = hard_cancel
+        .as_ref()
+        .map(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or(false);
+    if do_hard_kill {
+        tracing::info!(worker = worker.id, "hard cancel: killing process group");
+        let _ = worker.hard_kill().await;
+        // worker is dropped here naturally; no consume needed.
+    } else {
+        let _ = worker.shutdown(grace).await;
+    }
     Ok(())
 }
 
