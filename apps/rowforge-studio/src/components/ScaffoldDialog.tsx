@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useHandlerScaffold } from "@/ipc/use-handlers";
+import { useHandlerScaffold, useHandlerImportFromFolder } from "@/ipc/use-handlers";
 import { uiErrorMessage, type ScaffoldTemplate } from "@/ipc/types";
 
 interface Props {
@@ -38,13 +39,18 @@ const TEMPLATES: { value: ScaffoldTemplate; label: string; hint: string }[] = [
   },
 ];
 
+type Source = "template" | "folder";
+
 export function ScaffoldDialog({ open, onOpenChange }: Props) {
   const navigate = useNavigate();
   const scaffold = useHandlerScaffold();
+  const importMut = useHandlerImportFromFolder();
 
   const [name, setName] = useState("");
   const [template, setTemplate] = useState<ScaffoldTemplate>("go_stdio");
   const [primaryField, setPrimaryField] = useState("id");
+  const [source, setSource] = useState<Source>("template");
+  const [sourceFolder, setSourceFolder] = useState<string | null>(null);
 
   const nameError =
     name === ""
@@ -61,7 +67,11 @@ export function ScaffoldDialog({ open, onOpenChange }: Props) {
         : null;
 
   const canSubmit =
-    name !== "" && nameError === null && primaryError === null && !scaffold.isPending;
+    name !== "" &&
+    nameError === null &&
+    (source === "template"
+      ? primaryError === null && !scaffold.isPending
+      : !!sourceFolder && !importMut.isPending);
 
   // Reset state when the dialog closes.
   const handleOpenChange = (next: boolean) => {
@@ -69,23 +79,45 @@ export function ScaffoldDialog({ open, onOpenChange }: Props) {
       setName("");
       setTemplate("go_stdio");
       setPrimaryField("id");
+      setSource("template");
+      setSourceFolder(null);
       scaffold.reset();
+      importMut.reset();
     }
     onOpenChange(next);
   };
 
+  const pickFolder = async () => {
+    const path = await dialogOpen({ directory: true, multiple: false });
+    if (typeof path === "string") setSourceFolder(path);
+  };
+
   const handleSubmit = () => {
     if (!canSubmit) return;
-    scaffold.mutate(
-      { name, template, primary_field: primaryField },
-      {
-        onSuccess: (createdName) => {
-          toast.success(`Handler "${createdName}" created`);
-          handleOpenChange(false);
-          navigate(`/handlers/${createdName}`);
+    if (source === "template") {
+      scaffold.mutate(
+        { name, template, primary_field: primaryField },
+        {
+          onSuccess: (createdName) => {
+            toast.success(`Handler "${createdName}" created`);
+            handleOpenChange(false);
+            navigate(`/handlers/${createdName}`);
+          },
         },
-      },
-    );
+      );
+    } else {
+      if (!sourceFolder) return;
+      importMut.mutate(
+        { sourcePath: sourceFolder, name },
+        {
+          onSuccess: () => {
+            toast.success(`Handler "${name}" imported`);
+            handleOpenChange(false);
+            navigate(`/handlers/${name}`);
+          },
+        },
+      );
+    }
   };
 
   return (
@@ -118,17 +150,20 @@ export function ScaffoldDialog({ open, onOpenChange }: Props) {
                 <label
                   key={t.value}
                   className={`flex cursor-pointer items-start gap-3 rounded border p-3 ${
-                    template === t.value
+                    source === "template" && template === t.value
                       ? "border-blue-500 bg-blue-500/5"
                       : "border-zinc-700 hover:border-zinc-600"
                   }`}
                 >
                   <input
                     type="radio"
-                    name="scaffold-template"
+                    name="scaffold-source"
                     value={t.value}
-                    checked={template === t.value}
-                    onChange={() => setTemplate(t.value)}
+                    checked={source === "template" && template === t.value}
+                    onChange={() => {
+                      setSource("template");
+                      setTemplate(t.value);
+                    }}
                     className="mt-1"
                     aria-label={t.label}
                   />
@@ -138,26 +173,71 @@ export function ScaffoldDialog({ open, onOpenChange }: Props) {
                   </div>
                 </label>
               ))}
+
+              {/* 4th radio: Import from folder */}
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded border p-3 ${
+                  source === "folder"
+                    ? "border-blue-500 bg-blue-500/5"
+                    : "border-zinc-700 hover:border-zinc-600"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="scaffold-source"
+                  checked={source === "folder"}
+                  onChange={() => setSource("folder")}
+                  className="mt-1"
+                  aria-label="Import from folder…"
+                />
+                <div className="text-sm">
+                  <div className="font-medium">Import from folder…</div>
+                  <div className="text-muted-foreground">
+                    Copy an existing handler folder (must contain rowforge.yaml).
+                  </div>
+                </div>
+              </label>
             </div>
           </Field>
 
-          <Field
-            label="Primary field"
-            htmlFor="scaffold-primary"
-            error={primaryError}
-            helper="The CSV column this handler will process. Must match a column in your input."
-          >
-            <Input
-              id="scaffold-primary"
-              value={primaryField}
-              onChange={(e) => setPrimaryField(e.target.value)}
-              placeholder="id"
-            />
-          </Field>
+          {source === "template" && (
+            <Field
+              label="Primary field"
+              htmlFor="scaffold-primary"
+              error={primaryError}
+              helper="The CSV column this handler will process. Must match a column in your input."
+            >
+              <Input
+                id="scaffold-primary"
+                value={primaryField}
+                onChange={(e) => setPrimaryField(e.target.value)}
+                placeholder="id"
+              />
+            </Field>
+          )}
 
-          {scaffold.isError && (
+          {source === "folder" && (
+            <Field label="Source folder" htmlFor="">
+              <div className="flex items-center gap-2">
+                <Button onClick={pickFolder} variant="outline" size="sm">
+                  {sourceFolder ? "Change…" : "Pick folder…"}
+                </Button>
+                {sourceFolder && (
+                  <code className="flex-1 truncate text-xs text-muted-foreground">
+                    {sourceFolder}
+                  </code>
+                )}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Must contain rowforge.yaml. Everything in the folder copies verbatim —
+                including .git / node_modules if present.
+              </div>
+            </Field>
+          )}
+
+          {(scaffold.isError || importMut.isError) && (
             <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
-              {uiErrorMessage(scaffold.error)}
+              {uiErrorMessage(scaffold.error ?? importMut.error)}
             </div>
           )}
         </div>
@@ -167,7 +247,7 @@ export function ScaffoldDialog({ open, onOpenChange }: Props) {
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={!canSubmit}>
-            {scaffold.isPending ? "Creating…" : "Create"}
+            {scaffold.isPending || importMut.isPending ? "Creating…" : "Create"}
           </Button>
         </div>
       </DialogContent>

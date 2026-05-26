@@ -16,11 +16,16 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(),
+}));
+
 vi.mock("@/ipc/client", () => ({
   ipc: {
     workspace_current: vi.fn().mockResolvedValue({ root: "/tmp/ws", schema_version: 2 }),
     handler_list: vi.fn().mockResolvedValue([]),
     handler_scaffold: vi.fn(),
+    handler_import_from_folder: vi.fn(),
   },
 }));
 
@@ -218,6 +223,62 @@ describe("ScaffoldDialog", () => {
       expect(
         screen.getByText(/\[invalid_handler_name\]/i)
       ).toBeInTheDocument();
+    });
+  });
+
+  // ── Import-from-folder tests ───────────────────────────────────────────
+
+  // 8. Import from folder radio reveals folder picker + hides primary_field
+  it("Import from folder radio reveals folder picker + hides primary_field", () => {
+    render(wrap(<ScaffoldDialog open={true} onOpenChange={noop} />));
+
+    // Initially template mode — primary_field visible
+    expect(screen.getByLabelText(/^Primary field$/i)).toBeInTheDocument();
+
+    // Click Import from folder radio
+    fireEvent.click(screen.getByLabelText(/Import from folder/i));
+
+    // primary_field hidden, folder picker visible
+    expect(screen.queryByLabelText(/^Primary field$/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Pick folder/i })).toBeInTheDocument();
+  });
+
+  // 9. Create disabled in folder mode until folder picked
+  it("Create disabled in folder mode until folder picked", () => {
+    render(wrap(<ScaffoldDialog open={true} onOpenChange={noop} />));
+
+    fireEvent.click(screen.getByLabelText(/Import from folder/i));
+    fireEvent.change(screen.getByLabelText(/^Name$/i), { target: { value: "imported" } });
+
+    const createBtn = screen.getByRole("button", { name: /^Create$/i });
+    expect(createBtn).toBeDisabled();
+  });
+
+  // 10. Submits handler_import_from_folder ipc on Create
+  it("submits handler_import_from_folder ipc on Create", async () => {
+    const dialogPlugin = await import("@tauri-apps/plugin-dialog");
+    const dialogMock = vi.mocked(dialogPlugin.open);
+    dialogMock.mockResolvedValue("/tmp/my-handler");
+
+    const { ipc } = await import("@/ipc/client");
+    (ipc.handler_import_from_folder as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    render(wrap(<ScaffoldDialog open={true} onOpenChange={noop} />));
+
+    fireEvent.click(screen.getByLabelText(/Import from folder/i));
+    fireEvent.change(screen.getByLabelText(/^Name$/i), { target: { value: "imported" } });
+    fireEvent.click(screen.getByRole("button", { name: /Pick folder/i }));
+
+    // wait for path to appear
+    await screen.findByText("/tmp/my-handler");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Create$/i }));
+
+    await waitFor(() => {
+      expect(ipc.handler_import_from_folder).toHaveBeenCalledWith({
+        sourcePath: "/tmp/my-handler",
+        name: "imported",
+      });
     });
   });
 });
