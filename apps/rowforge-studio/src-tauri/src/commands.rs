@@ -39,7 +39,9 @@ pub fn workspace_open(
     let opts = opts
         .with_max_concurrent_runs(prev.max_concurrent_runs)
         .with_preferred_editor(prev.preferred_editor.clone())
-        .with_handler_log_capture_raw_stdout(prev.handler_log_capture_raw_stdout);
+        .with_handler_log_capture_raw_stdout(prev.handler_log_capture_raw_stdout)
+        .with_smoke_default_rows(prev.smoke_default_rows)
+        .with_smoke_timeout_per_row_secs(prev.smoke_timeout_per_row_secs);
     let core = StudioCore::open(opts)?;
     let workspace = core.workspace().clone();
 

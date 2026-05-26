@@ -37,7 +37,18 @@ pub struct Settings {
     /// changes mid-run don't affect in-flight attempts (intentional).
     #[serde(default)]
     pub handler_log_capture_raw_stdout: bool,
+    /// Plan 13: default row count in the smoke test UI.
+    /// Clamped to 1..=100 by handler_smoke_run.
+    #[serde(default = "default_smoke_rows")]
+    pub smoke_default_rows: usize,
+    /// Plan 13: per-row timeout for smoke runs (seconds).
+    /// 0 means no timeout.
+    #[serde(default = "default_smoke_timeout")]
+    pub smoke_timeout_per_row_secs: u64,
 }
+
+fn default_smoke_rows() -> usize { 5 }
+fn default_smoke_timeout() -> u64 { 30 }
 
 impl Default for Settings {
     fn default() -> Self {
@@ -48,6 +59,8 @@ impl Default for Settings {
             telemetry_opt_in: false,
             preferred_editor: None,
             handler_log_capture_raw_stdout: false,
+            smoke_default_rows: 5,
+            smoke_timeout_per_row_secs: 30,
         }
     }
 }
@@ -129,5 +142,32 @@ mod tests {
         let json = br#"{"schema_version": 1, "workspace_root": null}"#;
         let parsed = Settings::load_from(json.as_slice()).unwrap();
         assert_eq!(parsed.preferred_editor, None);
+    }
+
+    #[test]
+    fn smoke_defaults() {
+        let s = Settings::default();
+        assert_eq!(s.smoke_default_rows, 5);
+        assert_eq!(s.smoke_timeout_per_row_secs, 30);
+    }
+
+    #[test]
+    fn smoke_fields_tolerant_to_missing() {
+        let json = br#"{"schema_version": 1}"#;
+        let parsed = Settings::load_from(json.as_slice()).unwrap();
+        assert_eq!(parsed.smoke_default_rows, 5);
+        assert_eq!(parsed.smoke_timeout_per_row_secs, 30);
+    }
+
+    #[test]
+    fn smoke_fields_roundtrip() {
+        let mut s = Settings::default();
+        s.smoke_default_rows = 12;
+        s.smoke_timeout_per_row_secs = 90;
+        let mut buf = Vec::new();
+        s.save_to(&mut buf).unwrap();
+        let parsed = Settings::load_from(buf.as_slice()).unwrap();
+        assert_eq!(parsed.smoke_default_rows, 12);
+        assert_eq!(parsed.smoke_timeout_per_row_secs, 90);
     }
 }
