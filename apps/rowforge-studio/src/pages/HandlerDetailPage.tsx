@@ -22,6 +22,7 @@ import { DeleteHandlerDialog } from "@/components/DeleteHandlerDialog";
 import { ForkHandlerDialog } from "@/components/ForkHandlerDialog";
 import { RenameHandlerDialog } from "@/components/RenameHandlerDialog";
 import { LastBuildSection } from "@/components/LastBuildSection";
+import { SmokeSection } from "@/components/SmokeSection";
 
 export function HandlerDetailPage() {
   const { name = "" } = useParams<{ name: string }>();
@@ -109,6 +110,7 @@ export function HandlerDetailPage() {
         />
         <ManifestSection detail={data} />
         <LastBuildSection last_build={data.last_build} pending={build.isPending} />
+        <SmokeSection handlerName={data.summary.name} defaultRows={5} />
         <SourceFilesSection detail={data} />
       </div>
       <RenameHandlerDialog
