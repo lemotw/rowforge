@@ -395,6 +395,35 @@ impl Worker {
         self.child.stderr.take()
     }
 
+    /// Plan 14: terminate the worker AND its entire process group
+    /// immediately (SIGKILL). Used by hard cancel. Does NOT send shutdown
+    /// or wait for graceful drain.
+    ///
+    /// Unix: `killpg(pgid, SIGKILL)`. Falls back to `child.kill()` if pgid
+    /// is unset (shouldn't happen on Unix after Plan 14 T1, but defensive).
+    ///
+    /// Non-Unix: behaves like `child.kill()` (no process group support
+    /// yet).
+    pub async fn hard_kill(&mut self) -> Result<(), CoreError> {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            let r = unsafe { libc::killpg(pgid, libc::SIGKILL) };
+            if r == -1 {
+                let err = std::io::Error::last_os_error();
+                // ESRCH (no such process) is fine — the child may have
+                // already exited; just reap and return.
+                if err.raw_os_error() != Some(libc::ESRCH) {
+                    tracing::warn!(pgid, error = %err, "killpg failed; falling back to child.kill");
+                }
+            }
+        }
+        // Belt + suspenders: also signal the direct child handle.
+        let _ = self.child.kill().await;
+        // Reap to avoid zombies; ignore wait failures.
+        let _ = self.child.wait().await;
+        Ok(())
+    }
+
     /// Send shutdown, wait grace period, kill if still alive.
     pub async fn shutdown(mut self, grace: Duration) -> Result<Option<i32>, CoreError> {
         let _ = self.send_row(&Outbound::Shutdown).await;
@@ -408,6 +437,122 @@ impl Worker {
                 Ok(status.code())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(all(test, unix))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hard_kill_terminates_child_immediately() {
+        // Sleep for 1 hour; if hard_kill works, this completes in <1s.
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_yaml = r#"name: sleepy
+version: "1"
+kind: row
+primary_field: id
+entry:
+  cmd: ["python3", "handler.py"]
+"#;
+        std::fs::write(dir.path().join("rowforge.yaml"), manifest_yaml).unwrap();
+        let py = r#"#!/usr/bin/env python3
+import sys, json, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("type") == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+        # Now sleep forever; hard_kill must terminate us.
+        time.sleep(3600)
+"#;
+        std::fs::write(dir.path().join("handler.py"), py).unwrap();
+
+        let (manifest, _) = crate::manifest::Manifest::load_from_dir(dir.path()).unwrap();
+        let mut worker = Worker::spawn(
+            0,
+            dir.path(),
+            &manifest,
+            "test",
+            &Default::default(),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let started = std::time::Instant::now();
+        worker.hard_kill().await.unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "hard_kill should be near-instant; took {:?}",
+            elapsed
+        );
+    }
+
+    #[cfg(all(test, unix))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hard_kill_terminates_grandchild() {
+        // Parent forks a long-sleeping child; we verify both are gone after hard_kill.
+        let dir = tempfile::tempdir().unwrap();
+        let manifest_yaml = r#"name: forky
+version: "1"
+kind: row
+primary_field: id
+entry:
+  cmd: ["python3", "handler.py"]
+"#;
+        std::fs::write(dir.path().join("rowforge.yaml"), manifest_yaml).unwrap();
+        let child_pid_file = dir.path().join("child.pid");
+        let py = format!(
+            r#"#!/usr/bin/env python3
+import sys, json, os, time, subprocess
+# Spawn a long-sleeping grandchild; write its PID for the test to check.
+proc = subprocess.Popen(["sleep", "3600"])
+with open(r"{}", "w") as f:
+    f.write(str(proc.pid))
+    f.flush()
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("type") == "init":
+        print(json.dumps({{"type": "ready", "handler_version": "1.0"}}), flush=True)
+        time.sleep(3600)
+"#,
+            child_pid_file.display()
+        );
+        std::fs::write(dir.path().join("handler.py"), py).unwrap();
+
+        let (manifest, _) = crate::manifest::Manifest::load_from_dir(dir.path()).unwrap();
+        let mut worker = Worker::spawn(
+            0, dir.path(), &manifest, "test", &Default::default(), &[],
+        )
+        .await
+        .unwrap();
+        // Wait briefly for the python handler to spawn the grandchild.
+        for _ in 0..50 {
+            if child_pid_file.exists() { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let grandchild_pid: i32 = std::fs::read_to_string(&child_pid_file)
+            .expect("grandchild pid file should exist")
+            .trim()
+            .parse()
+            .unwrap();
+
+        worker.hard_kill().await.unwrap();
+
+        // Give the kernel ~250ms to reap the grandchild. killpg is synchronous
+        // but waitpid on an orphaned grandchild can be asynchronous.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+        // Verify grandchild PID is no longer alive. kill(pid, 0) returns 0 if
+        // alive, -1 if not. ESRCH means "no such process".
+        let alive = unsafe { libc::kill(grandchild_pid, 0) };
+        assert_eq!(
+            alive, -1,
+            "grandchild pid {} should be dead after hard_kill, got alive=0",
+            grandchild_pid
+        );
     }
 }
 
