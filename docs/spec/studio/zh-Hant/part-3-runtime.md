@@ -112,9 +112,24 @@ Session 直接從 `Starting` 開始注冊，不存在 `Pending` 狀態——
 5. SQLite row 轉為 `aborted`。
 6. 發送 `ProgressEvent::Aborted { reason: UserCancelled, ... }`。
 
-### 硬取消（強制 kill）
-僅在軟取消已逾實作定義的閾值（建議 10 秒）後可用。對 handler 子進程
-呼叫 `Child::kill()`。可能遺失部分 outcomes；UI 必須明確警告後才能呼叫。
+### 硬取消（Plan 14）
+
+Workers 透過 `setsid()`（僅 Unix）生成到自己的 POSIX process group。
+`RunRequest.hard_cancel: Option<Arc<AtomicBool>>` 與現有的
+`cancel: CancellationToken` 配對。呼叫端將旗標設為 `true` 後**再**觸發
+cancel token，worker loop 即呼叫 `Worker::hard_kill()` ——
+透過 `killpg(pgid, SIGKILL)` 向整個 process group 發送 `SIGKILL` ——
+取代正常的 `shutdown(grace)` 路徑。子進程及 handler 派生的所有孫進程
+均被終止。
+
+Windows：硬取消目前等同於軟取消（process group / Job Object 支援待定）。
+
+`attempts.cancelled_reason` 欄位（sqlite migration v4）在強制 kill 時
+記錄 `"hard_cancel"`，軟取消 / 正常完成時為 `NULL`。
+保留值 `"timeout"` 供未來逾時自動取消使用。
+
+僅在軟取消已逾實作定義的閾值（建議 10 秒）後可用。可能遺失部分
+outcomes；UI 必須明確警告後才能呼叫。
 
 取消過程中的 UI 狀態：
 - `RunStatus::Cancelling` 並顯示每秒一次的「n 列尚未完成」進度

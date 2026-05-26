@@ -122,11 +122,28 @@ Two modes:
 5. SQLite row transitions to `aborted`.
 6. `ProgressEvent::Aborted { reason: UserCancelled, ... }` emitted.
 
-### Hard cancel (force kill)
+### Hard cancel (Plan 14)
+
+Workers spawn into their own POSIX process group via `setsid()` (Unix
+only). `RunRequest.hard_cancel: Option<Arc<AtomicBool>>` pairs with the
+existing `cancel: CancellationToken`. When the caller sets the flag
+`true` THEN fires the cancel token, the worker loop calls
+`Worker::hard_kill()` — which sends `SIGKILL` to the entire process
+group via `killpg(pgid, SIGKILL)` — instead of the graceful
+`shutdown(grace)` path. The child AND any grandchildren the handler
+spawned are terminated.
+
+Windows: hard cancel is currently equivalent to soft cancel (process
+group / Job Object support deferred).
+
+The `attempts.cancelled_reason` column (sqlite migration v4) records
+`"hard_cancel"` when force-killed, `NULL` for soft cancel / clean
+completion. Reserved value `"timeout"` for future timeout-based
+auto-cancel.
+
 Available only after soft cancel has been outstanding for an
-implementation-defined threshold (recommended: 10 seconds). Calls
-`Child::kill()` on handler subprocesses. Partial outcomes may be lost;
-UI must warn explicitly before invoking.
+implementation-defined threshold (recommended: 10 seconds). Partial
+outcomes may be lost; UI must warn explicitly before invoking.
 
 UI states during cancel:
 - `RunStatus::Cancelling` with a per-second progress indicator "n

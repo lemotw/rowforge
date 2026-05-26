@@ -91,6 +91,9 @@ struct AttemptDetail {
     by_error_code: BTreeMap<String, u64>,   // bounded; "OTHER" overflow at 32
     handler_instance: HandlerInstanceView,
     paths: AttemptPaths,                // outcomes.jsonl, meta.json, stderr.log
+    cancelled_reason: Option<String>,   // Plan 14: "hard_cancel" when force-killed;
+                                        // NULL for soft cancel / clean completion.
+                                        // Reserved: "timeout" for future auto-cancel.
 }
 ```
 

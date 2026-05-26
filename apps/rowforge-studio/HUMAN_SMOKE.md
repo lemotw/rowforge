@@ -1242,3 +1242,70 @@ existing handler (e.g. `golang-apple-refund` from the examples).
   not exercised).
 - Hard cancel for a wedged smoke is not implemented (the soft cancel
   shipped with exec runs does not extend to smoke; deferred to Plan 14).
+
+---
+
+# Manual smoke check — Plan 14 (hard cancel)
+
+## 1. Setup
+
+1. Open Studio in a fresh workspace at `/tmp/plan14-smoke-ws/`.
+2. Scaffold a `go_stdio` handler named `stuck` with primary_field `id`.
+3. Replace the row handler body with `time.Sleep(time.Hour)` (Go) or
+   `time.sleep(3600)` (Python). The handler MUST ignore stdin/shutdown.
+4. Build the handler. Verify Last build success.
+
+## 2. Soft cancel as-is
+
+5. Create an exec on a CSV of 10 rows. Click Run.
+6. Wait until status flips to Running.
+7. Click Cancel. Confirm the soft cancel dialog. The status becomes
+   "Cancelling…" and stays there because the handler ignores shutdown.
+
+## 3. Force kill reveal
+
+8. After ~10s, the "Force kill" button appears next to the Cancelling
+   banner.
+9. Click Force kill. The typed-confirm dialog appears.
+10. Type the first 4 chars of the exec name (lowercase).
+11. Click "Force kill" in the dialog.
+
+## 4. Verify termination
+
+12. Within 1-2s, the attempt finalizes with state `cancelled`.
+13. The state badge in AttemptDetail renders in red as "force-killed".
+14. In a terminal: `ps -ef | grep <handler-binary>` — no zombie/sleeping
+    children remain.
+
+## 5. ExecDetail badge
+
+15. Navigate back to /exec/<exec_id>. In the AttemptsList, the cancelled
+    attempt row shows the red "● force-killed" chip in the State column.
+
+## 6. Grandchild kill
+
+16. Modify the handler to spawn a child sleep process (e.g.
+    `subprocess.Popen(["sleep", "3600"])`) before sleeping itself.
+17. Run, soft cancel, force kill.
+18. After force kill, `ps` shows neither the handler nor its sleep
+    grandchild. (On macOS / Linux the process group kill covers both.)
+
+## Known Plan 14 limitations
+
+- **Windows**: hard cancel degrades to soft cancel. Job Object support is
+  a follow-on.
+- **CLI subcommand**: `rowforge attempt hard-cancel` was deferred. The
+  `StudioCore::cancel` API operates on an in-process `SessionRegistry`,
+  and a fresh CLI process has no live sessions. Cross-process signaling
+  would require file-based infra (e.g. a cancel-flag file under
+  `<workspace>/executions/<id>/runs/<run_id>/cancel`) that the running
+  process polls. Out of scope for v1 — users force-kill the Studio
+  process tree via standard OS tools (`kill -9 <pid>`) if the UI itself
+  is wedged.
+- **Smoke runs**: hard cancel does not apply to Plan 13 smoke runs. The
+  smoke runner has its own grace-shutdown but no SIGKILL path.
+- **Pending row outcomes**: rows dispatched but not yet completed at the
+  moment of force-kill are simply absent from `outcomes.jsonl` (same as
+  soft cancel today). No explicit `HARD_CANCEL` row outcome is
+  synthesized. The "force-killed" badge tells users "rows are missing
+  because of force-kill".

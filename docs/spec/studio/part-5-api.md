@@ -126,7 +126,15 @@ enum HandlerSource {
     Dir(PathBuf),
     // v2: Sandbox { manifest: ManifestDraft, source_dir: PathBuf },
 }
-enum CancelMode { Soft, Hard }
+enum CancelMode {
+    Soft,
+    // Hard: on Unix, sets RunRequest.hard_cancel flag then fires the
+    // CancellationToken. The worker loop calls Worker::hard_kill()
+    // which sends SIGKILL to the entire process group (killpg).
+    // Grandchildren spawned by the handler are also terminated.
+    // On Windows, degrades to Soft (Job Object support deferred).
+    Hard,
+}
 struct RunStream {
     handle: RunHandle,
     rx: broadcast::Receiver<ProgressEvent>,
@@ -314,6 +322,10 @@ exec_start(args)                      -> ExecutionId
 exec_export(id, opts)                 -> ExportReport
 
 attempt_show(execution_id, attempt_id)            -> AttemptDetail
+    // Plan 14: AttemptDetail (and AttemptSummary inside ExecDetail.attempts)
+    // carry cancelled_reason: string | null. Value is "hard_cancel" when
+    // the attempt was force-killed; null for soft cancel or clean completion.
+    // Reserved value "timeout" for future timeout-based auto-cancel.
 attempt_failed_page(query)                        -> FailedRowPage
 attempt_row_history(execution_id, seq)            -> RowHistory
 attempt_failed_row_ids(execution_id, attempt_id)  -> Vec<u64>
@@ -329,6 +341,11 @@ run_start(execution_id, handler_dir,
     // only_row_ids (Option<Vec<u64>>, Plan 11): when provided, the pipeline
     // dispatches only the listed seq values, bypassing skip_seqs for those rows.
 run_cancel(handle, mode)              -> ()
+    // mode = Hard (Plan 14): on Unix, sets RunRequest.hard_cancel = true
+    // then fires the CancellationToken. The worker loop calls
+    // Worker::hard_kill() → killpg(pgid, SIGKILL). The attempt finalises
+    // with cancelled_reason = "hard_cancel" in both AttemptSummary and
+    // AttemptDetail. On Windows, Hard degrades to Soft.
 run_status(handle)                    -> RunStatus
 run_active()                          -> Vec<RunHandle>
 run_snapshot(handle)                  -> ProgressSnapshot

@@ -124,7 +124,15 @@ enum HandlerSource {
     Dir(PathBuf),
     // v2: Sandbox { manifest: ManifestDraft, source_dir: PathBuf },
 }
-enum CancelMode { Soft, Hard }
+enum CancelMode {
+    Soft,
+    // Hard：在 Unix 上設置 RunRequest.hard_cancel 旗標後觸發
+    // CancellationToken。Worker loop 呼叫 Worker::hard_kill()，
+    // 向整個 process group 發送 SIGKILL（killpg）。
+    // Handler 派生的孫進程同樣被終止。
+    // Windows 上降級為 Soft（Job Object 支援待定）。
+    Hard,
+}
 struct RunStream {
     handle: RunHandle,
     rx: broadcast::Receiver<ProgressEvent>,
@@ -306,6 +314,9 @@ exec_start(args)                      -> ExecutionId
 exec_export(id, opts)                 -> ExportReport
 
 attempt_show(execution_id, attempt_id)            -> AttemptDetail
+    // Plan 14：AttemptDetail（及 ExecDetail.attempts 內的 AttemptSummary）
+    // 帶有 cancelled_reason: string | null。強制 kill 時值為 "hard_cancel"；
+    // 軟取消或正常完成時為 null。保留值 "timeout" 供未來逾時自動取消使用。
 attempt_failed_page(query)                        -> FailedRowPage
 attempt_row_history(execution_id, seq)            -> RowHistory
 attempt_failed_row_ids(execution_id, attempt_id)  -> Vec<u64>
@@ -321,6 +332,11 @@ run_start(execution_id, handler_dir,
     // only_row_ids（Option<Vec<u64>>，Plan 11）：若提供，pipeline 僅
     // 派發列出的 seq 值，並對這些 row 略過 skip_seqs。
 run_cancel(handle, mode)              -> ()
+    // mode = Hard（Plan 14）：在 Unix 上設置 RunRequest.hard_cancel = true
+    // 後觸發 CancellationToken。Worker loop 呼叫
+    // Worker::hard_kill() → killpg(pgid, SIGKILL)。Attempt 以
+    // cancelled_reason = "hard_cancel" 結束（AttemptSummary 與
+    // AttemptDetail 均包含此欄位）。Windows 上 Hard 降級為 Soft。
 run_status(handle)                    -> RunStatus
 run_active()                          -> Vec<RunHandle>
 run_snapshot(handle)                  -> ProgressSnapshot

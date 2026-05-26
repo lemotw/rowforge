@@ -465,6 +465,16 @@ New entries insert at the top; the tail fades out at the bottom.
   be lost. This cannot be undone." User must type the first 4 chars
   of the exec name. High friction is the point.
 
+**Force-killed badge.** When `attempt.state === "cancelled"` AND
+`attempt.cancelled_reason === "hard_cancel"`, the state badge renders
+in red as "force-killed" instead of the default "cancelled" appearance.
+Surfaces in both AttemptDetail header and ExecDetail AttemptsList.
+
+The CancelDialog flow (existing) already drives this state machine: a
+soft cancel that doesn't complete within 10s reveals a "Force kill"
+button; confirming triggers `cancel(handle, Hard)`. Plan 14 makes that
+backend call actually SIGKILL the workers.
+
 ### 7.6.4 Lifecycle banners (`WorkerCrashed`, `StallWarning`, `PipelineWarning`)
 
 All three render **inline in the event tail** at full row width (48 px,
