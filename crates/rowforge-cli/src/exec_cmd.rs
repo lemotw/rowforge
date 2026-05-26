@@ -504,6 +504,7 @@ async fn run_attempt(store: &mut ExecutionStore, a: RunAttemptArgs) -> Result<i3
         input_format: None,
         fsync_outcomes: a.fsync_outcomes,
         capture_raw_stdout: false,
+        only_row_ids: None,
     };
 
     let result = execute(req).await;

@@ -143,6 +143,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<i32> {
         input_format: None,
         fsync_outcomes: false,
         capture_raw_stdout: false,
+        only_row_ids: None,
     };
     let report = execute(req).await?;
 

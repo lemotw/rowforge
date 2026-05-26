@@ -105,6 +105,17 @@ pub struct RunRequest {
     /// Useful for diagnosing protocol issues — normal operation should leave
     /// this off to avoid duplicating outcome data in the log.
     pub capture_raw_stdout: bool,
+    /// When Some, dispatch only the rows whose `seq` (0-based CSV row index)
+    /// is in this list. All other rows are skipped silently. Row indices not
+    /// present in the input are also silently ignored.
+    ///
+    /// Precedence: `only_row_ids` takes priority over `skip_seqs` —
+    /// if a seq is in `only_row_ids`, it is dispatched even if it would
+    /// have been skipped by `skip_seqs` (re-run intent overrides resume intent).
+    ///
+    /// `None` (default): existing behavior, dispatch all rows (modulo skip_seqs).
+    /// `Some(vec![])`: dispatch nothing (vacuous noop).
+    pub only_row_ids: Option<Vec<u64>>,
 }
 
 pub struct RunReport {
@@ -239,6 +250,7 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
     let pool_report = run_pool_streaming(
         input,
         req.skip_seqs.clone(),
+        req.only_row_ids.clone(),
         effective_limit,
         req.field_map.clone(),
         req.dry_run,

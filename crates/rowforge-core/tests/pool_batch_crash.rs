@@ -117,6 +117,7 @@ async fn batch_crash_idempotent_true_yields_worker_crash() {
     let _report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,
@@ -178,6 +179,7 @@ async fn batch_crash_idempotent_false_yields_worker_crash_unsafe() {
     let _report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,
