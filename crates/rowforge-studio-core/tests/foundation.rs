@@ -222,6 +222,7 @@ fn list_reflects_attempts_count_and_last_state() {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -324,6 +325,7 @@ fn attempt_returns_detail_for_existing_attempt() {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -656,6 +658,7 @@ fn row_history_returns_failures_then_success() {
                     failed_count: 1,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -681,6 +684,7 @@ fn row_history_returns_failures_then_success() {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -2609,6 +2613,7 @@ fn seed_exec_with_completed_attempt(tmp: &tempfile::TempDir, name: &str) -> (Str
                 failed_count: 0,
                 aborted: false,
                 aborted_reason: None,
+                cancelled_reason: None,
             },
         )
         .unwrap();
@@ -3525,4 +3530,94 @@ async fn handler_smoke_run_rejects_invalid_name() {
         .await
         .unwrap_err();
     assert!(matches!(err, UiError::InvalidHandlerName { .. }));
+}
+
+// Plan 14 T7 — hard_cancel_persists_cancelled_reason
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn hard_cancel_persists_cancelled_reason() {
+    use rowforge_studio_core::{CancelMode, ExecutionId, OpenOpts, RunOpts, RunStatus, StartExecArgs, StudioCore};
+
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Write a handler that sleeps forever on each row (stubborn).
+    let hdir = tmp.path().join("handlers").join("stubborn");
+    std::fs::create_dir_all(&hdir).unwrap();
+    std::fs::write(
+        hdir.join("rowforge.yaml"),
+        r#"name: stubborn
+version: "1"
+entry:
+  cmd: ["python3", "handler.py"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        hdir.join("handler.py"),
+        r#"#!/usr/bin/env python3
+import sys, json, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        time.sleep(3600)
+"#,
+    )
+    .unwrap();
+
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Create input CSV and start an execution.
+    let input = tmp.path().join("input.csv");
+    std::fs::write(&input, b"id\n1\n2\n3\n").unwrap();
+    let exec_id = core
+        .start_exec(StartExecArgs::new(&input, "hc_test"))
+        .unwrap();
+
+    // Start the run.
+    let started = core
+        .start_run(&exec_id, RunOpts::new(hdir))
+        .expect("start_run should succeed");
+    let handle = started.handle;
+
+    // Give the worker a moment to dispatch its first row and go to sleep.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // Hard cancel.
+    core.cancel(&handle, CancelMode::Hard).unwrap();
+
+    // Wait up to 5 s for the session to finalize (it will be removed from
+    // the registry, making status() return UnknownHandle).
+    for _ in 0..50 {
+        match core.status(&handle) {
+            Err(_) => break, // session removed — finalized
+            Ok(RunStatus::Aborted) | Ok(RunStatus::Done) => break,
+            Ok(_) => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // Open the DB directly and assert cancelled_reason = "hard_cancel".
+    let db = tmp.path().join("executions.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let reason: Option<String> = conn
+        .query_row(
+            "SELECT cancelled_reason FROM attempts WHERE execution_id = ?1",
+            rusqlite::params![exec_id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        reason.as_deref(),
+        Some("hard_cancel"),
+        "attempts.cancelled_reason must be 'hard_cancel' after CancelMode::Hard; got: {:?}",
+        reason
+    );
 }

@@ -165,6 +165,9 @@ pub struct Attempt {
     pub success_count: u64,
     pub failed_count: u64,
     pub aborted_reason: Option<String>,
+    /// Plan 14: set to `"hard_cancel"` when the attempt was force-killed via
+    /// SIGKILL. `None` for soft cancels and normal completions.
+    pub cancelled_reason: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub dir: PathBuf,
@@ -184,6 +187,10 @@ pub struct FinishAttempt {
     pub failed_count: u64,
     pub aborted: bool,
     pub aborted_reason: Option<String>,
+    /// Plan 14: when set, persisted to attempts.cancelled_reason. Values:
+    /// `None` (soft cancel or normal completion), `Some("hard_cancel")`
+    /// (force-killed via SIGKILL), `Some("timeout")` (reserved).
+    pub cancelled_reason: Option<String>,
 }
 
 pub struct ExecutionStore {
@@ -583,6 +590,7 @@ impl ExecutionStore {
             success_count: 0,
             failed_count: 0,
             aborted_reason: None,
+            cancelled_reason: None,
             started_at,
             ended_at: None,
             dir,
@@ -602,14 +610,15 @@ impl ExecutionStore {
 
         let updated = self.conn.execute(
             "UPDATE attempts SET state=?1, success_count=?2, failed_count=?3,
-                                 aborted_reason=?4, ended_at=?5
-             WHERE id=?6 AND state='running'",
+                                 aborted_reason=?4, ended_at=?5, cancelled_reason=?6
+             WHERE id=?7 AND state='running'",
             params![
                 state.as_str(),
                 finish.success_count as i64,
                 finish.failed_count as i64,
                 finish.aborted_reason,
                 now.to_rfc3339(),
+                finish.cancelled_reason,
                 attempt_id,
             ],
         )?;
@@ -640,7 +649,7 @@ impl ExecutionStore {
                 "SELECT id, execution_id, handler_instance_id, parent_attempt_id,
                         run_type_source, run_type_sample_size, run_type_simulation,
                         state, success_count, failed_count, aborted_reason,
-                        started_at, ended_at
+                        started_at, ended_at, cancelled_reason
                  FROM attempts WHERE id=?1",
                 params![id],
                 |r| row_to_attempt(r, &home),
@@ -655,7 +664,7 @@ impl ExecutionStore {
             "SELECT id, execution_id, handler_instance_id, parent_attempt_id,
                     run_type_source, run_type_sample_size, run_type_simulation,
                     state, success_count, failed_count, aborted_reason,
-                    started_at, ended_at
+                    started_at, ended_at, cancelled_reason
              FROM attempts WHERE execution_id=?1 ORDER BY started_at ASC",
         )?;
         let rows = stmt
@@ -880,6 +889,7 @@ fn row_to_attempt(r: &rusqlite::Row<'_>, home: &Path) -> rusqlite::Result<Attemp
         aborted_reason: r.get(10)?,
         started_at: parse_rfc3339(r.get::<_, String>(11)?)?,
         ended_at: r.get::<_, Option<String>>(12)?.map(parse_rfc3339).transpose()?,
+        cancelled_reason: r.get(13)?,
         dir,
     })
 }
@@ -1141,6 +1151,7 @@ mod tests {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();

@@ -206,6 +206,7 @@ fn scan_for_orphans(
                         failed_count: 0,
                         aborted: true,
                         aborted_reason: Some("orphaned_on_restart".into()),
+                        cancelled_reason: None,
                     },
                 )?;
                 marked += 1;

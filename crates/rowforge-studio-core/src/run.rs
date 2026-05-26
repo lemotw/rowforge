@@ -409,6 +409,10 @@ impl StudioCore {
                 });
             };
 
+            let was_hard_cancelled = session
+                .hard_cancel
+                .load(std::sync::atomic::Ordering::Relaxed);
+
             match run_result {
                 Ok(report) => {
                     if let Some(err) = try_finish(FinishAttempt {
@@ -416,6 +420,7 @@ impl StudioCore {
                         failed_count: report.failed_count,
                         aborted: report.aborted,
                         aborted_reason: report.abort_reason.clone(),
+                        cancelled_reason: None,
                     }) {
                         emit_persist_warning(err);
                     }
@@ -442,6 +447,9 @@ impl StudioCore {
                     // Persist the partial counts from rowforge-core so a
                     // cancelled run with completed rows is recorded
                     // accurately, not as 0/0.
+                    // Plan 14: if this was a hard cancel (SIGKILL), set
+                    // cancelled_reason = "hard_cancel" so the UI can render
+                    // the Force-killed badge.
                     if let Some(err) = try_finish(FinishAttempt {
                         success_count: report.success_count,
                         failed_count: report.failed_count,
@@ -450,6 +458,11 @@ impl StudioCore {
                             .abort_reason
                             .clone()
                             .or_else(|| Some("cancelled by operator".into())),
+                        cancelled_reason: if was_hard_cancelled {
+                            Some("hard_cancel".to_string())
+                        } else {
+                            None
+                        },
                     }) {
                         emit_persist_warning(err);
                     }
@@ -470,6 +483,7 @@ impl StudioCore {
                         failed_count: 0,
                         aborted: true,
                         aborted_reason: Some(format!("panic: {msg}")),
+                        cancelled_reason: None,
                     }) {
                         emit_persist_warning(err);
                     }
@@ -490,6 +504,7 @@ impl StudioCore {
                         failed_count: 0,
                         aborted: true,
                         aborted_reason: Some(msg.clone()),
+                        cancelled_reason: None,
                     }) {
                         emit_persist_warning(err);
                     }
