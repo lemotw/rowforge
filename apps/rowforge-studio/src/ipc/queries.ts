@@ -80,6 +80,17 @@ export const useRowHistory = (e: ExecutionId | null, seq: number | null) =>
     enabled: !!e && seq !== null,
   });
 
+export const useAttemptFailedRowIds = (
+  execId: string,
+  attemptId: string | null,
+) =>
+  useQuery({
+    queryKey: ["attempt_failed_row_ids", execId, attemptId],
+    queryFn: () =>
+      ipc.attempt_failed_row_ids({ execId, attemptId: attemptId! }),
+    enabled: !!attemptId,
+  });
+
 export const useRunStart = () => {
   const qc = useQueryClient();
   return useMutation<
@@ -92,6 +103,7 @@ export const useRunStart = () => {
       workers?: number | null;
       dryRun?: boolean | null;
       skipAttempted?: boolean | null;
+      onlyRowIds?: number[] | null;
     }
   >({
     mutationFn: (args) => ipc.run_start(args),
