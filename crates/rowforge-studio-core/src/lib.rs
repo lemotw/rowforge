@@ -452,6 +452,129 @@ impl StudioCore {
         crate::handler::rename(self.workspace.root.as_path(), old, new)
     }
 
+    /// Plan 12 T1: import an external handler folder into the workspace.
+    ///
+    /// Copies `source_path` recursively into `<workspace>/handlers/<name>/`.
+    ///
+    /// Errors:
+    /// - `InvalidHandlerName` — `name` fails `[a-z0-9-]+` regex
+    /// - `InvalidArg`         — `source_path` is not a directory
+    /// - `InvalidArg`         — `source_path` does not contain `rowforge.yaml`
+    /// - `HandlerExists`      — destination already exists
+    /// - `Io`                 — filesystem copy failure
+    pub fn handler_import_from_folder(
+        &self,
+        source_path: &std::path::Path,
+        name: &str,
+    ) -> Result<(), UiError> {
+        // Step 1: validate name before any path ops (defense-in-depth).
+        if !crate::handler::validate_name(name) {
+            return Err(UiError::InvalidHandlerName { name: name.to_string() });
+        }
+        // Step 2: source must be a directory.
+        if !source_path.is_dir() {
+            return Err(UiError::InvalidArg(format!(
+                "source path is not a directory: {}",
+                source_path.display()
+            )));
+        }
+        // Step 3: source must contain rowforge.yaml.
+        if !source_path.join("rowforge.yaml").is_file() {
+            return Err(UiError::InvalidArg(
+                "source folder must contain rowforge.yaml".into(),
+            ));
+        }
+        // Step 4: target must not already exist.
+        let target = self.workspace.root.as_path().join("handlers").join(name);
+        if target.exists() {
+            return Err(UiError::HandlerExists { name: name.to_string() });
+        }
+        // Step 5: copy.
+        crate::handler::copy_dir_recursive(source_path, &target)
+            .map_err(|e| UiError::Io(format!("copy_dir_recursive: {}", e)))?;
+        Ok(())
+    }
+
+    /// Plan 12 T1: fork an existing workspace handler to a new name.
+    ///
+    /// Copies `<workspace>/handlers/<source_name>/` recursively to
+    /// `<workspace>/handlers/<new_name>/`, then rewrites `manifest.name`
+    /// via a serde round-trip so the cloned manifest reflects the new name.
+    /// If the manifest round-trip fails (corrupt YAML, etc.) the copy is
+    /// retained as-is and a WARN is emitted; the caller can fix it manually.
+    ///
+    /// Errors:
+    /// - `InvalidHandlerName` — either name fails `[a-z0-9-]+` regex
+    /// - `InvalidArg`         — `source_name == new_name`
+    /// - `HandlerNotFound`    — source dir does not exist
+    /// - `HandlerExists`      — destination already exists
+    /// - `Io`                 — filesystem copy failure
+    pub fn handler_fork(&self, source_name: &str, new_name: &str) -> Result<(), UiError> {
+        // Step 1: validate both names.
+        if !crate::handler::validate_name(source_name) {
+            return Err(UiError::InvalidHandlerName { name: source_name.to_string() });
+        }
+        if !crate::handler::validate_name(new_name) {
+            return Err(UiError::InvalidHandlerName { name: new_name.to_string() });
+        }
+        // Step 2: reject same-name fork.
+        if source_name == new_name {
+            return Err(UiError::InvalidArg("new_name must differ from source".into()));
+        }
+        // Step 3: source must exist.
+        let handlers = self.workspace.root.as_path().join("handlers");
+        let source_dir = handlers.join(source_name);
+        if !source_dir.is_dir() {
+            return Err(UiError::HandlerNotFound { name: source_name.to_string() });
+        }
+        // Step 4: target must not exist.
+        let target_dir = handlers.join(new_name);
+        if target_dir.exists() {
+            return Err(UiError::HandlerExists { name: new_name.to_string() });
+        }
+        // Step 5: copy.
+        crate::handler::copy_dir_recursive(&source_dir, &target_dir)
+            .map_err(|e| UiError::Io(format!("copy_dir_recursive: {}", e)))?;
+        // Step 6: rewrite manifest.name via serde round-trip.
+        //
+        // Two distinct failure modes:
+        //  - Load failure  → tolerated (warn + skip rewrite). Manifest was
+        //    malformed in the source; the fork is otherwise complete and the
+        //    user can fix the manifest manually. Plan 12 spec §3.3.
+        //  - Serialize / write failure → propagated as UiError::Io. These
+        //    are unexpected: the file existed (we just copied it) but became
+        //    unwritable between copy and write — e.g. filesystem going
+        //    read-only, external permission revocation, disk-full.
+        //    Without propagation a Fork could report success while leaving
+        //    `name:` unchanged, confusing the user when they navigate to the
+        //    new handler.
+        //
+        // Note: reaching the serialize/write path requires the file to exist
+        // (just copied) but become unwritable between copy and write.  These
+        // conditions are hard to trigger portably in tests; propagation is
+        // verified by inspection.
+        let manifest_path = target_dir.join("rowforge.yaml");
+        match rowforge_core::manifest::Manifest::load_from_dir(&target_dir) {
+            Ok((mut manifest, _path)) => {
+                manifest.name = new_name.to_string();
+                let yaml = serde_yaml::to_string(&manifest)
+                    .map_err(|e| crate::UiError::Io(format!("serialize manifest after fork: {}", e)))?;
+                std::fs::write(&manifest_path, yaml)
+                    .map_err(|e| crate::UiError::Io(format!("write manifest after fork: {}", e)))?;
+            }
+            Err(e) => {
+                // Manifest load failed — tolerated. The fork is otherwise complete;
+                // user can fix the manifest manually. Plan 12 spec §3.3 documents this.
+                tracing::warn!(
+                    target = %target_dir.display(),
+                    error = ?e,
+                    "handler_fork: manifest load failed; leaving rowforge.yaml as-is",
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Return the Arc-wrapped session registry for this workspace.
     ///
     /// Used by the Tauri event bridge to spawn `forward_active_runs` with only

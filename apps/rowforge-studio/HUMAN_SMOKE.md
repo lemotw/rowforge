@@ -996,3 +996,131 @@ and a Re-run dialog on the Attempt Detail Failed rows tab.
   attempt on the same exec is running, the button will appear enabled
   but the backend will refuse with `UiError::RunBusy`, surfaced as a
   toast error.
+
+# Manual smoke check — Plan 12 (handler import + fork)
+
+Plan 12 adds two new ways to create handlers in a workspace:
+**Import from folder** (bring any local handler directory into the
+workspace) and **Fork** (duplicate an existing workspace handler under a
+new name with the manifest `name:` field rewritten).
+
+## Setup
+
+Before starting, ensure you have a workspace open with at least one
+existing handler (e.g. `golang-apple-refund` from the examples).
+
+## 1. Import from folder — happy path
+
+1. Prepare a source folder on disk that contains a `rowforge.yaml`. The
+   easiest way is to copy an existing example:
+   ```bash
+   cp -r examples/handlers/golang-uppercase /tmp/test-import
+   ```
+   Verify `/tmp/test-import/rowforge.yaml` exists before proceeding.
+
+2. Studio → `/handlers` → click **New Handler**.
+
+3. The ScaffoldDialog opens. Select the **"Import from folder…"** radio
+   button (fourth option). The `primary_field` input disappears; a
+   **"Pick folder…"** button appears.
+
+4. Click **"Pick folder…"**. The OS native file dialog opens. Navigate to
+   and select `/tmp/test-import`. The dialog closes and the chosen path
+   is displayed next to the button.
+
+5. In the name field, type `imported-handler`. Click **Create**.
+
+6. The dialog closes. `imported-handler` appears in the handler list.
+   Click the row to open its detail page. Verify:
+   - The **Source** tab shows the same files that were in `/tmp/test-import`.
+   - The **Manifest** tab shows the imported `rowforge.yaml` contents.
+
+## 2. Import edge cases
+
+7. Open **New Handler** again. Select "Import from folder…". Create an
+   empty directory first:
+   ```bash
+   mkdir -p /tmp/empty-dir
+   ```
+   Pick `/tmp/empty-dir` as the source, name the handler `should-fail`.
+   Click **Create**. Verify the backend returns a friendly error: the
+   dialog stays open and shows an inline error message such as
+   "source folder must contain rowforge.yaml" (surfaced from
+   `UiError::InvalidArg`).
+
+8. Try to import with the name `imported-handler` again (same name as
+   step 5). Pick any valid source folder. Click **Create**. Verify an
+   inline error: "Handler 'imported-handler' already exists"
+   (`UiError::HandlerExists`).
+
+9. Import a source that contains a `.git` subdirectory (the
+   `golang-uppercase` example should not have one, but you can create a
+   fake one):
+   ```bash
+   mkdir -p /tmp/test-import-git
+   cp -r examples/handlers/golang-uppercase/. /tmp/test-import-git/
+   mkdir /tmp/test-import-git/.git
+   echo "fake" > /tmp/test-import-git/.git/HEAD
+   ```
+   Import `/tmp/test-import-git` as `imported-with-git`. After success,
+   verify the `.git` directory was copied along:
+   ```bash
+   ls <workspace>/handlers/imported-with-git/.git/
+   ```
+   This confirms the copy-everything semantic — no filter is applied.
+
+## 3. Fork — happy path
+
+10. Navigate to the `imported-handler` detail page (from step 5, or
+    `/handlers/imported-handler`).
+
+11. In the page header, locate the **Fork…** button positioned between
+    **Rename…** and **Delete…**. Click it. The `ForkHandlerDialog` opens.
+
+12. The name field is pre-filled with `imported-handler-fork`. Leave it
+    as-is (or change it; any valid handler name works). Click **Fork**.
+
+13. The dialog closes and Studio navigates to
+    `/handlers/imported-handler-fork`. Verify:
+    - The handler appears in the list.
+    - Opening the **Manifest** tab shows `name: imported-handler-fork`
+      in `rowforge.yaml` (the manifest name was rewritten by the serde
+      round-trip).
+    - Other manifest fields (version, language, entry, etc.) match the
+      source handler.
+
+## 4. Fork edge cases
+
+14. Navigate back to `imported-handler`. Click **Fork…** again. Change
+    the name to `imported-handler-fork` (the handler created in step 13).
+    Click **Fork**. Verify an inline error: "Handler
+    'imported-handler-fork' already exists" (`UiError::HandlerExists`).
+    The dialog stays open; clicking Cancel dismisses it without changes.
+
+15. Manually add a YAML comment to `imported-handler`'s `rowforge.yaml`
+    in an external editor:
+    ```yaml
+    # This comment should disappear after fork
+    name: imported-handler
+    version: "0.1.0"
+    ```
+    Save the file. Now fork `imported-handler` to `comment-test-fork`.
+    Open the fork's Manifest tab. The `# This comment should disappear
+    after fork` line is **gone** — this is the documented serde
+    round-trip limitation. Key ordering may also differ from the
+    original. This is expected behavior, not a bug.
+
+### Known Plan 12 limitations
+
+- Copy filter is none — `.git/`, `node_modules/`, build outputs, and any
+  other files come along during both import and fork. Clean up large
+  directories manually after import if needed.
+- Fork loses YAML comments and may reorder keys due to the serde
+  round-trip manifest rewrite.
+- No cross-workspace import — the OS file dialog sources from the local
+  disk only; there is no handler registry.
+- Symlinks in the source folder are skipped (neither preserved nor
+  followed). A `tracing::warn` is emitted for each skipped entry; no
+  UI indication is shown.
+- Import requires `rowforge.yaml` in the source. Pure source folders
+  without a manifest must use Scaffold + manual paste instead.

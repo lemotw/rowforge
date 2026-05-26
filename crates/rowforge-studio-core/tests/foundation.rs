@@ -3180,3 +3180,216 @@ fn attempt_failed_row_ids_deduplicates_repeated_seqs() {
     assert_eq!(result, vec![2u64],
         "seq 2 should appear exactly once, got: {:?}", result);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 12 T1 — handler_import_from_folder + handler_fork integration tests
+// ---------------------------------------------------------------------------
+
+/// Helper: create a minimal handler source directory (outside the workspace)
+/// containing a valid rowforge.yaml. Returns the dir path.
+fn make_external_handler_dir(base: &tempfile::TempDir, name: &str) -> std::path::PathBuf {
+    let dir = base.path().join(format!("external-{}", name));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("rowforge.yaml"),
+        format!(
+            "name: {}\nversion: 0.1.0\nentry:\n  cmd: [\"./handler\"]\n",
+            name
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.join("handler.go"), "package main\n").unwrap();
+    dir
+}
+
+/// import_from_folder happy path: files are copied, handler appears in list.
+#[test]
+fn handler_import_from_folder_happy_path() {
+    let tmp = empty_workspace();
+    let ext = make_external_handler_dir(&tmp, "my-import");
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    core.handler_import_from_folder(&ext, "my-import").unwrap();
+
+    // Handler dir created with both files.
+    let handler_dir = tmp.path().join("handlers").join("my-import");
+    assert!(handler_dir.join("rowforge.yaml").exists(), "rowforge.yaml must be copied");
+    assert!(handler_dir.join("handler.go").exists(), "handler.go must be copied");
+
+    // Must appear in the handler list.
+    let list = core.handler_list().unwrap();
+    assert!(list.iter().any(|h| h.name == "my-import"), "handler must appear in list");
+}
+
+/// import_from_folder rejects bad handler name (uppercase).
+#[test]
+fn handler_import_from_folder_rejects_bad_name() {
+    let tmp = empty_workspace();
+    let ext = make_external_handler_dir(&tmp, "source");
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let err = core.handler_import_from_folder(&ext, "BadName").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::InvalidHandlerName { .. }),
+        "expected InvalidHandlerName, got: {:?}", err
+    );
+}
+
+/// import_from_folder rejects a source that lacks rowforge.yaml.
+#[test]
+fn handler_import_from_folder_rejects_missing_manifest() {
+    let tmp = empty_workspace();
+    // Directory without rowforge.yaml.
+    let no_manifest = tmp.path().join("no-manifest");
+    std::fs::create_dir_all(&no_manifest).unwrap();
+    std::fs::write(no_manifest.join("handler.go"), "package main\n").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let err = core.handler_import_from_folder(&no_manifest, "no-manifest").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::InvalidArg(_)),
+        "expected InvalidArg for missing manifest, got: {:?}", err
+    );
+}
+
+/// import_from_folder refuses when the target name already exists.
+#[test]
+fn handler_import_from_folder_refuses_existing_target() {
+    let tmp = empty_workspace();
+    let ext = make_external_handler_dir(&tmp, "dup-handler");
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // First import succeeds.
+    core.handler_import_from_folder(&ext, "dup-handler").unwrap();
+
+    // Second import must fail with HandlerExists.
+    let err = core.handler_import_from_folder(&ext, "dup-handler").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::HandlerExists { .. }),
+        "expected HandlerExists, got: {:?}", err
+    );
+}
+
+/// handler_fork happy path: forked dir exists, manifest.name is rewritten.
+#[test]
+fn handler_fork_happy_path_rewrites_manifest_name() {
+    let tmp = empty_workspace();
+    let ext = make_external_handler_dir(&tmp, "base-handler");
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    // Import source first.
+    core.handler_import_from_folder(&ext, "base-handler").unwrap();
+
+    // Fork to a new name.
+    core.handler_fork("base-handler", "forked-handler").unwrap();
+
+    let forked_dir = tmp.path().join("handlers").join("forked-handler");
+    assert!(forked_dir.exists(), "forked handler dir must exist");
+
+    // Verify manifest.name was rewritten.
+    let yaml = std::fs::read_to_string(forked_dir.join("rowforge.yaml")).unwrap();
+    assert!(
+        yaml.contains("name: forked-handler"),
+        "manifest.name must be rewritten; got:\n{}", yaml
+    );
+    // The source manifest.name must NOT appear in the fork.
+    assert!(
+        !yaml.contains("name: base-handler"),
+        "old name must not remain in forked manifest; got:\n{}", yaml
+    );
+}
+
+/// handler_fork rejects same source and new name.
+#[test]
+fn handler_fork_rejects_same_name() {
+    let tmp = empty_workspace();
+    let ext = make_external_handler_dir(&tmp, "same-src");
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+    core.handler_import_from_folder(&ext, "same-src").unwrap();
+
+    let err = core.handler_fork("same-src", "same-src").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::InvalidArg(_)),
+        "expected InvalidArg for same-name fork, got: {:?}", err
+    );
+}
+
+/// handler_fork rejects missing source.
+#[test]
+fn handler_fork_rejects_missing_source() {
+    let tmp = empty_workspace();
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let err = core.handler_fork("nonexistent", "fork-of-nonexistent").unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::HandlerNotFound { .. }),
+        "expected HandlerNotFound, got: {:?}", err
+    );
+}
+
+/// handler_fork tolerates an unparseable source manifest (load-failure path).
+///
+/// If `Manifest::load_from_dir` fails (e.g. malformed YAML), the fork should
+/// still succeed — the directory is copied as-is and the manifest is left
+/// verbatim.  This is the documented load-tolerance behaviour (Plan 12 spec
+/// §3.3).  The write-failure path (file exists but cannot be written) is
+/// propagated as UiError::Io; that path is hard to trigger portably and is
+/// verified by code inspection.
+#[test]
+fn handler_fork_tolerates_unparseable_source_manifest() {
+    let tmp = empty_workspace();
+
+    // Create the source handler inside the workspace handlers/ dir directly,
+    // bypassing import_from_folder so we can supply a deliberately broken
+    // manifest without import validation rejecting it.
+    let handlers_dir = tmp.path().join("handlers");
+    let src_dir = handlers_dir.join("broken-source");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    // Write a manifest that fails YAML parse / serde deserialization.
+    std::fs::write(src_dir.join("rowforge.yaml"), "this is not yaml: {[broken").unwrap();
+    std::fs::write(src_dir.join("handler.go"), "package main\n").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Fork should succeed — load failure is tolerated per design §3.3.
+    core.handler_fork("broken-source", "tolerated-fork")
+        .expect("fork should tolerate manifest load failure");
+
+    // Target directory must exist.
+    let target = handlers_dir.join("tolerated-fork");
+    assert!(target.exists(), "forked dir must be created");
+
+    // The malformed manifest must be carried verbatim (not rewritten).
+    let yaml_text = std::fs::read_to_string(target.join("rowforge.yaml")).unwrap();
+    assert_eq!(
+        yaml_text, "this is not yaml: {[broken",
+        "manifest must be left as-is when load fails; got: {:?}", yaml_text
+    );
+
+    // Other files must also be copied.
+    assert!(target.join("handler.go").exists(), "handler.go must be copied");
+}

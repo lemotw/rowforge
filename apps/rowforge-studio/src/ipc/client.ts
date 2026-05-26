@@ -121,4 +121,11 @@ export const ipc = {
     invoke<void>("execution_delete", args),
   execution_delete_bulk: (args: { execIds: string[] }) =>
     invoke<ExecDeleteBulkResult>("execution_delete_bulk", args),
+
+  // ===== Plan 12 handler import + fork =====
+
+  handler_import_from_folder: (args: { sourcePath: string; name: string }) =>
+    invoke<void>("handler_import_from_folder", args),
+  handler_fork: (args: { sourceName: string; newName: string }) =>
+    invoke<void>("handler_fork", args),
 };

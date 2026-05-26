@@ -340,6 +340,21 @@ execution_delete(exec_id)                           -> ()
 execution_delete_bulk(exec_ids)                     -> ExecDeleteBulkResult
     // 串列刪除多個執行。任何成功刪除後 emit exec_list:refresh。
     // 不提早中止；部分失敗回傳至 ExecDeleteBulkResult.failed。
+
+// Plan 12 — handler 從資料夾匯入 + Fork（見第 8 部分 §8.4.6–§8.4.7）
+handler_import_from_folder(source_path: String, name: String) -> ()
+    // 將 source_path 原封不動複製到 <workspace>/handlers/<name>/。
+    // source_path 必須包含 rowforge.yaml；否則以 InvalidArg 拒絕。
+    // <name> 已存在時以 HandlerExists 拒絕。名稱不合法時以
+    // InvalidHandlerName 拒絕。成功後 emit handlers:list。
+    // 不做複製過濾 — .git / node_modules / 建置產物全部複製。
+    // 符號連結以 tracing::warn 略過。
+handler_fork(source_name: String, new_name: String) -> ()
+    // 將 <workspace>/handlers/<source_name>/ 複製為
+    // <workspace>/handlers/<new_name>/。透過 serde round-trip 改寫
+    // manifest name: 欄位（YAML 註解與鍵排序不保留）。
+    // 同名、來源不存在（HandlerNotFound）、目標已存在（HandlerExists）、
+    // 新名稱不合法（InvalidHandlerName）時均拒絕。成功後 emit handlers:list。
 ```
 
 `handler_build` 說明：此 command 宣告為 `async` 但目前在建置期間
@@ -389,7 +404,7 @@ Run 生命週期指令說明（Plan 5）：
 ```
 run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (第 6 部分 §6.6)
-handlers:list                         ()                      // Plan 7：scaffold/delete/rename 後 emit 的粗粒度 refresh 提示
+handlers:list                         ()                      // Plan 7：scaffold/delete/rename 後 emit 的粗粒度 refresh 提示；Plan 12 的 handler_import_from_folder + handler_fork 成功後亦 emit
 handler_log:<attempt_id>              HandlerLogBatch payload // Plan 9：批次 100 ms / 64 行
 exec_list:refresh                     ()                      // Plan 10：任何成功的 execution_delete / execution_delete_bulk 後 emit；React 使 exec_list query 失效
 ```

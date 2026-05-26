@@ -586,6 +586,50 @@ pub fn attempt_failed_row_ids(
     core.attempt_failed_row_ids(&exec_id, &attempt_id)
 }
 
+// ===== Plan 12 — handler import + fork =====
+
+#[tauri::command]
+pub fn handler_import_from_folder(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    source_path: String,
+    name: String,
+) -> Result<(), UiError> {
+    let result = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_import_from_folder(std::path::Path::new(&source_path), &name)
+    };
+    if result.is_ok() {
+        use tauri::Emitter;
+        let _ = app.emit("handlers:list", ());
+    }
+    result
+}
+
+#[tauri::command]
+pub fn handler_fork(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    source_name: String,
+    new_name: String,
+) -> Result<(), UiError> {
+    let result = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        let core = guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        core.handler_fork(&source_name, &new_name)
+    };
+    if result.is_ok() {
+        use tauri::Emitter;
+        let _ = app.emit("handlers:list", ());
+    }
+    result
+}
+
 // ===== Plan 10 — execution delete commands =====
 
 #[tauri::command]

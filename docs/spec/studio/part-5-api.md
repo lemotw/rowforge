@@ -349,6 +349,22 @@ execution_delete_bulk(exec_ids)                     -> ExecDeleteBulkResult
     // Deletes multiple executions serially. Emits exec_list:refresh after
     // any successful delete. Never aborts early; partial failures are
     // returned in ExecDeleteBulkResult.failed.
+
+// Plan 12 — handler import + fork (see Part 8 §8.4.6–§8.4.7)
+handler_import_from_folder(source_path: String, name: String) -> ()
+    // Copies source_path verbatim into <workspace>/handlers/<name>/.
+    // Requires source_path to contain rowforge.yaml; rejects otherwise
+    // with InvalidArg. Rejects if <name> already exists (HandlerExists).
+    // Rejects invalid name (InvalidHandlerName). Emits handlers:list on
+    // success. No copy filter — .git / node_modules / build outputs are
+    // all copied. Symlinks are skipped with a tracing::warn.
+handler_fork(source_name: String, new_name: String) -> ()
+    // Copies <workspace>/handlers/<source_name>/ into
+    // <workspace>/handlers/<new_name>/. Rewrites manifest name: field via
+    // serde round-trip (YAML comments and key ordering not preserved).
+    // Rejects same-name, missing source (HandlerNotFound), existing target
+    // (HandlerExists), invalid new_name (InvalidHandlerName). Emits
+    // handlers:list on success.
 ```
 
 `handler_build` note: the command is declared `async` but currently
@@ -406,7 +422,7 @@ Events (one-way, core → UI):
 ```
 run:<handle>                          ProgressEvent payload
 runs:active                           RunRollupTick payload   (Part 6 §6.6)
-handlers:list                         ()                      // Plan 7: coarse refresh hint emitted after scaffold/delete/rename
+handlers:list                         ()                      // Plan 7: coarse refresh hint emitted after scaffold/delete/rename; also emitted by Plan 12 handler_import_from_folder + handler_fork
 handler_log:<attempt_id>              HandlerLogBatch payload // Plan 9: batched 100 ms / 64-line
 exec_list:refresh                     ()                      // Plan 10: emitted after any successful execution_delete / execution_delete_bulk; React invalidates exec_list query
 ```
