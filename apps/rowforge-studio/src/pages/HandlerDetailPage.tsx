@@ -19,6 +19,7 @@ import {
   type SourceFileSummary,
 } from "@/ipc/types";
 import { DeleteHandlerDialog } from "@/components/DeleteHandlerDialog";
+import { ForkHandlerDialog } from "@/components/ForkHandlerDialog";
 import { RenameHandlerDialog } from "@/components/RenameHandlerDialog";
 import { LastBuildSection } from "@/components/LastBuildSection";
 
@@ -31,6 +32,7 @@ export function HandlerDetailPage() {
   const reveal = useHandlerReveal();
   const build = useHandlerBuild();
   const [renameOpen, setRenameOpen] = useState(false);
+  const [forkOpen, setForkOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   useEffect(() => {
@@ -99,6 +101,7 @@ export function HandlerDetailPage() {
           onOpenEditor={() => openEditor.mutate({ name })}
           onReveal={() => reveal.mutate({ name })}
           onRename={() => setRenameOpen(true)}
+          onFork={() => setForkOpen(true)}
           onDelete={() => setDeleteOpen(true)}
           hasBuildCmd={hasBuildCmd}
           onBuild={() => build.mutate({ name })}
@@ -112,6 +115,11 @@ export function HandlerDetailPage() {
         open={renameOpen}
         onOpenChange={setRenameOpen}
         oldName={data.summary.name}
+      />
+      <ForkHandlerDialog
+        open={forkOpen}
+        onOpenChange={setForkOpen}
+        sourceName={data.summary.name}
       />
       <DeleteHandlerDialog
         open={deleteOpen}
@@ -127,6 +135,7 @@ function DetailHeader({
   onOpenEditor,
   onReveal,
   onRename,
+  onFork,
   onDelete,
   hasBuildCmd,
   onBuild,
@@ -136,6 +145,7 @@ function DetailHeader({
   onOpenEditor: () => void;
   onReveal: () => void;
   onRename: () => void;
+  onFork: () => void;
   onDelete: () => void;
   hasBuildCmd: boolean;
   onBuild: () => void;
@@ -174,6 +184,9 @@ function DetailHeader({
           </Button>
           <Button variant="outline" onClick={onRename}>
             Rename…
+          </Button>
+          <Button variant="outline" onClick={onFork}>
+            Fork…
           </Button>
           <Button variant="outline" onClick={onDelete}>
             Delete…
