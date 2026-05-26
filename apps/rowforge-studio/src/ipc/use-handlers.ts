@@ -87,3 +87,27 @@ export const useHandlerBuild = () => {
     },
   });
 };
+
+/** Plan 12: import a handler from an external folder into the workspace. */
+export const useHandlerImportFromFolder = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { sourcePath: string; name: string }) =>
+      ipc.handler_import_from_folder(args),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["handler_list"] });
+    },
+  });
+};
+
+/** Plan 12: fork an existing handler into a new handler with a different name. */
+export const useHandlerFork = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { sourceName: string; newName: string }) =>
+      ipc.handler_fork(args),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["handler_list"] });
+    },
+  });
+};
