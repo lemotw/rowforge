@@ -101,6 +101,10 @@ pub fn workspace_settings_save(
     if let Some(core) = guard.as_mut() {
         core.set_preferred_editor(settings.preferred_editor.clone());
         core.set_handler_log_capture_raw_stdout(settings.handler_log_capture_raw_stdout);
+        core.set_smoke_defaults(
+            settings.smoke_default_rows,
+            settings.smoke_timeout_per_row_secs,
+        );
     }
     Ok(())
 }

@@ -3393,3 +3393,19 @@ fn handler_fork_tolerates_unparseable_source_manifest() {
     // Other files must also be copied.
     assert!(target.join("handler.go").exists(), "handler.go must be copied");
 }
+
+// ---------------------------------------------------------------------------
+// Plan 13 T2 — StudioCore stores smoke settings from OpenOpts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn studio_core_stores_smoke_settings_from_open_opts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let opts = OpenOpts::new()
+        .with_workspace(tmp.path().to_path_buf())
+        .with_smoke_default_rows(7)
+        .with_smoke_timeout_per_row_secs(60);
+    let core = StudioCore::open(opts).unwrap();
+    assert_eq!(core.smoke_default_rows(), 7);
+    assert_eq!(core.smoke_timeout_per_row_secs(), 60);
+}

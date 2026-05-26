@@ -243,6 +243,13 @@ pub struct StudioCore {
     /// the most recent BuildOutcome (success OR failure). Dies on Drop.
     /// Lock is held only briefly — never across the subprocess spawn.
     build_cache: std::sync::Mutex<std::collections::HashMap<String, rowforge_core::build::BuildOutcome>>,
+    /// Plan 13: clamped to 1..=100 at smoke-run time.
+    smoke_default_rows: usize,
+    /// Plan 13: 0 = no timeout.
+    smoke_timeout_per_row_secs: u64,
+    /// Plan 13: serializes concurrent smoke runs across all handlers.
+    /// One smoke at a time per workspace process.
+    smoke_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Drop for StudioCore {
@@ -310,6 +317,10 @@ impl StudioCore {
             build_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             // Plan 9 T5: sourced from Settings.handler_log_capture_raw_stdout via OpenOpts.
             capture_raw_stdout: opts.handler_log_capture_raw_stdout,
+            // Plan 13 T2: smoke test defaults, clamped to valid range.
+            smoke_default_rows: opts.smoke_default_rows.clamp(1, 100),
+            smoke_timeout_per_row_secs: opts.smoke_timeout_per_row_secs,
+            smoke_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -338,6 +349,25 @@ impl StudioCore {
     /// without requiring a full run.
     pub fn capture_raw_stdout(&self) -> bool {
         self.capture_raw_stdout
+    }
+
+    /// Plan 13: default row count to show in the Smoke test UI (1..=100).
+    pub fn smoke_default_rows(&self) -> usize {
+        self.smoke_default_rows
+    }
+
+    /// Plan 13: per-row timeout for smoke runs (seconds; 0 = no timeout).
+    pub fn smoke_timeout_per_row_secs(&self) -> u64 {
+        self.smoke_timeout_per_row_secs
+    }
+
+    /// Plan 13: update smoke defaults in-place after a settings_save so the
+    /// next smoke run picks up the new values. Changes don't affect already-
+    /// running smoke runs (none possible; smoke is synchronous w.r.t. the IPC
+    /// caller, but the global smoke_lock serializes them anyway).
+    pub fn set_smoke_defaults(&mut self, rows: usize, timeout_secs: u64) {
+        self.smoke_default_rows = rows.clamp(1, 100);
+        self.smoke_timeout_per_row_secs = timeout_secs;
     }
 
     /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.
