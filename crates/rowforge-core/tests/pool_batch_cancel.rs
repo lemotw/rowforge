@@ -127,6 +127,7 @@ async fn cancel_before_dispatch_aborts_run_leaving_unsent_rows_absent() {
     let report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,
@@ -204,6 +205,7 @@ async fn cancel_mid_run_aborts_run_in_flight_batch_completes() {
         run_pool_streaming(
             input,
             HashSet::new(),
+            None, // only_row_ids
             None,
             BTreeMap::new(),
             false,

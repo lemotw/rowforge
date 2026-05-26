@@ -57,6 +57,7 @@ describe("RunButton", () => {
       workers: null,
       dryRun: null,
       skipAttempted: null,
+      onlyRowIds: null,
     });
   });
 
@@ -82,6 +83,7 @@ describe("RunButton", () => {
       workers: 2,
       dryRun: null,
       skipAttempted: null,
+      onlyRowIds: null,
     });
   });
 

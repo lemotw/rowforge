@@ -175,6 +175,7 @@ pub async fn run_start(
     workers: Option<u32>,
     dry_run: Option<bool>,
     skip_attempted: Option<bool>,
+    only_row_ids: Option<Vec<u64>>,
 ) -> Result<RunStartedHandle, UiError> {
     // Scope the MutexGuard so it is dropped before any .await point.
     // studio-core::start_run internally calls tokio::spawn (tick loop +
@@ -199,6 +200,7 @@ pub async fn run_start(
         if let Some(s) = skip_attempted {
             opts = opts.with_skip_attempted(s);
         }
+        opts = opts.with_only_row_ids(only_row_ids);
         let started = core.start_run(&execution_id, opts)?;
         let stream = core
             .subscribe(&started.handle)
@@ -564,6 +566,24 @@ pub fn handler_log_unsubscribe(
         token.cancel();
     }
     Ok(())
+}
+
+// ===== Plan 11 — re-run failed rows =====
+
+/// Return the seq values of rows that failed in a specific attempt.
+/// Used by the Re-run failed flow to seed `only_row_ids` on the next
+/// `run_start` call.
+#[tauri::command]
+pub fn attempt_failed_row_ids(
+    state: State<'_, AppState>,
+    exec_id: String,
+    attempt_id: String,
+) -> Result<Vec<u64>, UiError> {
+    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+    let core = guard
+        .as_ref()
+        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    core.attempt_failed_row_ids(&exec_id, &attempt_id)
 }
 
 // ===== Plan 10 — execution delete commands =====

@@ -105,6 +105,17 @@ pub struct RunRequest {
     /// Useful for diagnosing protocol issues — normal operation should leave
     /// this off to avoid duplicating outcome data in the log.
     pub capture_raw_stdout: bool,
+    /// When Some, dispatch only the rows whose `seq` (0-based CSV row index)
+    /// is in this list. All other rows are skipped silently. Row indices not
+    /// present in the input are also silently ignored.
+    ///
+    /// Precedence: `only_row_ids` takes priority over `skip_seqs` —
+    /// if a seq is in `only_row_ids`, it is dispatched even if it would
+    /// have been skipped by `skip_seqs` (re-run intent overrides resume intent).
+    ///
+    /// `None` (default): existing behavior, dispatch all rows (modulo skip_seqs).
+    /// `Some(vec![])`: dispatch nothing (vacuous noop).
+    pub only_row_ids: Option<Vec<u64>>,
 }
 
 pub struct RunReport {
@@ -197,9 +208,22 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
     };
 
     if let Some(cb) = req.on_progress.as_ref() {
-        cb(RunProgressEvent::Started {
-            total_rows: input_row_count,
-        });
+        // When only_row_ids is set, the dispatchable row count is the filter
+        // length, not the full input row count. For Plan 11 flows (failed-row
+        // re-run), every seq in the filter is known to exist in the input
+        // (sourced from the previous attempt's outcomes), so len(filter) ==
+        // actual dispatched count.
+        //
+        // Note: if a caller passes only_row_ids with seqs that don't exist
+        // in the input (manual API misuse), the actual dispatched count will
+        // be lower. len(filter) is then an upper bound. Plan 11 flows never
+        // hit this case.
+        let total_rows = if let Some(filter) = &req.only_row_ids {
+            filter.len() as u64
+        } else {
+            input_row_count
+        };
+        cb(RunProgressEvent::Started { total_rows });
     }
 
     // 5. Run the streaming pool.
@@ -239,6 +263,7 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
     let pool_report = run_pool_streaming(
         input,
         req.skip_seqs.clone(),
+        req.only_row_ids.clone(),
         effective_limit,
         req.field_map.clone(),
         req.dry_run,

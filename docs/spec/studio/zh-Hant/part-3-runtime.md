@@ -268,6 +268,28 @@ SQLite 交易提交後，Studio 對
 `Result` 的錯誤臂僅用於適用於整個呼叫的引數驗證錯誤（例如 id 清單為空），
 而非每項的失敗。
 
+## 3.11 選擇性 row 派發 — `only_row_ids`（Plan 11）
+
+`rowforge-core::RunRequest` 帶有選填的 `only_row_ids: Option<Vec<u64>>`
+欄位。當為 `Some` 時，reader task 在 `skip_seqs` 過濾**之前**就先過濾輸入
+row：只有 `seq` 值出現在該集合中的 row 才會被派發。
+
+關鍵語意：
+
+- `only_row_ids` 中的 row 識別符是同一個 `seq`（u64），即 `outcomes.jsonl`
+  信封欄位所使用的值。API 介面用「row_ids」是為了可讀性；磁碟 JSON 欄位
+  名稱為 `seq`。
+- **`only_row_ids` 覆蓋 `skip_seqs`**：若某 seq 在 `only_row_ids` 中，
+  即使它曾被嘗試過且本應被 `skip_seqs` 略過，仍會被派發。這是刻意設計 ——
+  重跑失敗的 row 流程就是要重新派發先前已嘗試過的 row。
+- 當為 `None`（預設值）時，行為不變：所有 row 均通過 reader，除非被
+  `skip_seqs` 或 `limit` 過濾掉。
+- `ReaderConfig.only_row_ids` 將此值傳遞給 reader task；比對方式是
+  集合成員查詢（`HashSet<u64>`）。
+
+主要消費者：Plan 11 的重跑失敗 row 流程。`StudioCore::start_run` 接受
+`RunOpts.only_row_ids` 並在啟動 pipeline 前將其傳入 `RunRequest`。
+
 ## 3.8 背景與閒置行為
 
 - macOS App Nap 預設不關閉。Studio 在背景時長時間執行的 attempts 可能

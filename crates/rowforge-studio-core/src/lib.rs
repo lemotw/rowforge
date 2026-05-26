@@ -613,6 +613,93 @@ impl StudioCore {
         })
     }
 
+    /// Return the deduplicated, sorted-ascending `Vec<u64>` of `seq` values
+    /// from `outcomes.jsonl` where the row outcome type is `"error"` or
+    /// `"crash"`. Used by Plan 11's Re-run failed flow.
+    ///
+    /// The `outcomes.jsonl` format is `BatchOutcome` lines; each line has an
+    /// `"outcomes"` array whose elements carry a `"type"` tag (`"error"` /
+    /// `"crash"` / `"success"`) and a `"seq"` field (u64).
+    ///
+    /// # ID validation
+    ///
+    /// Both `exec_id` and `attempt_id` are validated via `is_valid_id_component`
+    /// **before** any path construction — traversal IDs like `"../etc"` are
+    /// rejected with `UiError::Io`.
+    ///
+    /// # File missing
+    ///
+    /// If `outcomes.jsonl` does not exist, returns `Ok(vec![])`.
+    ///
+    /// # Malformed lines
+    ///
+    /// JSON lines that fail to parse are silently skipped.
+    pub fn attempt_failed_row_ids(
+        &self,
+        exec_id: &str,
+        attempt_id: &str,
+    ) -> Result<Vec<u64>, UiError> {
+        // Validate BOTH ids before any path construction.
+        if !is_valid_id_component(exec_id) {
+            return Err(UiError::Io(format!("invalid exec_id: {}", exec_id)));
+        }
+        if !is_valid_id_component(attempt_id) {
+            return Err(UiError::Io(format!("invalid attempt_id: {}", attempt_id)));
+        }
+
+        let outcomes_path = self.workspace.root.as_path()
+            .join("executions")
+            .join(exec_id)
+            .join("attempts")
+            .join(attempt_id)
+            .join("outcomes.jsonl");
+
+        // File missing → empty (attempt created but not yet run, etc.).
+        if !outcomes_path.exists() {
+            return Ok(vec![]);
+        }
+
+        use std::collections::BTreeSet;
+        use std::io::{BufRead, BufReader};
+
+        let f = std::fs::File::open(&outcomes_path)
+            .map_err(|e| UiError::Io(e.to_string()))?;
+        let reader = BufReader::new(f);
+
+        let mut seqs: BTreeSet<u64> = BTreeSet::new();
+
+        for line_res in reader.lines() {
+            let line = match line_res {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            let v: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue, // skip malformed lines silently
+            };
+            // Each line is a BatchOutcome: {"outcomes": [...], ...}
+            let outcomes = match v.get("outcomes").and_then(|o| o.as_array()) {
+                Some(arr) => arr,
+                None => continue,
+            };
+            for outcome in outcomes {
+                let kind = outcome
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                if kind != "error" && kind != "crash" {
+                    continue;
+                }
+                if let Some(seq) = outcome.get("seq").and_then(|s| s.as_u64()) {
+                    seqs.insert(seq);
+                }
+            }
+        }
+
+        // BTreeSet already gives sorted, deduplicated output.
+        Ok(seqs.into_iter().collect())
+    }
+
     /// Return a paged list of failed rows for one attempt.
     ///
     /// Reads `outcomes.jsonl` linearly, collecting `error` and `crash` rows.

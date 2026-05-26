@@ -297,6 +297,33 @@ The function always returns `Ok(ExecDeleteBulkResult)` — the `Result`
 error arm is only used for argument-validation errors that apply to the
 entire call (e.g. empty id list), not per-item failures.
 
+## 3.11 Selective row dispatch — `only_row_ids` (Plan 11)
+
+`rowforge-core::RunRequest` carries an optional `only_row_ids:
+Option<Vec<u64>>` field. When `Some`, the reader task filters input rows
+**before** the `skip_seqs` check: a row is dispatched only if its `seq`
+value appears in the supplied set.
+
+Key semantics:
+
+- The row identifier in `only_row_ids` is the same `seq` (u64) that
+  appears on disk in `outcomes.jsonl` envelope fields. The label
+  "row_ids" is used at the API surface for clarity; the on-disk JSON
+  field is `seq`.
+- **`only_row_ids` overrides `skip_seqs`**: if a seq is in
+  `only_row_ids`, it is dispatched even if it was previously attempted
+  and would otherwise be skipped by `skip_seqs`. This is intentional —
+  the re-run-failed flow explicitly wants to re-dispatch rows that have
+  been attempted before.
+- When `None` (the default), behaviour is unchanged: all rows pass the
+  reader unless filtered by `skip_seqs` or `limit`.
+- `ReaderConfig.only_row_ids` carries the value through to the reader
+  task; the matching is a set-membership check (`HashSet<u64>`).
+
+Primary consumer: Plan 11's re-run-failed flow. `StudioCore::start_run`
+accepts `RunOpts.only_row_ids` and plumbs it through to `RunRequest`
+before spawning the pipeline.
+
 ## 3.8 Background and idle behaviour
 
 - App Nap (macOS) is not opted out by default. Long-running attempts

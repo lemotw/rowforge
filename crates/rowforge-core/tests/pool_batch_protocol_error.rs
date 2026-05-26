@@ -112,6 +112,7 @@ async fn length_mismatch_yields_batch_protocol_error_per_row() {
     let _report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,

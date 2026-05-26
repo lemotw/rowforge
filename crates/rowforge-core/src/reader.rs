@@ -59,6 +59,14 @@ pub struct ReaderConfig {
     /// Sequence numbers to skip entirely (seq counter still advances; skipped
     /// rows are never sent to the accumulator).
     pub skip_seqs: HashSet<u64>,
+    /// When Some, dispatch only rows whose `seq` is in this set.
+    /// Precedence: `only_row_ids` takes priority over `skip_seqs` —
+    /// if a seq is in `only_row_ids`, it is dispatched even if it would
+    /// have been skipped by `skip_seqs` (re-run intent overrides resume intent).
+    /// Non-existent seqs in the set are silently ignored.
+    /// `None`: existing behavior (dispatch all rows modulo skip_seqs).
+    /// `Some(empty)`: dispatch nothing (vacuous noop).
+    pub only_row_ids: Option<HashSet<u64>>,
     /// Stop after emitting this many rows (None = no limit).
     pub row_limit: Option<usize>,
     /// Top-level key renames applied before building the [`RowJob`].
@@ -116,6 +124,7 @@ pub async fn reader_task(
 ) -> Result<(), CoreError> {
     let ReaderConfig {
         skip_seqs,
+        only_row_ids,
         row_limit,
         field_map,
         dry_run,
@@ -145,7 +154,15 @@ pub async fn reader_task(
         };
         let seq = row_src.seq;
 
-        if skip_seqs.contains(&seq) {
+        // only_row_ids filter takes priority over skip_seqs: when Some, only
+        // dispatch rows whose seq is in the set; skip_seqs is ignored for
+        // matching rows (re-run intent overrides resume intent).
+        if let Some(ref only_set) = only_row_ids {
+            if !only_set.contains(&seq) {
+                continue;
+            }
+            // seq is in only_row_ids → dispatch unconditionally (bypass skip_seqs)
+        } else if skip_seqs.contains(&seq) {
             continue;
         }
 
@@ -241,6 +258,7 @@ mod tests {
     fn default_config() -> ReaderConfig {
         ReaderConfig {
             skip_seqs: HashSet::new(),
+            only_row_ids: None,
             row_limit: None,
             field_map: BTreeMap::new(),
             dry_run: false,

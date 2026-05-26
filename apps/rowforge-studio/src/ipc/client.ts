@@ -52,6 +52,7 @@ export const ipc = {
     workers?: number | null;
     dryRun?: boolean | null;
     skipAttempted?: boolean | null;
+    onlyRowIds?: number[] | null;
   }) =>
     invoke<RunStartedHandle>("run_start", {
       executionId: args.executionId,
@@ -60,6 +61,7 @@ export const ipc = {
       workers: args.workers ?? null,
       dryRun: args.dryRun ?? null,
       skipAttempted: args.skipAttempted ?? null,
+      onlyRowIds: args.onlyRowIds ?? null,
     }),
   run_cancel: (args: { handle: RunHandle; mode: CancelMode }) =>
     invoke<void>("run_cancel", args),
@@ -107,6 +109,11 @@ export const ipc = {
     invoke<void>("handler_log_subscribe", args),
   handler_log_unsubscribe: (args: { attemptId: string }) =>
     invoke<void>("handler_log_unsubscribe", args),
+
+  // ===== Plan 11 rerun failed =====
+
+  attempt_failed_row_ids: (args: { execId: string; attemptId: string }) =>
+    invoke<number[]>("attempt_failed_row_ids", args),
 
   // ===== Plan 10 exec delete =====
 

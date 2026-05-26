@@ -123,6 +123,7 @@ async fn pool_streaming_writes_handler_log_file() {
     let report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,
@@ -212,6 +213,7 @@ async fn pool_streaming_invokes_handler_log_callback() {
     let report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,
@@ -272,6 +274,7 @@ async fn raw_stdout_flag_captures_valid_outcome_json() {
     let report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,
@@ -339,6 +342,7 @@ async fn pool_streaming_captures_handler_boot_lines_before_handshake() {
     let report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,

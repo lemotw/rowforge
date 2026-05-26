@@ -137,6 +137,7 @@ async fn pool_run_completes_with_noisy_handler() {
     let report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,

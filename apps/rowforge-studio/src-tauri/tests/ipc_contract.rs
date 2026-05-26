@@ -356,3 +356,26 @@ fn plan10_exec_delete_bulk_result_json_shape() {
     assert_eq!(parsed.failed.len(), 1);
     assert_eq!(parsed.failed[0].exec_id, "e_3");
 }
+
+// ---------------------------------------------------------------------------
+// Plan 11 T3 — attempt_failed_row_ids command + run_start onlyRowIds arg
+// ---------------------------------------------------------------------------
+
+/// Compile-time symbol check: attempt_failed_row_ids command is registered.
+#[test]
+fn plan11_attempt_failed_row_ids_command_registered() {
+    let _ = rowforge_studio_lib::commands::attempt_failed_row_ids;
+}
+
+/// Verify Vec<u64> round-trips through JSON correctly.
+/// This is the shape Tauri deserializes from JS `onlyRowIds: number[]`
+/// (Tauri converts snake_case `only_row_ids` ↔ camelCase `onlyRowIds`).
+#[test]
+fn plan11_run_start_args_round_trip_only_row_ids() {
+    let json = serde_json::json!([1u64, 2u64, 3u64]);
+    let parsed: Vec<u64> = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed, vec![1, 2, 3]);
+
+    // Verify run_start is still publicly exported (symbol check).
+    let _ = rowforge_studio_lib::commands::run_start;
+}

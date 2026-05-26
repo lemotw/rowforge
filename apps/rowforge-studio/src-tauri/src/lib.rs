@@ -48,6 +48,7 @@ pub fn run() {
             commands::handler_log_unsubscribe,  // Plan 9 T6
             commands::execution_delete,         // Plan 10
             commands::execution_delete_bulk,    // Plan 10
+            commands::attempt_failed_row_ids,   // Plan 11
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

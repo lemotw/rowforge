@@ -124,12 +124,13 @@ pub struct StreamingPoolReport {
 /// normally or was aborted (and why). The `CoreError` return covers truly
 /// unrecoverable failures (e.g. I/O on the JSONL file itself).
 ///
-/// `input` is consumed by the Reader task. `skip_seqs`, `row_limit`,
-/// `field_map`, and `dry_run` are forwarded verbatim to the Reader's
-/// [`ReaderConfig`].
+/// `input` is consumed by the Reader task. `skip_seqs`, `only_row_ids`,
+/// `row_limit`, `field_map`, and `dry_run` are forwarded verbatim to the
+/// Reader's [`ReaderConfig`].
 pub async fn run_pool_streaming(
     input: Box<dyn InputStream>,
     skip_seqs: HashSet<u64>,
+    only_row_ids: Option<Vec<u64>>,
     row_limit: Option<usize>,
     field_map: FieldMap,
     dry_run: bool,
@@ -333,8 +334,15 @@ pub async fn run_pool_streaming(
     // ------------------------------------------------------------------
     // 6. Spawn reader, accumulator, stall monitor
     // ------------------------------------------------------------------
+    // Build the only_row_ids set once, before spawning the reader task.
+    // only_row_ids overrides skip_seqs: rows in this set are dispatched
+    // even if skip_seqs would have excluded them (re-run intent > resume intent).
+    let only_row_ids_set: Option<HashSet<u64>> =
+        only_row_ids.map(|v| v.into_iter().collect());
+
     let reader_cfg = ReaderConfig {
         skip_seqs,
+        only_row_ids: only_row_ids_set,
         row_limit,
         field_map,
         dry_run,
@@ -704,6 +712,7 @@ mod tests {
         let report = run_pool_streaming(
             input,
             HashSet::new(),
+            None, // only_row_ids
             None,
             BTreeMap::new(),
             false,
@@ -746,6 +755,7 @@ mod tests {
         let report = run_pool_streaming(
             input,
             HashSet::new(),
+            None, // only_row_ids
             None,
             BTreeMap::new(),
             false,
@@ -785,6 +795,7 @@ mod tests {
         let report = run_pool_streaming(
             input,
             skip,
+            None, // only_row_ids
             None,
             BTreeMap::new(),
             false,
@@ -835,6 +846,7 @@ mod tests {
         let report = run_pool_streaming(
             input,
             HashSet::new(),
+            None, // only_row_ids
             None,
             BTreeMap::new(),
             false,
@@ -887,6 +899,7 @@ mod tests {
             run_pool_streaming(
                 input,
                 HashSet::new(),
+                None, // only_row_ids
                 None,
                 BTreeMap::new(),
                 false,
@@ -943,6 +956,7 @@ mod tests {
             run_pool_streaming(
                 input,
                 HashSet::new(),
+                None, // only_row_ids
                 None,
                 BTreeMap::new(),
                 false,
@@ -1008,6 +1022,7 @@ mod tests {
             let report = run_pool_streaming(
                 input,
                 HashSet::new(),
+                None, // only_row_ids
                 None,
                 BTreeMap::new(),
                 false,
@@ -1061,6 +1076,7 @@ mod tests {
             let report = run_pool_streaming(
                 input,
                 already_done,
+                None, // only_row_ids
                 None,
                 BTreeMap::new(),
                 false,
@@ -1123,6 +1139,7 @@ mod tests {
         let report = run_pool_streaming(
             input,
             HashSet::new(),
+            None, // only_row_ids
             None,
             BTreeMap::new(),
             false,
@@ -1177,6 +1194,7 @@ mod tests {
             run_pool_streaming(
                 input,
                 HashSet::new(),
+                None, // only_row_ids
                 None,
                 BTreeMap::new(),
                 false,
@@ -1242,6 +1260,7 @@ mod tests {
                 run_pool_streaming(
                     input,
                     HashSet::new(),
+                    None, // only_row_ids
                     None,
                     BTreeMap::new(),
                     false,
@@ -1282,6 +1301,7 @@ mod tests {
                 run_pool_streaming(
                     input,
                     HashSet::new(),
+                    None, // only_row_ids
                     None,
                     BTreeMap::new(),
                     false,

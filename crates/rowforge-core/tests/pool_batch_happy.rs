@@ -130,6 +130,7 @@ async fn batch_mode_processes_all_rows_with_echoed_payload() {
     let report = run_pool_streaming(
         input,
         HashSet::new(),
+        None, // only_row_ids
         None,
         BTreeMap::new(),
         false,

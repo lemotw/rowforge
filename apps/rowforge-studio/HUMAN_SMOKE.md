@@ -883,3 +883,116 @@ list, an on-disk Size column, and `rowforge exec delete` CLI subcommands.
 - The Size column value is populated lazily via `walkdir` during
   `exec_list` — it reflects the size at list-load time, not a live
   counter.
+
+# Manual smoke check — Plan 11 (re-run failed rows)
+
+Plan 11 adds the ability to re-run only the rows that failed in a
+previous attempt. It introduces `only_row_ids` filtering in the pipeline
+and a Re-run dialog on the Attempt Detail Failed rows tab.
+
+## 1. Setup
+
+1. Open (or create) a workspace. Create an execution with a CSV input of
+   at least 10 rows. Use a handler that fails some rows deterministically
+   — for example, a shell stub that exits non-zero when the input seq
+   value is odd, or the built-in `fail-odd-seqs` test-handler behavior.
+   Verify the handler dir is accessible and `exec.last_handler_dir` is
+   set (i.e., the handler has been used at least once via Studio's Run
+   button).
+
+2. Confirm you have at least 10 rows in the input CSV so the run
+   produces a mix of successes and failures (e.g. 5 odd-seq failures +
+   5 even-seq successes).
+
+## 2. Initial run — observe failures
+
+3. Click **Run** on the execution and start a full run (no row limit).
+   Let it complete. The attempt transitions to `Done`.
+
+4. Open **Attempt Detail** → **Failed rows** tab. The counter at the
+   top should read "5 failed rows" (or however many odd-seq rows your
+   handler fails). Each row shows its `seq` value and error details.
+
+## 3. Re-run flow — happy path
+
+5. The **Re-run N rows** button appears in the Failed rows tab header
+   (e.g. "Re-run 5 rows"). Confirm it is enabled: the attempt is Done
+   (non-active), the exec has `last_handler_dir`, and N > 0.
+
+6. Click **Re-run 5 rows**. The `RerunFailedDialog` opens. Verify:
+   - Title reads "Re-run 5 failed rows?"
+   - The handler dir path (`exec.last_handler_dir`) is displayed.
+   - The source attempt id is shown (the `attempt_id` of the current
+     attempt).
+
+7. Click **Re-run** (confirm). The dialog closes after the new attempt
+   starts (mutation success). A Sonner toast confirms the mutation
+   succeeded. Studio auto-navigates to the new attempt's **Live** tab.
+
+8. Watch the new attempt's Live tab. The progress counter shows only up
+   to 5 rows dispatched — not the full 10. The run completes quickly.
+
+9. After the new attempt finishes, verify on disk:
+   ```bash
+   ls <workspace>/executions/<exec_id>/attempts/
+   ```
+   Open the new attempt directory and inspect `outcomes.jsonl`. It
+   should contain at most 5 `BatchOutcome` lines, each covering only the
+   previously-failed seq values. No even-seq rows should appear.
+
+## 4. Edge cases
+
+10. Navigate to any attempt that has **0 failed rows** (e.g. a
+    successful re-run from step 7 where all 5 rows now pass). Open its
+    Failed rows tab. The **Re-run N rows** button should be **disabled**.
+    Hover over it → tooltip: "No failed rows to re-run".
+
+11. Start a new run on the execution (e.g. full run again) and while it
+    is still in `Running` state, navigate to the **current** attempt's
+    Failed rows tab. The **Re-run** button should be **disabled**. Hover
+    over it → tooltip: "Cancel active run first". (`hasActiveRun` is
+    derived from this attempt's non-terminal state.)
+
+12. Cancel the active run (soft cancel; let it drain). Once the attempt
+    reaches `Aborted`, the Re-run button re-enables (assuming there are
+    failed rows and `last_handler_dir` is set). Confirm the tooltip is
+    gone.
+
+13. If you have access to an execution that was created before Plan 6
+    (i.e., its `last_handler_dir` is `null` / absent), navigate to one
+    of its attempts' Failed rows tab. The Re-run button should be
+    **disabled** with tooltip "Source attempt has no handler reference".
+    (If no such exec exists, skip this step — it can be simulated by
+    nulling `last_handler_dir` in SQLite directly.)
+
+## 5. Rollup consistency after re-run
+
+14. After step 7's re-run completes with 3 of 5 rows now succeeding
+    (and 2 still failing): navigate to **Execution Detail → Rollup**.
+    Verify:
+    - `resolved` count increased by 3.
+    - `failed_last` counts only the 2 seq values that are still failing
+      (the last attempt for those seqs was an error).
+    - `never_attempted` is 0 (all rows were attempted in attempt 1 or
+      the re-run).
+
+15. Navigate to the re-run attempt's Failed rows tab. The **Re-run**
+    button now reads "Re-run 2 rows" — reflecting only the 2 seq values
+    that are still failing in *this* attempt, not the original 5.
+    Clicking it would start a third attempt targeting only those 2 rows.
+
+### Known Plan 11 limitations
+
+- No ExecDetail-level "Re-run all currently-failed across exec" button —
+  re-run is always scoped to a single attempt's failures.
+- No handler picker override in the dialog — the re-run always uses
+  `exec.last_handler_dir`. To use a different handler, start a new run
+  via the Run button on Execution Detail.
+- No individual row selection or preview — the dialog is all-or-none:
+  all of this attempt's failed rows, or cancel.
+- No CLI `rowforge attempt rerun-failed` subcommand in Plan 11.
+- `hasActiveRun` gate is approximate (uses the current attempt's own
+  terminal state, not an exec-wide active-run check). If a *different*
+  attempt on the same exec is running, the button will appear enabled
+  but the backend will refuse with `UiError::RunBusy`, surfaced as a
+  toast error.

@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { ipc } from "@/ipc/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { AppShell } from "@/layout/AppShell";
-import { useAttemptDetail, useExecDetail, useWorkspace } from "@/ipc/queries";
+import { useAttemptDetail, useAttemptFailedRowIds, useExecDetail, useRunStart, useWorkspace } from "@/ipc/queries";
 import { uiErrorMessage } from "@/ipc/types";
+import type { ExecutionId } from "@/ipc/types";
 import { ErrorsByCodeList } from "@/components/ErrorsByCodeList";
 import { FailedRowsTable } from "@/components/FailedRowsTable";
 import { ProgressRegion } from "@/components/ProgressRegion";
@@ -16,6 +18,7 @@ import { EventTail } from "@/components/EventTail";
 import { PhaseChipBar } from "@/components/PhaseChipBar";
 import { LifecycleBanners } from "@/components/LifecycleBanner";
 import { CancelDialog } from "@/components/CancelDialog";
+import { RerunFailedDialog } from "@/components/RerunFailedDialog";
 import { useRun } from "@/ipc/use-run";
 import { AttemptLogsTab } from "@/pages/AttemptLogsTab";
 
@@ -31,6 +34,11 @@ export function AttemptDetailPage() {
   const exec = useExecDetail(id ?? null);
   const liveState = useRun(runHandle);
   const navigate = useNavigate();
+
+  // Plan 11: Re-run failed rows support
+  const failedRowIds = useAttemptFailedRowIds(id ?? "", aid ?? null);
+  const runStart = useRunStart();
+  const [rerunOpen, setRerunOpen] = useState(false);
 
   // If the user lands on this page without `?run=` in the URL, see whether
   // there's still a live session for this attempt — if so, offer to attach.
@@ -62,6 +70,44 @@ export function AttemptDetailPage() {
     detail.data?.is_terminal === true ||
     liveTerminal ||
     liveState.phantomBootstrap;
+
+  // Plan 11: derive whether this exec has an active run (proxy: current
+  // attempt is still running). This is a conservative check — the backend
+  // will also reject via SessionRegistry::has_active_run_for_exec if any
+  // concurrent run exists on this exec; that error surfaces via toast.
+  // Limitation: if a DIFFERENT attempt on the same exec is running, this
+  // check may not catch it; the backend error message will cover that case.
+  const hasActiveRun = !isTerminal;
+
+  // Plan 11: resolve handler dir for re-run. AttemptDetail does not carry a
+  // handler_dir field directly; fall back to the exec summary's last_handler_dir
+  // (set by Plan 6). When neither is available the Re-run button is disabled.
+  const handlerDir: string | null = exec.data?.summary.last_handler_dir ?? null;
+
+  // Plan 11: mutation handler for re-run
+  const handleRerunConfirm = () => {
+    if (!handlerDir || !failedRowIds.data) return;
+    runStart.mutate(
+      {
+        executionId: id as ExecutionId,
+        handlerDir,
+        rowLimit: null,
+        workers: null,
+        dryRun: null,
+        skipAttempted: null,
+        onlyRowIds: failedRowIds.data,
+      },
+      {
+        onSuccess: (started) => {
+          setRerunOpen(false);
+          navigate(`/exec/${id}/attempt/${started.attempt_id}?run=${started.handle}`);
+        },
+        onError: (e) => {
+          toast.error(uiErrorMessage(e));
+        },
+      },
+    );
+  };
 
   // When we detect the run is done but attempt_show still says it's running
   // (race: AttemptDetail mounted between run start and finish), force a
@@ -191,6 +237,31 @@ export function AttemptDetailPage() {
               </TabsContent>
 
               <TabsContent value="failed">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm text-muted-foreground">
+                    {failedRowIds.data?.length ?? 0} failed row{failedRowIds.data?.length === 1 ? "" : "s"}
+                  </span>
+                  <Button
+                    onClick={() => setRerunOpen(true)}
+                    disabled={
+                      !failedRowIds.data ||
+                      failedRowIds.data.length === 0 ||
+                      hasActiveRun ||
+                      !handlerDir
+                    }
+                    title={
+                      (failedRowIds.data?.length ?? 0) === 0
+                        ? "No failed rows to re-run"
+                        : hasActiveRun
+                        ? "Cancel active run first"
+                        : !handlerDir
+                        ? "Source attempt has no handler reference"
+                        : undefined
+                    }
+                  >
+                    Re-run {failedRowIds.data?.length ?? 0} row{failedRowIds.data?.length === 1 ? "" : "s"}
+                  </Button>
+                </div>
                 <FailedRowsTable
                   executionId={id!}
                   attemptId={aid!}
@@ -232,6 +303,17 @@ export function AttemptDetailPage() {
           </>
         )}
       </div>
+
+      {/* Plan 11: Re-run failed rows confirm dialog */}
+      <RerunFailedDialog
+        open={rerunOpen}
+        onOpenChange={setRerunOpen}
+        rowCount={failedRowIds.data?.length ?? 0}
+        handlerDir={handlerDir ?? ""}
+        sourceAttemptId={aid ?? ""}
+        onConfirm={handleRerunConfirm}
+        isPending={runStart.isPending}
+      />
     </AppShell>
   );
 }

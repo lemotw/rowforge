@@ -76,6 +76,14 @@ impl StudioCore {
     pub fn export(&self, e: &ExecutionId, opts: ExportOpts)
         -> Result<ExportReport, UiError>;
 
+    // Plan 11 — 重跑失敗的 row
+    pub fn attempt_failed_row_ids(&self, exec_id: &ExecutionId, attempt_id: &AttemptId)
+        -> Result<Vec<u64>, UiError>;
+    // 讀取指定 attempt 的 outcomes.jsonl；從 BatchOutcome 信封中收集
+    // 巢狀 outcome type 為 "error" 或 "crash" 的 seq 值。
+    // 回傳去重後升序排列的 Vec<u64>。seq 欄位是整個 pipeline 使用的
+    // row 識別符（u64）（磁碟欄位名稱：seq）。
+
     // Execution 刪除（Plan 10；見第 3 部分 §3.10）
     pub fn execution_delete(&self, exec_id: &str) -> Result<(), UiError>;
     pub fn execution_delete_bulk(&self, exec_ids: Vec<String>)
@@ -102,6 +110,7 @@ struct RunOpts {
     config_overrides: BTreeMap<String, JsonValue>,
     mapping: Option<FieldMapping>,
     sync_data: bool,
+    only_row_ids: Option<Vec<u64>>,  // Plan 11：若 Some，僅派發這些 seq
 }
 enum HandlerSource {
     Dir(PathBuf),
@@ -281,10 +290,18 @@ exec_export(id, opts)                 -> ExportReport
 attempt_show(execution_id, attempt_id)            -> AttemptDetail
 attempt_failed_page(query)                        -> FailedRowPage
 attempt_row_history(execution_id, seq)            -> RowHistory
+attempt_failed_row_ids(execution_id, attempt_id)  -> Vec<u64>
+    // Plan 11。讀取 outcomes.jsonl；回傳 BatchOutcome outcome type 為
+    // "error" 或 "crash" 的去重升序 seq 值。type 欄位名稱為 "type"
+    // （非 "status"）。attempt 無失敗時回傳 []。attempt 不存在時
+    // 回傳 NotFound。
 
 run_start(execution_id, handler_dir,
           row_limit?, workers?,
-          dry_run?, skip_attempted?)   -> RunStartedHandle
+          dry_run?, skip_attempted?,
+          only_row_ids?)               -> RunStartedHandle
+    // only_row_ids（Option<Vec<u64>>，Plan 11）：若提供，pipeline 僅
+    // 派發列出的 seq 值，並對這些 row 略過 skip_seqs。
 run_cancel(handle, mode)              -> ()
 run_status(handle)                    -> RunStatus
 run_active()                          -> Vec<RunHandle>
@@ -361,6 +378,11 @@ Run 生命週期指令說明（Plan 5）：
 - `attempt_active_handle` 把 `AttemptId` 解析回對應的活動
   `RunHandle`（若有）。用於使用者不帶 `?run=` URL 進入 in-flight
   attempt 時提供「Watch live」按鈕。
+- `only_row_ids`（Plan 11，`Option<Vec<u64>>`）— 若提供，pipeline
+  reader 僅派發 seq 值在清單中的 row，並覆蓋任何 `skip_seqs` 過濾。
+  TypeScript binding 用 `onlyRowIds`（Tauri 自動 camelCase）。`seq`
+  識別符與 `outcomes.jsonl` 信封中使用的 u64 相同（磁碟 JSON 欄位名稱：
+  `seq`）。由重跑失敗 dialog 中的 `useRunStart` 提供。
 
 事件（單向,core → UI）：
 

@@ -321,6 +321,32 @@ Symlink defense: three layers — (1) regex validate name, (2) canonicalize reso
 - `useExecutionDeleteBulk` — bulk-delete mutation hook; invalidates `exec_list` on any successful delete; exposes `bulkFailures` state.
 - `formatBytes` helper — lives in `apps/rowforge-studio/src/lib/format.ts`; shared by dialog and ExecList Size column.
 
+### Flow M — Re-run failed rows (Plan 11)
+
+| # | Step | Command |
+|---|---|---|
+| 1 | Navigate to Attempt Detail for a completed attempt with failures | `attempt_show` |
+| 2 | Click **Failed rows** tab; N failed rows shown at the top | `attempt_failed_page` |
+| 3 | **Re-run N rows** button appears in the tab header | `attempt_failed_row_ids` (on mount) |
+| 4 | Button is **disabled** with tooltip "No failed rows to re-run" when N = 0 | — |
+| 5 | Button is **disabled** with tooltip "Cancel active run first" when `hasActiveRun` is true (current attempt is non-terminal) | — |
+| 6 | Button is **disabled** with tooltip "Source attempt has no handler reference" when `exec.last_handler_dir` is absent | — |
+| 7 | Click the enabled **Re-run N rows** button → `RerunFailedDialog` opens | — |
+| 8 | Dialog title: "Re-run N failed rows?"; shows `exec.last_handler_dir` path; shows source attempt id | — |
+| 9 | Click **Cancel** → dialog closes, no mutation | — |
+| 10 | Click **Re-run** → mutation fires; dialog closes after the new attempt starts (mutation success) | `run_start(exec_id, last_handler_dir, onlyRowIds=[...seq values])` |
+| 11 | On success: Sonner toast; UI auto-navigates to the new attempt's **Live** tab | event `run_start` response |
+| 12 | New attempt's pipeline dispatches only the N failed seq values; other rows not re-processed | — |
+| 13 | After new attempt completes: re-run the same seq twice → exec rollup uses "last attempt wins" semantics; latest result per seq is authoritative | `exec_rollup` |
+
+`hasActiveRun` is derived from the current attempt's state being non-terminal (see Part 3 §3.3). This is an approximation: if a *different* attempt on the same exec is active, the backend will still refuse via `UiError::RunBusy`, which the UI surfaces as a toast.
+
+**Component breakdown:**
+- `RerunFailedDialog` — shadcn `Dialog`; shows row count, `last_handler_dir` path, source attempt id; Cancel + Re-run buttons.
+- `useAttemptFailedRowIds(execId, attemptId)` — React Query hook; calls `attempt_failed_row_ids`; cached per attempt.
+- `useRunStart` — existing hook, extended with `onlyRowIds?: number[]` parameter (Plan 11).
+- `AttemptFailedTab` — Failed rows tab; gains the Re-run button with the three disabled states above.
+
 ## 7.5 Color & state mapping
 
 The mapping table below is normative for v1.
