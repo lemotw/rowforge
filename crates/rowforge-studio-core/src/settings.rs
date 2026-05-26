@@ -39,16 +39,11 @@ pub struct Settings {
     pub handler_log_capture_raw_stdout: bool,
     /// Plan 13: default row count in the smoke test UI.
     /// Clamped to 1..=100 by handler_smoke_run.
-    #[serde(default = "default_smoke_rows")]
     pub smoke_default_rows: usize,
     /// Plan 13: per-row timeout for smoke runs (seconds).
     /// 0 means no timeout.
-    #[serde(default = "default_smoke_timeout")]
     pub smoke_timeout_per_row_secs: u64,
 }
-
-fn default_smoke_rows() -> usize { 5 }
-fn default_smoke_timeout() -> u64 { 30 }
 
 impl Default for Settings {
     fn default() -> Self {
