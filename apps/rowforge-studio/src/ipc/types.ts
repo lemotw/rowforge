@@ -48,6 +48,16 @@ export interface Settings {
    * Turn on to debug protocol issues; leave off for normal operation.
    */
   handler_log_capture_raw_stdout: boolean;
+  /**
+   * Plan 13: default row count pre-filled in the Smoke test section.
+   * Clamped to 1..=100 at smoke-run time. Default 5.
+   */
+  smoke_default_rows: number;
+  /**
+   * Plan 13: per-row timeout for smoke runs (seconds). 0 means no timeout.
+   * Default 30.
+   */
+  smoke_timeout_per_row_secs: number;
 }
 
 // ===== Plan 10 exec delete =====

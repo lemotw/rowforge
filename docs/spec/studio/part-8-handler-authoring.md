@@ -377,7 +377,7 @@ On Studio quit (Part 3 §3.6):
 >   `handler_scaffold`, `handler_delete`, `handler_rename`, `resolve_editor`,
 >   `copy_dir_recursive` [Plan 12], `handler_import_from_folder` [Plan 12],
 >   `handler_fork` [Plan 12])
-> - `crates/rowforge-studio-core/src/handler_smoke.rs` — smoke runner
+> - `crates/rowforge-studio-core/src/smoke.rs` — smoke runner
 >   (`handler_smoke_run`, `handler_smoke_load_fixtures`) [Plan 13]
 > - `crates/rowforge-studio-core/src/handler_templates/` — embedded scaffold
 >   templates (GoStdio, GoBatch, Empty)
