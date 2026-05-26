@@ -505,6 +505,7 @@ async fn run_attempt(store: &mut ExecutionStore, a: RunAttemptArgs) -> Result<i3
         fsync_outcomes: a.fsync_outcomes,
         capture_raw_stdout: false,
         only_row_ids: None,
+        hard_cancel: None,
     };
 
     let result = execute(req).await;
@@ -517,6 +518,7 @@ async fn run_attempt(store: &mut ExecutionStore, a: RunAttemptArgs) -> Result<i3
                     failed_count: report.failed_count,
                     aborted: report.aborted,
                     aborted_reason: report.abort_reason.clone(),
+                    cancelled_reason: None,
                 },
             )?;
             println!("[rowforge] attempt {} finished", attempt.id);
@@ -543,6 +545,7 @@ async fn run_attempt(store: &mut ExecutionStore, a: RunAttemptArgs) -> Result<i3
                     failed_count: 0,
                     aborted: true,
                     aborted_reason: Some(format!("{e:#}")),
+                    cancelled_reason: None,
                 },
             );
             Err(e)

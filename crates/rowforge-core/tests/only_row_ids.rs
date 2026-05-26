@@ -105,6 +105,7 @@ fn base_req(
         fsync_outcomes: false,
         capture_raw_stdout: false,
         only_row_ids: None,
+        hard_cancel: None,
     }
 }
 

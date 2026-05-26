@@ -116,6 +116,14 @@ pub struct RunRequest {
     /// `None` (default): existing behavior, dispatch all rows (modulo skip_seqs).
     /// `Some(vec![])`: dispatch nothing (vacuous noop).
     pub only_row_ids: Option<Vec<u64>>,
+    /// Plan 14: when set to `true` AND `cancel` token fires, the pool kills
+    /// each worker's process group via `Worker::hard_kill` instead of
+    /// `shutdown(grace)`. `None` / `false` means soft cancel (default).
+    ///
+    /// Always paired with `cancel`: the caller sets `hard_cancel.store(true,
+    /// Relaxed)` THEN fires `cancel.cancel()`. The worker loop checks
+    /// `hard_cancel.load()` only after observing the cancel token fired.
+    pub hard_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 pub struct RunReport {
@@ -258,6 +266,7 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
         on_row_done,
         on_handler_log: req.on_handler_log.clone(),
         capture_raw_stdout: req.capture_raw_stdout,
+        hard_cancel: req.hard_cancel.clone(),
     };
 
     let pool_report = run_pool_streaming(

@@ -153,7 +153,16 @@ export function AttemptDetailPage() {
             <header className="mb-4">
               <h1 className="text-xl font-medium">Attempt {detail.data.id}</h1>
               <div className="mt-1 text-sm text-muted-foreground">
-                state: {detail.data.state} · run type: {detail.data.run_type} ·
+                state:{" "}
+                {detail.data.state === "aborted" &&
+                detail.data.cancelled_reason === "hard_cancel" ? (
+                  <span className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">
+                    force-killed
+                  </span>
+                ) : (
+                  <span>{detail.data.state}</span>
+                )}
+                {" "}· run type: {detail.data.run_type} ·
                 started {new Date(detail.data.started_at).toISOString().slice(0, 19)}
               </div>
             </header>

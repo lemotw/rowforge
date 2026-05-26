@@ -317,6 +317,7 @@ impl StudioCore {
                 crate::session::HANDLER_LOG_CHANNEL_CAP,
             );
         let handler_log_tx_for_pipeline = handler_log_tx.clone();
+        let hard_cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let session = Arc::new(Session {
             handle: handle.clone(),
             execution_id: execution_id.as_str().to_string(),
@@ -327,6 +328,7 @@ impl StudioCore {
             status: Mutex::new(RunStatus::Starting),
             started_at: Instant::now(),
             handler_log_tx,
+            hard_cancel: hard_cancel_flag.clone(),
         });
         self.sessions.register(session.clone());
 
@@ -358,7 +360,7 @@ impl StudioCore {
         // Plan 9 T5: snapshot Settings.handler_log_capture_raw_stdout at
         // attempt-start. Changes to the setting after this point do NOT affect
         // the current attempt (intentional — snapshotted into RunRequest).
-        let capture_raw_stdout = self.capture_raw_stdout;
+        let capture_raw_stdout = self.capture_raw_stdout();
 
         // Plan 11: snapshot only_row_ids from RunOpts so the filter is
         // captured into the spawned task rather than borrowed.
@@ -378,6 +380,7 @@ impl StudioCore {
                 handler_log_tx_for_pipeline,
                 capture_raw_stdout,
                 only_row_ids,
+                hard_cancel_flag,
             )
             .await;
 
@@ -406,6 +409,10 @@ impl StudioCore {
                 });
             };
 
+            let was_hard_cancelled = session
+                .hard_cancel
+                .load(std::sync::atomic::Ordering::Relaxed);
+
             match run_result {
                 Ok(report) => {
                     if let Some(err) = try_finish(FinishAttempt {
@@ -413,6 +420,7 @@ impl StudioCore {
                         failed_count: report.failed_count,
                         aborted: report.aborted,
                         aborted_reason: report.abort_reason.clone(),
+                        cancelled_reason: None,
                     }) {
                         emit_persist_warning(err);
                     }
@@ -439,6 +447,9 @@ impl StudioCore {
                     // Persist the partial counts from rowforge-core so a
                     // cancelled run with completed rows is recorded
                     // accurately, not as 0/0.
+                    // Plan 14: if this was a hard cancel (SIGKILL), set
+                    // cancelled_reason = "hard_cancel" so the UI can render
+                    // the Force-killed badge.
                     if let Some(err) = try_finish(FinishAttempt {
                         success_count: report.success_count,
                         failed_count: report.failed_count,
@@ -447,6 +458,11 @@ impl StudioCore {
                             .abort_reason
                             .clone()
                             .or_else(|| Some("cancelled by operator".into())),
+                        cancelled_reason: if was_hard_cancelled {
+                            Some("hard_cancel".to_string())
+                        } else {
+                            None
+                        },
                     }) {
                         emit_persist_warning(err);
                     }
@@ -467,6 +483,7 @@ impl StudioCore {
                         failed_count: 0,
                         aborted: true,
                         aborted_reason: Some(format!("panic: {msg}")),
+                        cancelled_reason: None,
                     }) {
                         emit_persist_warning(err);
                     }
@@ -487,6 +504,7 @@ impl StudioCore {
                         failed_count: 0,
                         aborted: true,
                         aborted_reason: Some(msg.clone()),
+                        cancelled_reason: None,
                     }) {
                         emit_persist_warning(err);
                     }
@@ -537,8 +555,9 @@ impl StudioCore {
     /// `CancelMode::Soft` — fires the cancellation token; the pool stops
     /// dispatching new rows and waits for in-flight workers to complete.
     ///
-    /// `CancelMode::Hard` — same as Soft for now. A future plan can add
-    /// SIGKILL plumbing once rowforge-core exposes a kill handle.
+    /// `CancelMode::Hard` — sets `hard_cancel` flag THEN fires the token;
+    /// the worker loop SIGKILLs each worker's process group (and grand-
+    /// children) on Unix. Falls back to soft cancel on non-Unix.
     ///
     /// Returns `UiError::UnknownHandle` if the handle is not in the registry.
     pub fn cancel(&self, h: &RunHandle, mode: CancelMode) -> Result<(), UiError> {
@@ -550,19 +569,28 @@ impl StudioCore {
             let mut s = session.status.lock().unwrap_or_else(|p| p.into_inner());
             *s = RunStatus::Cancelling;
         }
+        // Emit a phase_changed event so the React reducer transitions its
+        // local status to "cancelling" immediately. Without this, the UI
+        // only learns about the transition via the next Tick / snapshot poll
+        // (≤250 ms lag), which may miss the window before the run finalises
+        // and the handle is removed from the registry — causing the Cancel
+        // button to stay visible instead of showing the Cancelling banner +
+        // Force kill button.
+        session.aggregator.set_phase(Phase::Cancelling);
         match mode {
             CancelMode::Soft => session.cancel_token.cancel(),
             CancelMode::Hard => {
-                // Hard cancel: fire the token immediately. rowforge-core does
-                // not currently expose a SIGKILL handle, so Hard == Soft for
-                // now. When pool_streaming gains process-kill plumbing, wire
-                // it here.
+                // Plan 14: set hard_cancel FIRST, then fire the token. The worker
+                // loop observes the cancel token, then checks hard_cancel.load()
+                // and branches to killpg() instead of graceful shutdown.
+                //
+                // Relaxed is sufficient: the cancel_token's internal Release on
+                // cancel() / Acquire on is_cancelled() establishes the happens-
+                // before edge that makes this store visible to the worker.
+                session
+                    .hard_cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 session.cancel_token.cancel();
-                tracing::warn!(
-                    handle = %h,
-                    "Hard cancel requested; rowforge-core has no kill handle yet — \
-                     falling back to soft cancel (token fire)"
-                );
             }
         }
         Ok(())
@@ -708,6 +736,7 @@ async fn run_pipeline_in_process(
     handler_log_tx: tokio::sync::broadcast::Sender<rowforge_core::handler_log::HandlerLogLine>,
     capture_raw_stdout: bool,
     only_row_ids: Option<Vec<u64>>,
+    hard_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<rowforge_core::run::RunReport, RunFailure> {
     let handler_canon = match std::fs::canonicalize(&opts.handler_dir) {
         Ok(p) => p,
@@ -810,6 +839,7 @@ async fn run_pipeline_in_process(
         fsync_outcomes: false,
         capture_raw_stdout,
         only_row_ids,
+        hard_cancel: Some(hard_cancel),
     };
 
     aggregator.set_phase(Phase::Snapshotting);

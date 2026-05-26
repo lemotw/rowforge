@@ -502,6 +502,7 @@ mod tests {
             failed_count: failures.len() as u64,
             aborted: false,
             aborted_reason: None,
+            cancelled_reason: None,
         }).unwrap();
         at.id
     }
@@ -614,6 +615,7 @@ mod tests {
             failed_count: 0,
             aborted: true,
             aborted_reason: Some("test".into()),
+            cancelled_reason: None,
         }).unwrap();
         let r = compute_resolution(&store, &exec_id).unwrap();
         // v3.3 change: the partial result from the aborted attempt IS counted.
@@ -647,6 +649,7 @@ mod tests {
             failed_count: 0,
             aborted: true,
             aborted_reason: Some("stall".into()),
+            cancelled_reason: None,
         }).unwrap();
 
         // Recovery attempt — covers the remaining seqs.
@@ -707,6 +710,7 @@ mod tests {
             failed_count: 1,
             aborted: false,
             aborted_reason: None,
+            cancelled_reason: None,
         }).unwrap();
 
         let r = compute_resolution(&store, &exec_id).unwrap();
@@ -779,6 +783,7 @@ mod tests {
             failed_count: 0,
             aborted: false,
             aborted_reason: None,
+            cancelled_reason: None,
         }).unwrap();
 
         let err = compute_resolution(&store, &exec_id).unwrap_err();

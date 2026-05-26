@@ -60,6 +60,7 @@ pub async fn run_worker_loop(
     grace: Duration,
     cancel: Option<CancellationToken>,
     on_row_done: Option<Arc<dyn Fn(u64, bool) + Send + Sync>>,
+    hard_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), CoreError> {
     // Closure capturing on_row_done — fires for every row in a BatchOutcome
     // *after* it has been durably appended to outcomes.jsonl. seq + success
@@ -213,7 +214,54 @@ pub async fn run_worker_loop(
     }
 
     // Shutdown handler even on cancel (§8.2: "shutdown handler").
-    let _ = worker.shutdown(grace).await;
+    // Plan 14: if hard_cancel flag is set, SIGKILL the process group instead of
+    // waiting for a graceful shutdown.
+    //
+    // Escalation path: if the user fires soft-cancel first and THEN clicks
+    // Force kill while the worker is inside shutdown(grace), the hard_cancel
+    // flag will flip mid-flight. We poll the flag every 50 ms during the grace
+    // window so we can switch to killpg() without waiting for the full grace.
+    let initial_hard = hard_cancel
+        .as_ref()
+        .map(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+        .unwrap_or(false);
+    if initial_hard {
+        tracing::info!(worker = worker.id, "hard cancel: killing process group");
+        let _ = worker.hard_kill().await;
+    } else {
+        // Soft cancel. The user MAY escalate to hard kill while shutdown
+        // is in flight; poll the flag during the grace window and switch
+        // to killpg() if it flips.
+        let worker_id = worker.id;
+        let hard_flag = hard_cancel.clone();
+        let escalated = {
+            let shutdown_fut = worker.shutdown(grace);
+            tokio::pin!(shutdown_fut);
+            loop {
+                tokio::select! {
+                    biased;
+                    res = &mut shutdown_fut => {
+                        let _ = res;
+                        break false;
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                        let escalate = hard_flag
+                            .as_ref()
+                            .map(|f| f.load(std::sync::atomic::Ordering::Acquire))
+                            .unwrap_or(false);
+                        if escalate {
+                            break true;
+                        }
+                    }
+                }
+            }
+            // shutdown_fut is dropped here, releasing the mutable borrow on worker.
+        };
+        if escalated {
+            tracing::info!(worker = worker_id, "soft cancel escalated: killing process group");
+            let _ = worker.hard_kill().await;
+        }
+    }
     Ok(())
 }
 
@@ -377,6 +425,7 @@ mod tests {
             Duration::from_secs(2),
             cancel,
             None,
+            None,
         )
         .await
         .expect("run_worker_loop returned Err");
@@ -481,6 +530,7 @@ mod tests {
             Duration::from_secs(2),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -540,6 +590,7 @@ mod tests {
             Arc::clone(&jsonl),
             Duration::from_secs(2),
             Some(cancel),
+            None,
             None,
         )
         .await

@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, CoreError>;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -165,6 +165,9 @@ pub struct Attempt {
     pub success_count: u64,
     pub failed_count: u64,
     pub aborted_reason: Option<String>,
+    /// Plan 14: set to `"hard_cancel"` when the attempt was force-killed via
+    /// SIGKILL. `None` for soft cancels and normal completions.
+    pub cancelled_reason: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub dir: PathBuf,
@@ -184,6 +187,10 @@ pub struct FinishAttempt {
     pub failed_count: u64,
     pub aborted: bool,
     pub aborted_reason: Option<String>,
+    /// Plan 14: when set, persisted to attempts.cancelled_reason. Values:
+    /// `None` (soft cancel or normal completion), `Some("hard_cancel")`
+    /// (force-killed via SIGKILL), `Some("timeout")` (reserved).
+    pub cancelled_reason: Option<String>,
 }
 
 pub struct ExecutionStore {
@@ -230,6 +237,7 @@ impl ExecutionStore {
                 self.conn.execute_batch(MIGRATION_V1)?;
                 self.conn.execute_batch(MIGRATION_V2)?;
                 self.conn.execute_batch(MIGRATION_V3)?;
+                self.conn.execute_batch(MIGRATION_V4)?;
                 self.conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?1)",
                     params![SCHEMA_VERSION],
@@ -238,11 +246,18 @@ impl ExecutionStore {
             Some(1) => {
                 self.conn.execute_batch(MIGRATION_V2)?;
                 self.conn.execute_batch(MIGRATION_V3)?;
+                self.conn.execute_batch(MIGRATION_V4)?;
                 self.conn
                     .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
             }
             Some(2) => {
                 self.conn.execute_batch(MIGRATION_V3)?;
+                self.conn.execute_batch(MIGRATION_V4)?;
+                self.conn
+                    .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
+            }
+            Some(3) => {
+                self.conn.execute_batch(MIGRATION_V4)?;
                 self.conn
                     .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
             }
@@ -575,6 +590,7 @@ impl ExecutionStore {
             success_count: 0,
             failed_count: 0,
             aborted_reason: None,
+            cancelled_reason: None,
             started_at,
             ended_at: None,
             dir,
@@ -594,14 +610,15 @@ impl ExecutionStore {
 
         let updated = self.conn.execute(
             "UPDATE attempts SET state=?1, success_count=?2, failed_count=?3,
-                                 aborted_reason=?4, ended_at=?5
-             WHERE id=?6 AND state='running'",
+                                 aborted_reason=?4, ended_at=?5, cancelled_reason=?6
+             WHERE id=?7 AND state='running'",
             params![
                 state.as_str(),
                 finish.success_count as i64,
                 finish.failed_count as i64,
                 finish.aborted_reason,
                 now.to_rfc3339(),
+                finish.cancelled_reason,
                 attempt_id,
             ],
         )?;
@@ -632,7 +649,7 @@ impl ExecutionStore {
                 "SELECT id, execution_id, handler_instance_id, parent_attempt_id,
                         run_type_source, run_type_sample_size, run_type_simulation,
                         state, success_count, failed_count, aborted_reason,
-                        started_at, ended_at
+                        started_at, ended_at, cancelled_reason
                  FROM attempts WHERE id=?1",
                 params![id],
                 |r| row_to_attempt(r, &home),
@@ -647,7 +664,7 @@ impl ExecutionStore {
             "SELECT id, execution_id, handler_instance_id, parent_attempt_id,
                     run_type_source, run_type_sample_size, run_type_simulation,
                     state, success_count, failed_count, aborted_reason,
-                    started_at, ended_at
+                    started_at, ended_at, cancelled_reason
              FROM attempts WHERE execution_id=?1 ORDER BY started_at ASC",
         )?;
         let rows = stmt
@@ -671,6 +688,33 @@ impl ExecutionStore {
              WHERE execution_id = ?1
                AND state NOT IN ('completed', 'aborted')",
             params![exec_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Plan 13: cross-process active-run gate for "is this handler dir busy?"
+    ///
+    /// Returns true when ANY attempt joined through `handler_instances` to
+    /// the given `handler_dir` is in a non-terminal state. The smoke runner
+    /// uses this to refuse a smoke when an exec attempt is already running
+    /// against the same handler binary.
+    ///
+    /// `handler_dir` is compared as `source_snapshot_dir` text — the caller
+    /// must pass the exact canonical path used at handler-instance insert time
+    /// (i.e. `<workspace>/handlers/<name>`, no trailing slash).
+    pub fn has_active_attempt_for_handler_dir(
+        &self,
+        handler_dir: &Path,
+    ) -> Result<bool> {
+        let dir_str = handler_dir.to_string_lossy();
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*)
+               FROM attempts a
+               JOIN handler_instances hi ON a.handler_instance_id = hi.id
+              WHERE hi.source_snapshot_dir = ?1
+                AND a.state NOT IN ('completed', 'aborted')",
+            params![dir_str.as_ref()],
             |row| row.get(0),
         )?;
         Ok(count > 0)
@@ -748,6 +792,10 @@ CREATE INDEX idx_attempts_started_at ON attempts(started_at);
 
 const MIGRATION_V3: &str = "
 ALTER TABLE executions ADD COLUMN last_handler_dir TEXT;
+";
+
+const MIGRATION_V4: &str = "
+ALTER TABLE attempts ADD COLUMN cancelled_reason TEXT;
 ";
 
 fn row_to_execution(r: &rusqlite::Row<'_>, home: &Path) -> rusqlite::Result<Execution> {
@@ -841,6 +889,7 @@ fn row_to_attempt(r: &rusqlite::Row<'_>, home: &Path) -> rusqlite::Result<Attemp
         aborted_reason: r.get(10)?,
         started_at: parse_rfc3339(r.get::<_, String>(11)?)?,
         ended_at: r.get::<_, Option<String>>(12)?.map(parse_rfc3339).transpose()?,
+        cancelled_reason: r.get(13)?,
         dir,
     })
 }
@@ -1102,6 +1151,7 @@ mod tests {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -1194,9 +1244,9 @@ mod tests {
                 rusqlite::params![2_i64],
             ).unwrap();
         }
-        // Re-open via ExecutionStore — should migrate v2 → v3.
+        // Re-open via ExecutionStore — should migrate v2 → v3 → v4.
         let store = ExecutionStore::open(tmp.path()).unwrap();
-        assert_eq!(store.schema_version(), 3);
+        assert_eq!(store.schema_version(), SCHEMA_VERSION as u8);
 
         // Verify the new column exists by trying to SELECT it (zero rows is fine).
         let mut stmt = store
@@ -1204,6 +1254,63 @@ mod tests {
             .prepare("SELECT last_handler_dir FROM executions WHERE 1=0")
             .unwrap();
         let _ = stmt.query([]).unwrap();
+    }
+
+    #[test]
+    fn has_active_attempt_for_handler_dir_matches_only_target_handler() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tempdir().unwrap();
+        let csv = write_csv(src.path(), "in.csv", 10);
+
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+
+        // Two handler instances with different source_snapshot_dirs.
+        let hi_a = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "alpha".into(),
+                manifest_hash: "h1".into(),
+                source_snapshot_dir: tmp.path().join("handlers/alpha"),
+                binary_hash: None,
+            })
+            .unwrap();
+        let _hi_b = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "beta".into(),
+                manifest_hash: "h2".into(),
+                source_snapshot_dir: tmp.path().join("handlers/beta"),
+                binary_hash: None,
+            })
+            .unwrap();
+
+        // One running attempt against alpha; none for beta.
+        let exec = store
+            .create_execution(NewExecution {
+                name: None,
+                input_csv_id: "csv_test".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: Some(hi_a.id.clone()),
+            })
+            .unwrap();
+        store
+            .create_attempt(NewAttempt {
+                execution_id: exec.id.clone(),
+                handler_instance_id: hi_a.id.clone(),
+                parent_attempt_id: None,
+                run_type: RunType {
+                    source: Source::Full,
+                    simulation: Simulation::Real,
+                },
+            })
+            .unwrap();
+
+        let alpha_dir = tmp.path().join("handlers/alpha");
+        let beta_dir = tmp.path().join("handlers/beta");
+        assert!(store
+            .has_active_attempt_for_handler_dir(&alpha_dir)
+            .unwrap());
+        assert!(!store
+            .has_active_attempt_for_handler_dir(&beta_dir)
+            .unwrap());
     }
 
     #[test]
@@ -1245,5 +1352,42 @@ mod tests {
         // Setting on a nonexistent id errors.
         let err = store.set_last_handler_dir("nope", std::path::Path::new("/x"));
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn migration_v4_adds_cancelled_reason_column() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _store = ExecutionStore::open(tmp.path()).unwrap();
+        let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name='cancelled_reason'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_v4_upgrades_from_v3_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        // First create a v3 DB by manually setting version=3 after fresh open
+        // (then re-opening should trigger the V4 upgrade).
+        {
+            let _store = ExecutionStore::open(tmp.path()).unwrap();
+            let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+            conn.execute("UPDATE schema_version SET version = 3", []).unwrap();
+            conn.execute("ALTER TABLE attempts DROP COLUMN cancelled_reason", []).unwrap();
+        }
+        // Re-open should migrate v3 → v4.
+        let _store = ExecutionStore::open(tmp.path()).unwrap();
+        let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name='cancelled_reason'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+        let version: i64 = conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 4);
     }
 }

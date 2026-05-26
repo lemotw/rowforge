@@ -222,6 +222,7 @@ fn list_reflects_attempts_count_and_last_state() {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -324,6 +325,7 @@ fn attempt_returns_detail_for_existing_attempt() {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -656,6 +658,7 @@ fn row_history_returns_failures_then_success() {
                     failed_count: 1,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -681,6 +684,7 @@ fn row_history_returns_failures_then_success() {
                     failed_count: 0,
                     aborted: false,
                     aborted_reason: None,
+                    cancelled_reason: None,
                 },
             )
             .unwrap();
@@ -2177,7 +2181,7 @@ fn studio_core_set_preferred_editor_updates_live_field() {
         "name: h1\nversion: 0.1.0\nentry:\n  cmd: [\"./h1\"]\n",
     ).unwrap();
 
-    let mut core = rowforge_studio_core::StudioCore::open(
+    let core = rowforge_studio_core::StudioCore::open(
         rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
     ).unwrap();
 
@@ -2517,7 +2521,7 @@ fn handler_log_tail_rejects_empty_id() {
 #[test]
 fn studio_core_capture_raw_stdout_reflects_set_value() {
     let tmp = empty_workspace();
-    let mut core = rowforge_studio_core::StudioCore::open(
+    let core = rowforge_studio_core::StudioCore::open(
         rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
     )
     .unwrap();
@@ -2609,6 +2613,7 @@ fn seed_exec_with_completed_attempt(tmp: &tempfile::TempDir, name: &str) -> (Str
                 failed_count: 0,
                 aborted: false,
                 aborted_reason: None,
+                cancelled_reason: None,
             },
         )
         .unwrap();
@@ -3392,4 +3397,333 @@ fn handler_fork_tolerates_unparseable_source_manifest() {
 
     // Other files must also be copied.
     assert!(target.join("handler.go").exists(), "handler.go must be copied");
+}
+
+// ---------------------------------------------------------------------------
+// Plan 13 T2 — StudioCore stores smoke settings from OpenOpts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn studio_core_stores_smoke_settings_from_open_opts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let opts = OpenOpts::new()
+        .with_workspace(tmp.path().to_path_buf())
+        .with_smoke_default_rows(7)
+        .with_smoke_timeout_per_row_secs(60);
+    let core = StudioCore::open(opts).unwrap();
+    assert_eq!(core.smoke_default_rows(), 7);
+    assert_eq!(core.smoke_timeout_per_row_secs(), 60);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 13 T6 — handler_smoke_run
+// ---------------------------------------------------------------------------
+
+fn write_test_echo_handler(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    let manifest = r#"name: echo
+version: "1"
+entry:
+  cmd: ["python3", "handler.py"]
+"#;
+    std::fs::write(dir.join("rowforge.yaml"), manifest).unwrap();
+    let py = r#"#!/usr/bin/env python3
+import sys, json
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        seq = msg["seq"]
+        print(json.dumps({"type": "result", "seq": seq, "data": {"echoed": msg["data"].get("id")}}), flush=True)
+    elif t == "shutdown":
+        break
+"#;
+    std::fs::write(dir.join("handler.py"), py).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_happy_path_returns_outcomes_per_row() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore};
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_test_echo_handler(&tmp.path().join("handlers").join("echo"));
+
+    let core = StudioCore::open(
+        OpenOpts::new()
+            .with_workspace(tmp.path().to_path_buf())
+            .with_smoke_default_rows(5)
+            .with_smoke_timeout_per_row_secs(5),
+    )
+    .unwrap();
+
+    let rows = vec![
+        serde_json::Map::from_iter([("id".into(), serde_json::json!("1"))]),
+        serde_json::Map::from_iter([("id".into(), serde_json::json!("2"))]),
+    ];
+    let result = core
+        .handler_smoke_run(SmokeRunRequest::new("echo", rows))
+        .await
+        .unwrap();
+
+    assert_eq!(result.outcomes.len(), 2);
+    assert_eq!(result.outcomes[0].seq, 1);
+    assert_eq!(result.outcomes[0].status, "success");
+    assert_eq!(result.outcomes[1].seq, 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_more_than_100_rows() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_test_echo_handler(&tmp.path().join("handlers").join("echo"));
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let rows: Vec<_> = (0..101)
+        .map(|i| serde_json::Map::from_iter([("id".into(), serde_json::json!(i))]))
+        .collect();
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("echo", rows))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::InvalidArg(_)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_empty_rows() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_test_echo_handler(&tmp.path().join("handlers").join("echo"));
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("echo", vec![]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::InvalidArg(_)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_unknown_handler() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let rows = vec![serde_json::Map::from_iter([("id".into(), serde_json::json!("1"))])];
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("ghost", rows))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::HandlerNotFound { .. }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_invalid_name() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let rows = vec![serde_json::Map::from_iter([("id".into(), serde_json::json!("1"))])];
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("../etc", rows))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::InvalidHandlerName { .. }));
+}
+
+// Plan 14 PR16 — cancel_emits_phase_changed_cancelling
+// ---------------------------------------------------------------------------
+//
+// Verifies that StudioCore::cancel() both:
+//  1. Synchronously transitions session status to Cancelling, so that
+//     core.status() immediately returns Cancelling.
+//  2. Broadcasts a phase_changed { phase: "cancelling" } event through the
+//     aggregator so the React reducer can flip local status without waiting
+//     for the next Tick.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_emits_phase_changed_cancelling() {
+    use rowforge_studio_core::{CancelMode, OpenOpts, RunOpts, RunStatus, StartExecArgs, StudioCore};
+    use rowforge_studio_core::ProgressEvent;
+
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Stubborn handler — sleeps forever so we can observe the Cancelling state.
+    let hdir = tmp.path().join("handlers").join("stubborn");
+    std::fs::create_dir_all(&hdir).unwrap();
+    std::fs::write(
+        hdir.join("rowforge.yaml"),
+        r#"name: stubborn
+version: "1"
+entry:
+  cmd: ["python3", "handler.py"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        hdir.join("handler.py"),
+        r#"#!/usr/bin/env python3
+import sys, json, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        time.sleep(3600)
+"#,
+    )
+    .unwrap();
+
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let input = tmp.path().join("input.csv");
+    std::fs::write(&input, b"id\n1\n2\n3\n").unwrap();
+    let exec_id = core
+        .start_exec(StartExecArgs::new(&input, "cancel_phase_test"))
+        .unwrap();
+
+    let started = core
+        .start_run(&exec_id, RunOpts::new(hdir))
+        .expect("start_run should succeed");
+    let handle = started.handle;
+
+    // Subscribe BEFORE cancelling so we catch the phase_changed event.
+    let mut stream = core.subscribe(&handle).expect("subscribe");
+
+    // Let the worker start dispatching.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // Issue soft cancel.
+    core.cancel(&handle, CancelMode::Soft).unwrap();
+
+    // 1. Status must be Cancelling synchronously (within this await point).
+    let status = core.status(&handle).unwrap_or(RunStatus::Cancelling);
+    assert_eq!(
+        status,
+        RunStatus::Cancelling,
+        "core.status() must return Cancelling immediately after cancel(Soft)"
+    );
+
+    // 2. A phase_changed { phase: Cancelling } event must arrive in the
+    // broadcast stream within 500 ms.
+    use rowforge_studio_core::Phase;
+    let found_phase_event = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        async {
+            loop {
+                match stream.rx.recv().await {
+                    Ok(ProgressEvent::PhaseChanged { phase: Phase::Cancelling, .. }) => {
+                        break true;
+                    }
+                    Ok(_) => continue,
+                    Err(_) => break false,
+                }
+            }
+        },
+    )
+    .await
+    .unwrap_or(false);
+
+    assert!(
+        found_phase_event,
+        "expected phase_changed {{ phase: cancelling }} event after cancel(Soft)"
+    );
+
+    // Clean up: hard cancel to unblock the stubborn worker.
+    let _ = core.cancel(&handle, CancelMode::Hard);
+}
+
+// Plan 14 T7 — hard_cancel_persists_cancelled_reason
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn hard_cancel_persists_cancelled_reason() {
+    use rowforge_studio_core::{CancelMode, ExecutionId, OpenOpts, RunOpts, RunStatus, StartExecArgs, StudioCore};
+
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Write a handler that sleeps forever on each row (stubborn).
+    let hdir = tmp.path().join("handlers").join("stubborn");
+    std::fs::create_dir_all(&hdir).unwrap();
+    std::fs::write(
+        hdir.join("rowforge.yaml"),
+        r#"name: stubborn
+version: "1"
+entry:
+  cmd: ["python3", "handler.py"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        hdir.join("handler.py"),
+        r#"#!/usr/bin/env python3
+import sys, json, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        time.sleep(3600)
+"#,
+    )
+    .unwrap();
+
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Create input CSV and start an execution.
+    let input = tmp.path().join("input.csv");
+    std::fs::write(&input, b"id\n1\n2\n3\n").unwrap();
+    let exec_id = core
+        .start_exec(StartExecArgs::new(&input, "hc_test"))
+        .unwrap();
+
+    // Start the run.
+    let started = core
+        .start_run(&exec_id, RunOpts::new(hdir))
+        .expect("start_run should succeed");
+    let handle = started.handle;
+
+    // Give the worker a moment to dispatch its first row and go to sleep.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // Hard cancel.
+    core.cancel(&handle, CancelMode::Hard).unwrap();
+
+    // Wait up to 5 s for the session to finalize (it will be removed from
+    // the registry, making status() return UnknownHandle).
+    for _ in 0..50 {
+        match core.status(&handle) {
+            Err(_) => break, // session removed — finalized
+            Ok(RunStatus::Aborted) | Ok(RunStatus::Done) => break,
+            Ok(_) => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // Open the DB directly and assert cancelled_reason = "hard_cancel".
+    let db = tmp.path().join("executions.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let reason: Option<String> = conn
+        .query_row(
+            "SELECT cancelled_reason FROM attempts WHERE execution_id = ?1",
+            rusqlite::params![exec_id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        reason.as_deref(),
+        Some("hard_cancel"),
+        "attempts.cancelled_reason must be 'hard_cancel' after CancelMode::Hard; got: {:?}",
+        reason
+    );
 }

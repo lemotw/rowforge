@@ -87,6 +87,9 @@ struct AttemptDetail {
     by_error_code: BTreeMap<String, u64>,   // 有上限；達 32 時溢位至 "OTHER"
     handler_instance: HandlerInstanceView,
     paths: AttemptPaths,                // outcomes.jsonl, meta.json, stderr.log
+    cancelled_reason: Option<String>,   // Plan 14：強制 kill 時為 "hard_cancel"；
+                                        // 軟取消 / 正常完成時為 NULL。
+                                        // 保留值 "timeout" 供未來逾時自動取消使用。
 }
 ```
 

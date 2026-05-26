@@ -131,6 +131,7 @@ async fn pool_run_completes_with_noisy_handler() {
         on_row_done: None,
         on_handler_log: None,
         capture_raw_stdout: false,
+        hard_cancel: None,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());

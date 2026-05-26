@@ -88,6 +88,7 @@ fn make_cfg(
         on_row_done: None,
         on_handler_log,
         capture_raw_stdout,
+        hard_cancel: None,
     }
 }
 

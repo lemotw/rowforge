@@ -171,7 +171,7 @@ function AttemptsList({
         {sorted.map((a) => (
           <Tr key={a.id}>
             <Td>
-              <StateChip state={a.state} />
+              <StateChip state={a.state} cancelledReason={a.cancelled_reason} />
             </Td>
             <Td>{a.run_type}</Td>
             <Td className="font-mono">
@@ -189,7 +189,16 @@ function AttemptsList({
   );
 }
 
-function StateChip({ state }: { state: string }) {
+function StateChip({
+  state,
+  cancelledReason,
+}: {
+  state: string;
+  cancelledReason: string | null;
+}) {
+  if (state === "aborted" && cancelledReason === "hard_cancel") {
+    return <span className="text-red-400">● force-killed</span>;
+  }
   const tone =
     state === "done" || state === "completed" ? "text-emerald-400" :
     state === "aborted" ? "text-neutral-400" :

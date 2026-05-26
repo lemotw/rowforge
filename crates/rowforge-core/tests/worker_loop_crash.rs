@@ -121,6 +121,7 @@ async fn run_crash_test(idempotent: bool) -> Vec<BatchOutcome> {
         Duration::from_secs(2),
         None::<CancellationToken>,
         None,
+        None,
     )
     .await
     .expect("run_worker_loop returned Err");

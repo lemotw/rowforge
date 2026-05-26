@@ -39,7 +39,9 @@ pub fn workspace_open(
     let opts = opts
         .with_max_concurrent_runs(prev.max_concurrent_runs)
         .with_preferred_editor(prev.preferred_editor.clone())
-        .with_handler_log_capture_raw_stdout(prev.handler_log_capture_raw_stdout);
+        .with_handler_log_capture_raw_stdout(prev.handler_log_capture_raw_stdout)
+        .with_smoke_default_rows(prev.smoke_default_rows)
+        .with_smoke_timeout_per_row_secs(prev.smoke_timeout_per_row_secs);
     let core = StudioCore::open(opts)?;
     let workspace = core.workspace().clone();
 
@@ -50,7 +52,7 @@ pub fn workspace_open(
     settings_io::save(&app, &s)?;
 
     let sessions = core.sessions();
-    *state.core.lock().unwrap_or_else(|p| p.into_inner()) = Some(core);
+    *state.core.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::sync::Arc::new(core));
 
     // Spawn the 1 Hz workspace rollup forwarder for this workspace session.
     // If a prior forwarder is alive (user switched workspaces), abort it
@@ -72,10 +74,10 @@ pub fn workspace_open(
 
 #[tauri::command]
 pub fn exec_list(state: State<'_, AppState>) -> Result<Vec<ExecSummary>, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.list(ListFilter::default())
 }
 
@@ -95,10 +97,17 @@ pub fn workspace_settings_save(
     // next handler_open_editor call uses the new value without requiring a
     // workspace re-open.
     // Plan 9 T5: refresh capture_raw_stdout so the next start_run picks it up.
-    let mut guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(core) = guard.as_mut() {
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().cloned()
+    };
+    if let Some(core) = core {
         core.set_preferred_editor(settings.preferred_editor.clone());
         core.set_handler_log_capture_raw_stdout(settings.handler_log_capture_raw_stdout);
+        core.set_smoke_defaults(
+            settings.smoke_default_rows,
+            settings.smoke_timeout_per_row_secs,
+        );
     }
     Ok(())
 }
@@ -109,8 +118,11 @@ pub fn workspace_settings_save(
 pub fn workspace_current(
     state: State<'_, AppState>,
 ) -> Result<Option<Workspace>, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    Ok(guard.as_ref().map(|c| c.workspace().clone()))
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().cloned()
+    };
+    Ok(core.map(|c| c.workspace().clone()))
 }
 
 #[tauri::command]
@@ -118,8 +130,10 @@ pub fn exec_show(
     state: State<'_, AppState>,
     id: ExecutionId,
 ) -> Result<ExecDetail, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.show(&id)
 }
 
@@ -129,8 +143,10 @@ pub fn attempt_show(
     execution_id: ExecutionId,
     attempt_id: AttemptId,
 ) -> Result<AttemptDetail, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.attempt(&execution_id, &attempt_id)
 }
 
@@ -139,8 +155,10 @@ pub fn exec_rollup(
     state: State<'_, AppState>,
     id: ExecutionId,
 ) -> Result<ExecRollup, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.rollup(&id)
 }
 
@@ -149,8 +167,10 @@ pub fn attempt_failed_page(
     state: State<'_, AppState>,
     query: FailedPageQuery,
 ) -> Result<FailedRowPage, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.failed_page(query)
 }
 
@@ -160,8 +180,10 @@ pub fn attempt_row_history(
     execution_id: ExecutionId,
     seq: u64,
 ) -> Result<RowHistory, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.row_history(&execution_id, seq)
 }
 
@@ -177,16 +199,19 @@ pub async fn run_start(
     skip_attempted: Option<bool>,
     only_row_ids: Option<Vec<u64>>,
 ) -> Result<RunStartedHandle, UiError> {
-    // Scope the MutexGuard so it is dropped before any .await point.
+    // Clone the Arc out of the mutex so it is not held across .await points.
     // studio-core::start_run internally calls tokio::spawn (tick loop +
     // pipeline task); those spawns require an entered tokio runtime.
     // Making this command async ensures Tauri executes it on its tokio
     // runtime, so the inner spawn calls have a runtime context.
-    let (started, stream_rx) = {
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
+    let (started, stream_rx) = {
         let mut opts = RunOpts::new(handler_dir);
         if let Some(n) = row_limit {
             opts = opts.with_row_limit(n);
@@ -206,7 +231,7 @@ pub async fn run_start(
             .subscribe(&started.handle)
             .map_err(|e| UiError::Internal(e.to_string()))?;
         (started, stream.rx)
-    }; // guard dropped here, before any .await
+    };
 
     // Spawn the per-run event forwarder onto run:<handle>.
     let handle_for_task = started.handle.clone();
@@ -224,8 +249,10 @@ pub fn run_cancel(
     handle: RunHandle,
     mode: CancelMode,
 ) -> Result<(), UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.cancel(&handle, mode)
 }
 
@@ -234,8 +261,10 @@ pub fn run_status(
     state: State<'_, AppState>,
     handle: RunHandle,
 ) -> Result<RunStatus, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     core.status(&handle)
 }
 
@@ -243,8 +272,10 @@ pub fn run_status(
 pub fn run_active(
     state: State<'_, AppState>,
 ) -> Result<Vec<RunHandle>, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?.clone()
+    };
     Ok(core.active_runs())
 }
 
@@ -258,10 +289,13 @@ pub fn attempt_active_handle(
     state: State<'_, AppState>,
     attempt_id: AttemptId,
 ) -> Result<Option<RunHandle>, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     Ok(core.active_handle_for_attempt(attempt_id.as_str()))
 }
 
@@ -274,10 +308,13 @@ pub fn run_snapshot(
     state: State<'_, AppState>,
     handle: RunHandle,
 ) -> Result<ProgressSnapshot, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.snapshot(&handle)
 }
 
@@ -286,10 +323,13 @@ pub fn exec_start(
     state: State<'_, AppState>,
     args: StartExecArgs,
 ) -> Result<ExecutionId, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.start_exec(args)
 }
 
@@ -299,14 +339,17 @@ pub async fn exec_export(
     id: ExecutionId,
     opts: ExportOpts,
 ) -> Result<ExportReport, UiError> {
-    // Scope the guard tightly — no .await happens inside. We make this
+    // Clone the Arc out of the mutex — no .await happens inside. We make this
     // command async so Tauri schedules it on a worker thread, since
     // export_execution does meaningful sync IO that would otherwise block
     // the IPC main thread for seconds-to-minutes on large execs.
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.export(&id, opts)
 }
 
@@ -315,10 +358,13 @@ pub fn manifest_validate(
     state: State<'_, AppState>,
     source: ManifestSource,
 ) -> Result<ManifestReport, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.validate_manifest(source)
 }
 
@@ -326,10 +372,13 @@ pub fn manifest_validate(
 
 #[tauri::command]
 pub fn handler_list(state: State<'_, AppState>) -> Result<Vec<HandlerSummary>, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.handler_list()
 }
 
@@ -338,10 +387,13 @@ pub fn handler_show(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<HandlerDetail, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.handler_show(&name)
 }
 
@@ -350,10 +402,13 @@ pub fn handler_open_editor(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<(), UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.handler_open_editor(&name)
 }
 
@@ -366,10 +421,13 @@ pub fn handler_reveal(
     // studio-core returns the path; we wrap with shell::open at the layer
     // boundary so studio-core stays OS-policy-free.
     let path = {
-        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
-            .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        let core = {
+            let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .as_ref()
+                .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+                .clone()
+        };
         core.handler_reveal_path(&name)?
     };
     use tauri_plugin_opener::OpenerExt;
@@ -386,10 +444,13 @@ pub fn handler_scaffold(
     args: ScaffoldArgs,
 ) -> Result<String, UiError> {
     let name = {
-        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
-            .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        let core = {
+            let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .as_ref()
+                .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+                .clone()
+        };
         core.handler_scaffold(args)?
     };
     // Spec §8.5.2 — coarse refresh hint after mutation.
@@ -403,13 +464,14 @@ pub fn handler_delete(
     app: tauri::AppHandle,
     name: String,
 ) -> Result<(), UiError> {
-    {
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        core.handler_delete(&name)?;
-    }
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
+    core.handler_delete(&name)?;
     let _ = app.emit("handlers:list", ());
     Ok(())
 }
@@ -421,13 +483,14 @@ pub fn handler_rename(
     old: String,
     new: String,
 ) -> Result<(), UiError> {
-    {
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        core.handler_rename(&old, &new)?;
-    }
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
+    core.handler_rename(&old, &new)?;
     let _ = app.emit("handlers:list", ());
     Ok(())
 }
@@ -443,18 +506,15 @@ pub async fn handler_build(
     // handler_build shells out to an external build tool (go build, cargo, …)
     // which can take seconds. We make the command async so Tauri dispatches it
     // on its worker-thread pool and the main IPC reactor stays free.
-    //
-    // AppState.core is Mutex<Option<StudioCore>> (not Arc-wrapped), so we
-    // cannot move it into spawn_blocking. Instead we hold the mutex only for
-    // the synchronous call — no .await inside, so there is no risk of holding
-    // a guard across an await point.
-    let result = {
+    // Clone the Arc out before calling — no .await inside, so no guard-across-await risk.
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        core.handler_build(&name)
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
     };
+    let result = core.handler_build(&name);
 
     // Emit list-refresh hint so HandlerSummary.last_modified (which folds
     // over top-level entries, including the new binary) gets picked up by the
@@ -473,10 +533,13 @@ pub fn handler_log_tail(
     attempt_id: String,
     max_lines: Option<usize>,
 ) -> Result<Vec<HandlerLogLine>, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.handler_log_tail(&exec_id, &attempt_id, max_lines.unwrap_or(5000))
 }
 
@@ -489,10 +552,13 @@ pub async fn handler_log_subscribe(
 ) -> Result<(), UiError> {
     let _ = exec_id; // not currently needed by subscribe; included for future symmetry
     let rx_result = {
-        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
-            .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+        let core = {
+            let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+            guard
+                .as_ref()
+                .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+                .clone()
+        };
         core.handler_log_subscribe(&attempt_id)
     };
     let mut rx = rx_result?;
@@ -579,10 +645,13 @@ pub fn attempt_failed_row_ids(
     exec_id: String,
     attempt_id: String,
 ) -> Result<Vec<u64>, UiError> {
-    let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-    let core = guard
-        .as_ref()
-        .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
     core.attempt_failed_row_ids(&exec_id, &attempt_id)
 }
 
@@ -595,13 +664,14 @@ pub fn handler_import_from_folder(
     source_path: String,
     name: String,
 ) -> Result<(), UiError> {
-    let result = {
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        core.handler_import_from_folder(std::path::Path::new(&source_path), &name)
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
     };
+    let result = core.handler_import_from_folder(std::path::Path::new(&source_path), &name);
     if result.is_ok() {
         use tauri::Emitter;
         let _ = app.emit("handlers:list", ());
@@ -616,13 +686,14 @@ pub fn handler_fork(
     source_name: String,
     new_name: String,
 ) -> Result<(), UiError> {
-    let result = {
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        core.handler_fork(&source_name, &new_name)
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
     };
+    let result = core.handler_fork(&source_name, &new_name);
     if result.is_ok() {
         use tauri::Emitter;
         let _ = app.emit("handlers:list", ());
@@ -638,13 +709,14 @@ pub fn execution_delete(
     app: tauri::AppHandle,
     exec_id: String,
 ) -> Result<(), UiError> {
-    let result = {
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        core.execution_delete(&exec_id)
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
     };
+    let result = core.execution_delete(&exec_id);
     if result.is_ok() {
         let _ = app.emit("exec_list:refresh", ());
     }
@@ -657,16 +729,50 @@ pub fn execution_delete_bulk(
     app: tauri::AppHandle,
     exec_ids: Vec<String>,
 ) -> Result<ExecDeleteBulkResult, UiError> {
-    let result = {
+    let core = {
         let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
-        let core = guard
+        guard
             .as_ref()
-            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?;
-        core.execution_delete_bulk(&exec_ids)
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
     };
+    let result = core.execution_delete_bulk(&exec_ids);
     if !result.deleted.is_empty() {
         let _ = app.emit("exec_list:refresh", ());
     }
     Ok(result)
+}
+
+// ===== Plan 13 — handler smoke test =====
+
+#[tauri::command]
+pub async fn handler_smoke_run(
+    state: State<'_, AppState>,
+    request: rowforge_studio_core::SmokeRunRequest,
+) -> Result<rowforge_studio_core::SmokeRunResult, UiError> {
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
+    core.handler_smoke_run(request).await
+}
+
+#[tauri::command]
+pub fn handler_smoke_load_fixtures(
+    state: State<'_, AppState>,
+    path: String,
+    limit: usize,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, UiError> {
+    let core = {
+        let guard = state.core.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .as_ref()
+            .ok_or_else(|| UiError::WorkspaceLocked("no workspace open".into()))?
+            .clone()
+    };
+    core.handler_smoke_load_fixtures(std::path::Path::new(&path), limit)
 }
 

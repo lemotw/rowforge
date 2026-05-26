@@ -124,6 +124,7 @@ async fn batch_mode_processes_all_rows_with_echoed_payload() {
         on_row_done: Some(on_row_done),
         on_handler_log: None,
         capture_raw_stdout: false,
+        hard_cancel: None,
     };
 
     let input = Box::new(CsvInputStream::open(&csv_path, &[]).unwrap());

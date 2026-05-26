@@ -10,12 +10,12 @@
 //! all access correctly.
 
 use rowforge_studio_core::StudioCore;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::async_runtime::JoinHandle;
 
 #[derive(Default)]
 pub struct AppState {
-    pub core: Mutex<Option<StudioCore>>,
+    pub core: Mutex<Option<Arc<StudioCore>>>,
     /// Handle to the per-workspace `runs:active` forwarder task spawned
     /// by `workspace_open`. Stored so re-opening a workspace (switching)
     /// can abort the prior forwarder before starting a new one, instead

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 /// Options for `StudioCore::open`. None ⇒ use the platform default
 /// (`rowforge_core::workspace::default_workspace_root()`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct OpenOpts {
     pub workspace: Option<PathBuf>,
@@ -25,6 +25,24 @@ pub struct OpenOpts {
     /// Threaded by the Tauri `workspace_open` command; studio-core stays
     /// filesystem-policy-free.
     pub handler_log_capture_raw_stdout: bool,
+    /// Plan 13: clamped to 1..=100 at smoke-run time.
+    pub smoke_default_rows: usize,
+    /// Plan 13: per-row timeout for smoke runs (seconds).
+    /// 0 is treated as a 1-hour ceiling (effectively no timeout).
+    pub smoke_timeout_per_row_secs: u64,
+}
+
+impl Default for OpenOpts {
+    fn default() -> Self {
+        OpenOpts {
+            workspace: None,
+            max_concurrent_runs: None,
+            preferred_editor: None,
+            handler_log_capture_raw_stdout: false,
+            smoke_default_rows: 5,
+            smoke_timeout_per_row_secs: 30,
+        }
+    }
 }
 
 impl OpenOpts {
@@ -48,6 +66,16 @@ impl OpenOpts {
     /// Set the initial `handler_log_capture_raw_stdout` flag.
     pub fn with_handler_log_capture_raw_stdout(mut self, enabled: bool) -> Self {
         self.handler_log_capture_raw_stdout = enabled;
+        self
+    }
+    /// Set the default smoke row count sourced from Settings.
+    pub fn with_smoke_default_rows(mut self, rows: usize) -> Self {
+        self.smoke_default_rows = rows;
+        self
+    }
+    /// Set the per-row smoke timeout sourced from Settings.
+    pub fn with_smoke_timeout_per_row_secs(mut self, secs: u64) -> Self {
+        self.smoke_timeout_per_row_secs = secs;
         self
     }
 }

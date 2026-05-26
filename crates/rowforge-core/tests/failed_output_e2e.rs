@@ -73,6 +73,7 @@ async fn failed_output_data_preserved_in_outcomes_jsonl() {
         fsync_outcomes: false,
         capture_raw_stdout: false,
         only_row_ids: None,
+        hard_cancel: None,
     };
 
     let report = execute(req).await.expect("execute");

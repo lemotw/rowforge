@@ -27,6 +27,9 @@ pub struct AttemptDetail {
     pub handler_instance: HandlerInstanceView,
     pub paths: AttemptPaths,
     pub is_terminal: bool,
+    /// Plan 14: when state is `aborted`, this carries the reason
+    /// (`Some("hard_cancel")` for force-killed, `None` for soft cancel).
+    pub cancelled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

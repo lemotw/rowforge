@@ -126,6 +126,7 @@ fn create_attempt(
                 } else {
                     None
                 },
+                cancelled_reason: None,
             },
         )
         .unwrap();

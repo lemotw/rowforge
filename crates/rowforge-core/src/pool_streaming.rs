@@ -100,6 +100,9 @@ pub struct StreamingPoolConfig {
     /// avoids duplicating outcomes that already live in `outcomes.jsonl`.
     /// Set to `true` for protocol debugging.
     pub capture_raw_stdout: bool,
+    /// Plan 14: when set AND `cancel` token fires, workers receive SIGKILL
+    /// to their process group instead of graceful shutdown.
+    pub hard_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Report returned by [`run_pool_streaming`].
@@ -287,6 +290,7 @@ pub async fn run_pool_streaming(
                 let cancel_clone = cancel.clone();
                 let mode_clone = mode.clone();
                 let on_row_done_clone = cfg.on_row_done.clone();
+                let hard_cancel_clone = cfg.hard_cancel.clone();
 
                 let h = tokio::spawn(async move {
                     run_worker_loop(
@@ -298,6 +302,7 @@ pub async fn run_pool_streaming(
                         grace,
                         Some(cancel_clone),
                         on_row_done_clone,
+                        hard_cancel_clone,
                     )
                     .await
                 });
@@ -450,6 +455,28 @@ pub async fn run_pool_streaming(
                 abort_reason: Some(format!("accumulator error: {msg}")),
                 stalled_at_bytes: None,
             });
+        }
+    }
+
+    // Plan 14: hard cancel path — if the external cancel token fired AND the
+    // hard_cancel flag was set, classify as aborted unconditionally. Hard cancel
+    // kills workers immediately so accum_result may be Ok (no "flush cancelled"
+    // artefact); we must check the flag before the soft-cancel heuristic below.
+    //
+    // Ordering: check is_cancelled() first so its internal Acquire edge
+    // establishes the happens-before relationship that makes the hard_cancel
+    // store visible, then load the flag with Acquire for the remaining guarantee.
+    if let Some(ref external) = cfg.cancel {
+        if external.is_cancelled() {
+            if let Some(ref flag) = cfg.hard_cancel {
+                if flag.load(std::sync::atomic::Ordering::Acquire) {
+                    return Ok(StreamingPoolReport {
+                        aborted: true,
+                        abort_reason: Some("hard cancel: process group killed".into()),
+                        stalled_at_bytes: None,
+                    });
+                }
+            }
         }
     }
 
@@ -666,6 +693,7 @@ mod tests {
             on_row_done: None,
             on_handler_log: None,
             capture_raw_stdout: false,
+            hard_cancel: None,
         }
     }
 
@@ -1216,6 +1244,205 @@ mod tests {
 
         // Report may be aborted (stall or cancel) or normal (fast machine).
         let _ = result;
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 11: hard_cancel_kills_workers_immediately (Plan 14 T4)
+    // -----------------------------------------------------------------------
+    //
+    // A python handler that ignores shutdown (sleeps forever on row). We fire
+    // hard cancel and verify the run completes well before shutdown_grace (30s).
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn hard_cancel_kills_workers_immediately() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Handler dir with a rowforge.yaml manifest.
+        let manifest_yaml = r#"name: stubborn
+version: "1"
+kind: row
+primary_field: id
+entry:
+  cmd: ["python3", "handler.py"]
+"#;
+        let hdir = tmp.path().join("handler");
+        std::fs::create_dir_all(&hdir).unwrap();
+        std::fs::write(hdir.join("rowforge.yaml"), manifest_yaml).unwrap();
+
+        // Python handler that responds to init/ready but sleeps forever on row
+        // and also ignores shutdown.
+        let py = r#"#!/usr/bin/env python3
+import sys, json, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        time.sleep(3600)   # Stuck forever
+    elif t == "shutdown":
+        time.sleep(3600)   # IGNORE shutdown signal
+"#;
+        std::fs::write(hdir.join("handler.py"), py).unwrap();
+
+        let cancel = crate::cancel::CancellationToken::new();
+        let hard = std::sync::Arc::new(AtomicBool::new(false));
+        let input_path = tmp.path().join("input.csv");
+        std::fs::write(&input_path, b"id\n1\n2\n3\n").unwrap();
+        let out_dir = tmp.path().join("out");
+
+        let req = crate::run::RunRequest {
+            run_id: "hard-cancel-test".into(),
+            parent_run_id: None,
+            handler_dir: hdir.clone(),
+            input_csv: input_path,
+            output_dir: out_dir,
+            workers: 1,
+            dry_run: false,
+            dry_run_sample: 0,
+            row_limit: None,
+            skip_seqs: Default::default(),
+            field_map: Default::default(),
+            config_overrides: Default::default(),
+            shutdown_grace: std::time::Duration::from_secs(30),
+            on_progress: None,
+            on_handler_log: None,
+            cancel: Some(cancel.clone()),
+            input_format: None,
+            fsync_outcomes: false,
+            capture_raw_stdout: false,
+            only_row_ids: None,
+            hard_cancel: Some(hard.clone()),
+        };
+
+        let started = std::time::Instant::now();
+        let exec_handle = tokio::spawn(crate::run::execute(req));
+
+        // Let init + first row dispatch happen.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // Trigger hard cancel: set the flag THEN fire the token.
+        hard.store(true, Ordering::Relaxed);
+        cancel.cancel();
+
+        // execute must return within 10s (well before shutdown_grace of 30s).
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            exec_handle,
+        )
+        .await
+        .expect("run finished within 10s after hard cancel")
+        .unwrap()
+        .unwrap();
+
+        let elapsed = started.elapsed();
+        assert!(report.aborted, "report should be aborted");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "hard cancel should finish under 5s; took {:?}",
+            elapsed
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 11b: soft_then_hard_escalation_terminates_workers (Plan 14 PR16)
+    // -----------------------------------------------------------------------
+    //
+    // Verifies the soft→hard escalation path: fire soft cancel first (token
+    // fires but hard_cancel flag is still false), let the worker enter the
+    // shutdown(grace) phase, THEN flip hard_cancel. The 50 ms poll loop in
+    // worker_loop must observe the flip and call hard_kill() — well before the
+    // 60s grace expires.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn soft_then_hard_escalation_terminates_workers() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest_yaml = r#"name: stubborn
+version: "1"
+kind: row
+primary_field: id
+entry:
+  cmd: ["python3", "handler.py"]
+"#;
+        let hdir = tmp.path().join("handler");
+        std::fs::create_dir_all(&hdir).unwrap();
+        std::fs::write(hdir.join("rowforge.yaml"), manifest_yaml).unwrap();
+        let py = r#"#!/usr/bin/env python3
+import sys, json, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        time.sleep(3600)   # Stuck forever
+    elif t == "shutdown":
+        time.sleep(3600)   # IGNORE shutdown
+"#;
+        std::fs::write(hdir.join("handler.py"), py).unwrap();
+
+        let cancel = crate::cancel::CancellationToken::new();
+        let hard = std::sync::Arc::new(AtomicBool::new(false));
+        let input = tmp.path().join("input.csv");
+        std::fs::write(&input, b"id\n1\n2\n3\n").unwrap();
+        let out = tmp.path().join("out");
+
+        let req = crate::run::RunRequest {
+            run_id: "t".into(),
+            parent_run_id: None,
+            handler_dir: hdir.clone(),
+            input_csv: input,
+            output_dir: out,
+            workers: 1,
+            dry_run: false,
+            dry_run_sample: 0,
+            row_limit: None,
+            skip_seqs: Default::default(),
+            field_map: Default::default(),
+            config_overrides: Default::default(),
+            shutdown_grace: std::time::Duration::from_secs(60),
+            on_progress: None,
+            on_handler_log: None,
+            cancel: Some(cancel.clone()),
+            input_format: None,
+            fsync_outcomes: false,
+            capture_raw_stdout: false,
+            only_row_ids: None,
+            hard_cancel: Some(hard.clone()),
+        };
+
+        let started = std::time::Instant::now();
+        let exec_handle = tokio::spawn(crate::run::execute(req));
+
+        // Let init + first row dispatch happen.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // SOFT cancel first — token fires but flag is still false.
+        cancel.cancel();
+
+        // Wait long enough that worker has entered shutdown(grace) phase.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // NOW escalate to hard. The shutdown is in flight; the poll loop
+        // must observe this flip and call hard_kill.
+        hard.store(true, Ordering::Release);
+
+        let report = tokio::time::timeout(std::time::Duration::from_secs(10), exec_handle)
+            .await
+            .expect("run finished within 10s after soft→hard escalation")
+            .unwrap()
+            .unwrap();
+        let elapsed = started.elapsed();
+        assert!(report.aborted, "report should be aborted");
+        assert!(
+            elapsed < std::time::Duration::from_secs(8),
+            "soft→hard escalation should finish well under 60s grace; took {:?}",
+            elapsed
+        );
     }
 
     // -----------------------------------------------------------------------

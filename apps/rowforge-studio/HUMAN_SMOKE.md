@@ -1124,3 +1124,188 @@ existing handler (e.g. `golang-apple-refund` from the examples).
   UI indication is shown.
 - Import requires `rowforge.yaml` in the source. Pure source folders
   without a manifest must use Scaffold + manual paste instead.
+
+---
+
+# Manual smoke check — Plan 13 (handler smoke test)
+
+## 1. Setup
+
+1. Open Studio in a fresh workspace at `/tmp/plan13-smoke-ws/`.
+2. Scaffold a `go_stdio` handler named `echo` with primary_field `id`.
+3. Click **Open in editor**; replace the row handler body so it echoes
+   `{"echoed": <id>}` on every input row. Save.
+4. Click **Build** — verify "Last build" shows success.
+
+## 2. Paste mode happy path
+
+5. Scroll to **Smoke test** section. The radio "Paste JSON" is selected.
+6. Paste two lines:
+   ```
+   {"id":"1"}
+   {"id":"2"}
+   ```
+7. Header below textarea shows "2 rows parsed".
+8. Click **Run smoke test**. The button switches to "Running…".
+9. After a moment, the outcomes table renders 2 rows:
+   - seq 1: status `success`, data column shows `{"echoed":"1"}`
+   - seq 2: status `success`, data column shows `{"echoed":"2"}`
+10. The counts strip shows `Outcomes (2) · ✓ 2 success · <ms> ms · exit 0`.
+
+## 3. Paste mode invalid JSON
+
+11. Replace line 2 with `not json`.
+12. Header flips to red error: "line 2: <some parser detail>".
+13. **Run smoke test** is disabled.
+
+## 4. Synthetic mode
+
+14. Click "One synthetic row" radio.
+15. Description text appears about dispatching `{ "row": 1 }`.
+16. Click Run; outcomes table renders 1 row, seq 1, status success.
+
+## 5. Fixtures mode — jsonl
+
+17. Create `/tmp/smoke-fx.jsonl`:
+    ```
+    {"id":"a"}
+    {"id":"b"}
+    {"id":"c"}
+    ```
+18. Click "Fixtures…" radio. Click "Pick file…", choose the file.
+19. Code block shows the path; preview shows "3 rows loaded — keys: id".
+20. Set "Rows to run" to 2.
+21. Click Run; outcomes table has 2 rows.
+
+## 6. Fixtures mode — csv
+
+22. Create `/tmp/smoke-fx.csv`:
+    ```
+    id,email
+    1,a@x.com
+    2,b@x.com
+    ```
+23. Click "Change…" and pick the csv.
+24. Preview shows "2 rows loaded — keys: id, email".
+25. Click Run; both rows succeed.
+
+## 7. Fixtures mode — directory
+
+26. Create `/tmp/smoke-fx-dir/` containing both files from steps 17 and 22.
+27. Click "Change…" and pick the directory.
+28. Loaded rows come from the jsonl (precedence: jsonl > csv).
+
+## 8. Fixtures mode — empty
+
+29. Create empty `/tmp/empty.jsonl`.
+30. Pick it. Red error appears: "no rows found in fixtures path".
+
+## 9. Row count cap
+
+31. Type `200` in the Rows-to-run input. It clamps to `100`.
+32. Type `0`. It clamps to `1`.
+
+## 10. Build failure surface
+
+33. Break the handler source (add `syntax error` line at the top). Save.
+34. Click Run smoke test (paste mode, single valid row).
+35. An error block shows the BuildFailed message with the handler name
+    and exit code. Outcomes table does not render.
+36. Fix the source. Smoke runs again successfully.
+
+## 11. Active-run gate (cross-process)
+
+37. In a terminal, start a long-running exec via CLI on the same handler:
+    `rowforge run --workspace /tmp/plan13-smoke-ws/ --handler echo` with
+    an input file large enough that the run takes >15 seconds.
+38. While the exec runs, open Studio, navigate to the handler.
+39. Try to smoke test. The Run button works, but the call fails with the
+    error message: `Handler "echo" has an active run. Cancel the run first.`
+40. Wait for the CLI run to finish. Smoke test now succeeds again.
+
+## 12. Stderr tail
+
+41. Modify the handler to `fmt.Fprintln(os.Stderr, "boot")` before reading
+    stdin. Rebuild.
+42. Run smoke; expand the "stderr tail" details block; "boot" line
+    appears.
+43. Modify the handler to write a >5 KiB stderr loop (e.g. 200 lines
+    each containing 50 chars). Rebuild and run smoke.
+44. Stderr tail still shows ~4096 bytes (the last portion only).
+
+## Known Plan 13 limitations
+
+- One smoke at a time per Studio process (a workspace-wide
+  `tokio::sync::Mutex` serializes calls).
+- Smoke outcomes are NOT persisted — they vanish on page reload.
+- Batch handlers receive rows one at a time during smoke (batch mode is
+  not exercised).
+- Hard cancel for a wedged smoke is not implemented (the soft cancel
+  shipped with exec runs does not extend to smoke; deferred to Plan 14).
+
+---
+
+# Manual smoke check — Plan 14 (hard cancel)
+
+## 1. Setup
+
+1. Open Studio in a fresh workspace at `/tmp/plan14-smoke-ws/`.
+2. Scaffold a `go_stdio` handler named `stuck` with primary_field `id`.
+3. Replace the row handler body with `time.Sleep(time.Hour)` (Go) or
+   `time.sleep(3600)` (Python). The handler MUST ignore stdin/shutdown.
+4. Build the handler. Verify Last build success.
+
+## 2. Soft cancel as-is
+
+5. Create an exec on a CSV of 10 rows. Click Run.
+6. Wait until status flips to Running.
+7. Click Cancel. Confirm the soft cancel dialog. The status becomes
+   "Cancelling…" and stays there because the handler ignores shutdown.
+
+## 3. Force kill reveal
+
+8. After ~10s, the "Force kill" button appears next to the Cancelling
+   banner.
+9. Click Force kill. The typed-confirm dialog appears.
+10. Type the first 4 chars of the exec name (lowercase).
+11. Click "Force kill" in the dialog.
+
+## 4. Verify termination
+
+12. Within 1-2s, the attempt finalizes with state `cancelled`.
+13. The state badge in AttemptDetail renders in red as "force-killed".
+14. In a terminal: `ps -ef | grep <handler-binary>` — no zombie/sleeping
+    children remain.
+
+## 5. ExecDetail badge
+
+15. Navigate back to /exec/<exec_id>. In the AttemptsList, the cancelled
+    attempt row shows the red "● force-killed" chip in the State column.
+
+## 6. Grandchild kill
+
+16. Modify the handler to spawn a child sleep process (e.g.
+    `subprocess.Popen(["sleep", "3600"])`) before sleeping itself.
+17. Run, soft cancel, force kill.
+18. After force kill, `ps` shows neither the handler nor its sleep
+    grandchild. (On macOS / Linux the process group kill covers both.)
+
+## Known Plan 14 limitations
+
+- **Windows**: hard cancel degrades to soft cancel. Job Object support is
+  a follow-on.
+- **CLI subcommand**: `rowforge attempt hard-cancel` was deferred. The
+  `StudioCore::cancel` API operates on an in-process `SessionRegistry`,
+  and a fresh CLI process has no live sessions. Cross-process signaling
+  would require file-based infra (e.g. a cancel-flag file under
+  `<workspace>/executions/<id>/runs/<run_id>/cancel`) that the running
+  process polls. Out of scope for v1 — users force-kill the Studio
+  process tree via standard OS tools (`kill -9 <pid>`) if the UI itself
+  is wedged.
+- **Smoke runs**: hard cancel does not apply to Plan 13 smoke runs. The
+  smoke runner has its own grace-shutdown but no SIGKILL path.
+- **Pending row outcomes**: rows dispatched but not yet completed at the
+  moment of force-kill are simply absent from `outcomes.jsonl` (same as
+  soft cancel today). No explicit `HARD_CANCEL` row outcome is
+  synthesized. The "force-killed" badge tells users "rows are missing
+  because of force-kill".

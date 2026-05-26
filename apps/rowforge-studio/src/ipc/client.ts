@@ -25,6 +25,8 @@ import type {
   RunStatus,
   ScaffoldArgs,
   Settings,
+  SmokeRunRequest,
+  SmokeRunResult,
   StartExecArgs,
   Workspace,
 } from "./types";
@@ -128,4 +130,11 @@ export const ipc = {
     invoke<void>("handler_import_from_folder", args),
   handler_fork: (args: { sourceName: string; newName: string }) =>
     invoke<void>("handler_fork", args),
+
+  // ===== Plan 13 handler smoke test =====
+
+  handler_smoke_run: (args: { request: SmokeRunRequest }) =>
+    invoke<SmokeRunResult>("handler_smoke_run", args),
+  handler_smoke_load_fixtures: (args: { path: string; limit: number }) =>
+    invoke<Record<string, unknown>[]>("handler_smoke_load_fixtures", args),
 };

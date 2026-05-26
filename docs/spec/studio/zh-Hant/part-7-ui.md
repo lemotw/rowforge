@@ -138,6 +138,31 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 - **`HandlerSource` picker** — v1 僅 `Dir`，picker 為單欄位。v2 升級
   為 segmented control（`Dir` / `Sandbox`），版面不變（第 5 部分 §5.4）。
 
+#### Smoke test section（Plan 13）
+
+在「Last build」下方、「Files」上方，`<SmokeSection />` 讓使用者不建立
+execution，直接透過 handler binary 派發 1–100 列並觀察結果。資料來源：
+
+- **Paste JSON** — 每列一個 JSON 物件；即時顯示「N rows parsed」指示
+- **Fixtures…** — 選取 `.jsonl` / `.ndjson` / `.json`（頂層陣列）/
+  `.csv` 檔案或包含其中之一的目錄（優先順序：jsonl > ndjson > json > csv）
+- **One synthetic row** — 派發 `{ "row": 1 }`
+
+強制單 worker 逐列模式（即使是 batch handler 也逐列處理）。結果以 5 欄
+表格呈現：`seq / status / message / dur_ms / data`。計數條顯示 success/error/
+crash 合計、elapsed ms 及 handler exit code。`stderr` tail（最後 4 KiB）可
+摺疊顯示。
+
+Run 按鈕在解析錯誤存在、無可用列或 smoke 執行中時停用。Plan 8 build gate
+先跑（來源比 binary 新時重建）。
+
+當此 handler 在任何 workspace 進程中有 exec attempt 正在執行時，smoke 被
+拒絕（`handler_busy`，跨進程 sqlite gate）。
+
+> **與規格的偏差說明：** 設計規格描述的是「Smoke test TAB」。實作使用
+> **section**（非 tab），因為 `HandlerDetailPage` 採用 section 而非 tab
+> 結構。功能上完整符合設計。
+
 ### 全域導航
 
 - **左側 sidebar（持久）：** Workspace 群組（Executions、Settings）
@@ -410,6 +435,15 @@ only」**，因為 `OutcomeSample` 90% token budget 給錯誤/崩潰（第 6 部
 - **Hard kill 確認：** destructive `AlertDialog`「Partial outcomes may
   be lost. This cannot be undone.」使用者必須輸入 exec 名稱前 4 字。
   高摩擦是設計目的。
+
+**強制 kill 徽章。** 當 `attempt.state === "aborted"` 且
+`attempt.cancelled_reason === "hard_cancel"` 時，狀態徽章以紅色渲染為
+"force-killed"，而非預設的 "aborted" 樣式。
+同時呈現於 AttemptDetail 標頭與 ExecDetail AttemptsList。
+
+CancelDialog 流程（現有）已驅動此狀態機：軟取消在 10 秒內未完成時
+顯示「Force kill」按鈕；確認後觸發 `cancel(handle, Hard)`。
+Plan 14 使該後端呼叫真正對 workers 執行 SIGKILL。
 
 ### 7.6.4 生命週期 banner（`WorkerCrashed`、`StallWarning`、`PipelineWarning`）
 

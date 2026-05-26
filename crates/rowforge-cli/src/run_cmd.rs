@@ -144,6 +144,7 @@ pub async fn run(args: RunArgs) -> anyhow::Result<i32> {
         fsync_outcomes: false,
         capture_raw_stdout: false,
         only_row_ids: None,
+        hard_cancel: None,
     };
     let report = execute(req).await?;
 
