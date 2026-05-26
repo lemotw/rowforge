@@ -94,6 +94,14 @@ impl StudioCore {
     // Handler-authoring anchor points (Part 5 §5.4)
     pub fn validate_manifest(&self, source: ManifestSource)
         -> Result<ManifestReport, UiError>;
+
+    // Plan 13 — handler smoke test (see Part 8 §8.4.3)
+    pub async fn handler_smoke_run(&self, req: SmokeRunRequest)
+        -> Result<SmokeRunResult, UiError>;
+    pub fn handler_smoke_load_fixtures(&self, path: &Path, limit: usize)
+        -> Result<Vec<Map<String, Value>>, UiError>;
+    // smoke_run:          ephemeral N≤100 row dispatch; no execution created
+    // smoke_load_fixtures: read jsonl/json/csv fixtures (1..=100 rows); limit clamped 1..=100
 }
 ```
 
@@ -217,6 +225,10 @@ pub enum UiError {
     // Plan 10 — execution deletion
     #[error("execution is in use: {exec_id}")]
     ExecutionInUse { exec_id: String },
+
+    // Plan 13 — handler smoke test
+    #[error("handler '{name}' has an active run; cancel it first")]
+    HandlerBusy { name: String },
 }
 ```
 
@@ -243,6 +255,12 @@ Plan 10 variant details:
 | Variant | Serialized `kind` | Payload | Emitted by | UI rendering |
 |---|---|---|---|---|
 | `ExecutionInUse { exec_id }` | `execution_in_use` | `{ exec_id }` | `execution_delete` / `execution_delete_bulk` (per-item) when `SessionRegistry::has_active_run_for_exec` returns `true` | Checkbox disabled in ExecList select mode with tooltip "Cancel active run first"; bulk-fail yellow alert above the list showing which exec_ids could not be deleted |
+
+Plan 13 variant details:
+
+| Variant | Serialized `kind` | Payload | Emitted by | UI rendering |
+|---|---|---|---|---|
+| `HandlerBusy { name }` | `handler_busy` | `{ name }` | `handler_smoke_run` when `ExecutionStore::has_active_attempt_for_handler_dir` returns `true` for this handler | Inline error in SmokeSection: "Handler 'NAME' has an active run. Cancel the run first." |
 
 Composition rules:
 - No blanket `From<anyhow::Error> for UiError`.
@@ -365,7 +383,25 @@ handler_fork(source_name: String, new_name: String) -> ()
     // Rejects same-name, missing source (HandlerNotFound), existing target
     // (HandlerExists), invalid new_name (InvalidHandlerName). Emits
     // handlers:list on success.
+
+// Plan 13 — handler smoke test (see Part 8 §8.4.3)
+handler_smoke_run(request: SmokeRunRequest) -> SmokeRunResult
+    // Async. Dispatches up to 100 rows through the handler binary without
+    // creating an execution. Runs the Plan 8 build gate first (rebuilds
+    // when needs_build is true). Returns HandlerBusy if an exec attempt is
+    // active for this handler (cross-process sqlite gate). No events emitted.
+handler_smoke_load_fixtures(path: string, limit: number) -> Vec<Map>
+    // Sync. Reads rows from a .jsonl / .ndjson / .json (top-level array) /
+    // .csv file or directory (precedence: jsonl > ndjson > json > csv).
+    // Clamps limit 1..=100. Returns InvalidArg on missing rows, unsupported
+    // extension, or directory with no matching file.
 ```
+
+**SmokeRunRequest:** `{ handler_name: string, rows: Map[] }`
+**SmokeRunResult:** `{ outcomes: SmokeOutcome[], stderr_tail: string, exit_code: number | null, elapsed_ms: number }`
+**SmokeOutcome:** `{ seq, status: "success"|"error"|"crash", code, message, dur_ms, data }`
+
+Errors: `invalid_handler_name`, `invalid_arg` (empty rows / >100 rows / unsupported ext / empty fixtures), `handler_not_found`, `handler_busy` (active exec attempt on this handler), `build_failed` / `toolchain_missing` / `no_build_command` (Plan 8 gate), `io`.
 
 `handler_build` note: the command is declared `async` but currently
 blocks the Tauri async runtime for the duration of the build (no
@@ -499,6 +535,22 @@ happens during boot autoload or via the Settings page's "Switch
 workspace" button). The Settings page surfaces this with a
 "Will apply on next workspace open" dirty banner when the form
 value differs from the loaded value.
+
+**Plan 13 smoke settings (new fields):**
+
+```rust
+struct Settings {
+    // ... existing fields ...
+
+    /// Default number of rows to dispatch in a smoke run (default 5, clamped 1..=100).
+    smoke_default_rows: usize,
+
+    /// Per-row timeout in seconds for smoke runs (default 30; 0 = no timeout / 1 hour).
+    smoke_timeout_per_row_secs: u64,
+}
+```
+
+Both fields are threaded through `OpenOpts` into `StudioCore` atomic fields at open time. Changing them via `workspace_settings_save` takes effect immediately on the next `handler_smoke_run` call (no restart required).
 
 ## 5.7 Versioning and API stability
 

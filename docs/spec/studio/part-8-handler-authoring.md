@@ -208,33 +208,34 @@ kept per handler until Studio restart.
   relative path that doesn't exist on disk. Suppressed when
   `entry.build` is `Some` (the build step is expected to produce it).
 
-### 8.4.3 Smoke-test lifecycle
+### 8.4.3 Smoke test
 
-> **Deferred from Plan 8** — see design doc §10. Smoke test will
-> land in a later plan.
+> **Implemented in Plan 13.** The deferred lifecycle state machine from
+> Plan 8 has been superseded by the simpler synchronous implementation
+> described below. See Part 7 §7.3 for UI placement and Part 5 §5.5 for
+> the Tauri command signatures.
 
-```
-Pending → (Building →) Handshaking → Running → Done
-                                             ↘ Aborted
-                                             ↘ TimedOut
-                                             ↘ BuildFailed
-```
+Studio surfaces a Smoke test section on each handler's detail page. The user
+can paste JSON lines, pick a fixtures file, or dispatch one synthetic row,
+and observe outcomes inline without creating an execution.
 
-Pipeline:
+- Bounded to 1–100 rows per smoke run
+- Forced row mode (batch handlers still receive rows one at a time)
+- Reuses the Plan 8 build gate — rebuilds when `needs_build` is true
+- Refuses when an exec attempt is already running against this handler
+  (cross-process sqlite gate via
+  `ExecutionStore::has_active_attempt_for_handler_dir`)
+- Per-process serialization via an internal `tokio::sync::Mutex` —
+  one smoke at a time per Studio process
 
-1. If `manifest.build` is present and `args.skip_build = false`, run
-   build first. On build failure: `BuildFailed`, outcomes empty,
-   `build_failed = true`. Stop.
-2. Spawn `manifest.run` with `cwd = handler_dir`.
-3. Standard rowforge handshake. On failure: `Aborted { reason:
-   HandshakeFailed }`.
-4. For each row in `args.rows`, write one JSON-Lines payload to stdin,
-   await one outcome from stdout. Total wall-clock capped by
-   `timeout_secs`.
-5. After last row, send EOF, wait ≤ 2 s for graceful exit. Else
-   force-kill, report `TimedOut`.
+Outcomes are ephemeral (not persisted to `outcomes.jsonl`). stderr is
+captured as a 4 KiB tail and surfaced in a collapsible details panel.
 
-Cancel: 3 s soft, then hard kill.
+Per-row timeout: `smoke_timeout_per_row_secs` from `Settings` (default 30 s;
+0 means no timeout / capped at 1 hour). The smoke runner uses
+`rowforge_core::worker::Worker` directly in row mode with a single worker.
+
+API: see Part 5 §5.2 `handler_smoke_run` and `handler_smoke_load_fixtures`.
 
 ### 8.4.4 Concurrency
 
@@ -376,21 +377,25 @@ On Studio quit (Part 3 §3.6):
 >   `handler_scaffold`, `handler_delete`, `handler_rename`, `resolve_editor`,
 >   `copy_dir_recursive` [Plan 12], `handler_import_from_folder` [Plan 12],
 >   `handler_fork` [Plan 12])
+> - `crates/rowforge-studio-core/src/handler_smoke.rs` — smoke runner
+>   (`handler_smoke_run`, `handler_smoke_load_fixtures`) [Plan 13]
 > - `crates/rowforge-studio-core/src/handler_templates/` — embedded scaffold
 >   templates (GoStdio, GoBatch, Empty)
 > - `crates/rowforge-studio-core/src/error.rs` — `UiError` variants incl.
->   Plan 7 additions
+>   Plan 7 additions + `HandlerBusy` [Plan 13]
 > - `apps/rowforge-studio/src-tauri/src/commands.rs` — Tauri command shells
 >   for all 7 Plan 7 commands + `handler_import_from_folder` + `handler_fork`
->   [Plan 12]
+>   [Plan 12] + `handler_smoke_run` + `handler_smoke_load_fixtures` [Plan 13]
 > - `apps/rowforge-studio/src/ipc/types.ts` — TypeScript mirrors
 > - `apps/rowforge-studio/src/ipc/use-handlers.ts` — TanStack Query hooks;
->   `useHandlerImportFromFolder` + `useHandlerFork` added in Plan 12
+>   `useHandlerImportFromFolder` + `useHandlerFork` added in Plan 12;
+>   `useHandlerSmokeRun` + `useHandlerSmokeLoadFixtures` added in Plan 13
 > - `apps/rowforge-studio/src/pages/HandlersPage.tsx`
 > - `apps/rowforge-studio/src/pages/HandlerDetailPage.tsx`
 > - `apps/rowforge-studio/src/components/ScaffoldDialog.tsx` — gains 4th
 >   radio "Import from folder…" in Plan 12
 > - `apps/rowforge-studio/src/components/ForkHandlerDialog.tsx` — Plan 12
+> - `apps/rowforge-studio/src/components/SmokeSection.tsx` — Plan 13
 > - `apps/rowforge-studio/src/components/RenameHandlerDialog.tsx`
 > - `apps/rowforge-studio/src/components/DeleteHandlerDialog.tsx`
 
@@ -406,17 +411,17 @@ impl StudioCore {
     /// Plan 8: synchronous; caches outcome in build_cache for handler_show.
     pub fn handler_build(&self, name: &str) -> Result<BuildOutcome, UiError>;
 
+    // Plan 13 — smoke test (see §8.4.3)
+    pub async fn handler_smoke_run(&self, req: SmokeRunRequest)
+        -> Result<SmokeRunResult, UiError>;
+    pub fn handler_smoke_load_fixtures(&self, path: &Path, limit: usize)
+        -> Result<Vec<Map<String, Value>>, UiError>;
+
     // Deferred to a later plan:
-    pub fn handler_smoke_test(&self, args: SmokeTestArgs)
-        -> Result<SmokeTestHandle, UiError>;
     pub fn handler_cancel_build(&self, h: &BuildHandle, mode: CancelMode)
-        -> Result<(), UiError>;
-    pub fn handler_cancel_smoke(&self, h: &SmokeTestHandle, mode: CancelMode)
         -> Result<(), UiError>;
     pub fn handler_subscribe_build(&self, h: &BuildHandle)
         -> Result<BuildStream, UiError>;
-    pub fn handler_subscribe_smoke(&self, h: &SmokeTestHandle)
-        -> Result<SmokeStream, UiError>;
 
     pub fn handler_scaffold(&self, args: ScaffoldArgs) -> Result<String, UiError>;
     pub fn handler_delete(&self, name: &str) -> Result<(), UiError>;
@@ -489,6 +494,8 @@ channel.
 > **Plan 8 adds:** `handler_build`.
 >
 > **Plan 12 adds:** `handler_import_from_folder`, `handler_fork`.
+>
+> **Plan 13 adds:** `handler_smoke_run`, `handler_smoke_load_fixtures`.
 
 ```
 handler_list()                              -> Vec<HandlerSummary>
@@ -496,14 +503,13 @@ handler_show(name)                          -> HandlerDetail
 handler_open_editor(name)                   -> ()
 handler_reveal(name)                        -> ()
 handler_build(name: String)                 -> BuildOutcome     // Plan 8
-handler_smoke_test(args)                    -> SmokeTestHandle  // deferred
-handler_cancel_build(handle, mode)          -> ()               // deferred
-handler_cancel_smoke(handle, mode)          -> ()               // deferred
 handler_scaffold(args)                      -> String
 handler_delete(name)                        -> ()
 handler_rename(old, new)                    -> ()
 handler_import_from_folder(source_path, name) -> ()            // Plan 12; emits handlers:list
 handler_fork(source_name, new_name)           -> ()            // Plan 12; emits handlers:list
+handler_smoke_run(request: SmokeRunRequest)   -> SmokeRunResult  // Plan 13; async; no events
+handler_smoke_load_fixtures(path, limit)      -> Vec<Map>        // Plan 13; sync; limit 1..=100
 ```
 
 `handler_build` side effect: emits `handlers:list` event after build
@@ -560,6 +566,19 @@ Plan 8 variant details:
 | `BuildFailed { name, exit_code }` | `build_failed` | `{ name, exit_code }` | `handler_build` when build exits non-zero | "Build failed for 'NAME' (exit N). See the Last build section for details." |
 | `ToolchainMissing { name, tool }` | `toolchain_missing` | `{ name, tool }` | `handler_build` when `entry.build[0]` is missing from `PATH` | "Build tool 'TOOL' not found in PATH. Install it or update entry.build in your manifest." |
 | `NoBuildCommand { name }` | `no_build_command` | `{ name }` | `handler_build` when manifest has no `entry.build` | "Handler 'NAME' has no entry.build command in rowforge.yaml." |
+
+**Plan 13 variants:**
+
+```rust
+/// An exec attempt is currently active for this handler; smoke run refused.
+HandlerBusy { name: String },
+```
+
+Plan 13 variant details:
+
+| Variant | Serialized `kind` | Payload | Emitted by | UI copy |
+|---|---|---|---|---|
+| `HandlerBusy { name }` | `handler_busy` | `{ name }` | `handler_smoke_run` when `ExecutionStore::has_active_attempt_for_handler_dir` returns `true` | Inline error in SmokeSection: "Handler 'NAME' has an active run. Cancel the run first." |
 
 All carry `#[non_exhaustive]` per Part 5 §5.7.
 
@@ -638,7 +657,8 @@ Extending Part 2 §2.2.9 and Part 5 §5.6:
 struct Settings {
     // ... existing
     preferred_editor: Option<String>,              // e.g. "code", "cursor"  [Plan 7: shipped]
-    smoke_test_default_timeout_secs: Option<u32>,  // default 30             [deferred]
+    smoke_default_rows: usize,                     // default 5, clamped 1..=100  [Plan 13]
+    smoke_timeout_per_row_secs: u64,               // default 30; 0 = no timeout  [Plan 13]
 }
 ```
 
@@ -646,7 +666,12 @@ struct Settings {
 > bumping `schema_version`. The original design above specified a bump from 1
 > to 2; Plan 7 instead landed it as a tolerant-reader addition at schema
 > version 1. The authoritative description is in Part 2 §2.2.9.
-> `smoke_test_default_timeout_secs` is deferred; not shipped in Plan 7.
+
+> **Plan 13:** `smoke_default_rows` and `smoke_timeout_per_row_secs` are
+> now shipped. They are threaded through `OpenOpts` into `StudioCore`
+> atomic fields. Per-row timeout of 0 is interpreted as "no timeout"
+> (capped internally at 1 hour). The `SmokeSection` UI reads
+> `smoke_default_rows` to pre-fill the "Rows to run" input.
 
 ### 8.6.5 Wireframes (illustrative)
 
@@ -706,6 +731,7 @@ ASCII; same caveat as Part 7 §7.13.
 | 8.3 model | Part 2 §2.1 cost classes; §2.4 projection contract |
 | 8.4 runtime | Part 3 §3.5 cancel pattern (shorter threshold); §3.6 cleanup; §3.4 concurrency |
 | 8.4.5 interlock | Part 5 §5.2 SessionRegistry |
+| 8.4.3 smoke test | Part 5 §5.2 `handler_smoke_run` / `handler_smoke_load_fixtures` (Plan 13); Part 5 §5.3 `handler_busy`; Part 7 §7.3 SmokeSection |
 | 8.4.6 scaffold sources | Part 5 §5.5 `handler_import_from_folder` (Plan 12) |
 | 8.4.7 handler fork | Part 5 §5.5 `handler_fork` (Plan 12); Part 5 §5.3 error variants |
 | 8.5 API | Part 5 §5.2, §5.3 errors, §5.5 commands, §5.7 stability |
@@ -736,9 +762,10 @@ Extending Part 7 §7.10:
 
 ## 8.9 Open questions
 
-1. **Fixture-file / from-exec smoke inputs.** v1 paste-only; paste-100
-   ceiling will frustrate users with large fixtures. v1.1 candidate
-   (§8.1 deferred).
+1. **Fixture-file / from-exec smoke inputs.** ~~v1 paste-only~~ **Resolved in
+   Plan 13** — fixture file picking (.jsonl / .ndjson / .json / .csv /
+   directory) is now shipped. The paste-100 row ceiling remains; larger
+   fixtures are truncated to the `limit` (1..=100).
 2. **In-Studio diff viewer.** After external editor save, would
    "what changed since last build?" help, or is the editor's own diff
    enough?

@@ -160,6 +160,37 @@ different lib is not a breaking spec change.
   field. v2 upgrades to a segmented control (`Dir` / `Sandbox`) without
   changing layout (Part 5 §5.4).
 
+#### Smoke test section
+
+Below "Last build" and above "Files", a `<SmokeSection />` lets the user
+dispatch 1–100 rows through the handler binary without creating an
+execution. Sources:
+
+- **Paste JSON** — one JSON object per line; live "N rows parsed" indicator
+- **Fixtures…** — pick a `.jsonl` / `.ndjson` / `.json` (top-level array) /
+  `.csv` file or a directory containing one (precedence: jsonl > ndjson >
+  json > csv)
+- **One synthetic row** — sends `{ "row": 1 }`
+
+Forced single-worker row mode (one row at a time, even for batch
+handlers). Outcomes render inline in a 5-column table: `seq / status /
+message / dur_ms / data`. Counts strip shows success/error/crash totals,
+elapsed ms, and handler exit code. `stderr` tail (last 4 KiB) is
+collapsible.
+
+The Run button is disabled while parsing errors are present, no rows are
+available, or a smoke is in flight. The Plan 8 build gate runs first
+(rebuilds when source is newer than the binary).
+
+Smoke is refused (`handler_busy`) when an exec attempt is already running
+against this handler in any workspace process (cross-process gate via
+sqlite).
+
+> **Note on spec deviation:** the design spec described a "Smoke test TAB".
+> The implementation uses a **section** (not a tab) because
+> `HandlerDetailPage` uses sections, not tabs. The feature is otherwise
+> complete as designed.
+
 ### Global navigation
 
 - **Left sidebar (persistent):** Workspace group (Executions, Settings)
