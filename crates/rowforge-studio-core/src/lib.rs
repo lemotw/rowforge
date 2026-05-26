@@ -536,38 +536,39 @@ impl StudioCore {
         crate::handler::copy_dir_recursive(&source_dir, &target_dir)
             .map_err(|e| UiError::Io(format!("copy_dir_recursive: {}", e)))?;
         // Step 6: rewrite manifest.name via serde round-trip.
+        //
+        // Two distinct failure modes:
+        //  - Load failure  → tolerated (warn + skip rewrite). Manifest was
+        //    malformed in the source; the fork is otherwise complete and the
+        //    user can fix the manifest manually. Plan 12 spec §3.3.
+        //  - Serialize / write failure → propagated as UiError::Io. These
+        //    are unexpected: the file existed (we just copied it) but became
+        //    unwritable between copy and write — e.g. filesystem going
+        //    read-only, external permission revocation, disk-full.
+        //    Without propagation a Fork could report success while leaving
+        //    `name:` unchanged, confusing the user when they navigate to the
+        //    new handler.
+        //
+        // Note: reaching the serialize/write path requires the file to exist
+        // (just copied) but become unwritable between copy and write.  These
+        // conditions are hard to trigger portably in tests; propagation is
+        // verified by inspection.
+        let manifest_path = target_dir.join("rowforge.yaml");
         match rowforge_core::manifest::Manifest::load_from_dir(&target_dir) {
             Ok((mut manifest, _path)) => {
                 manifest.name = new_name.to_string();
-                match serde_yaml::to_string(&manifest) {
-                    Ok(yaml) => {
-                        if let Err(e) =
-                            std::fs::write(target_dir.join("rowforge.yaml"), yaml)
-                        {
-                            tracing::warn!(
-                                source = source_name,
-                                new = new_name,
-                                error = %e,
-                                "handler_fork: could not write updated manifest (copy retained)"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            source = source_name,
-                            new = new_name,
-                            error = %e,
-                            "handler_fork: serde_yaml::to_string failed (copy retained)"
-                        );
-                    }
-                }
+                let yaml = serde_yaml::to_string(&manifest)
+                    .map_err(|e| crate::UiError::Io(format!("serialize manifest after fork: {}", e)))?;
+                std::fs::write(&manifest_path, yaml)
+                    .map_err(|e| crate::UiError::Io(format!("write manifest after fork: {}", e)))?;
             }
             Err(e) => {
+                // Manifest load failed — tolerated. The fork is otherwise complete;
+                // user can fix the manifest manually. Plan 12 spec §3.3 documents this.
                 tracing::warn!(
-                    source = source_name,
-                    new = new_name,
-                    error = %e,
-                    "handler_fork: manifest load failed on target (copy retained, user can fix)"
+                    target = %target_dir.display(),
+                    error = ?e,
+                    "handler_fork: manifest load failed; leaving rowforge.yaml as-is",
                 );
             }
         }

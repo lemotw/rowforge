@@ -3347,3 +3347,49 @@ fn handler_fork_rejects_missing_source() {
         "expected HandlerNotFound, got: {:?}", err
     );
 }
+
+/// handler_fork tolerates an unparseable source manifest (load-failure path).
+///
+/// If `Manifest::load_from_dir` fails (e.g. malformed YAML), the fork should
+/// still succeed — the directory is copied as-is and the manifest is left
+/// verbatim.  This is the documented load-tolerance behaviour (Plan 12 spec
+/// §3.3).  The write-failure path (file exists but cannot be written) is
+/// propagated as UiError::Io; that path is hard to trigger portably and is
+/// verified by code inspection.
+#[test]
+fn handler_fork_tolerates_unparseable_source_manifest() {
+    let tmp = empty_workspace();
+
+    // Create the source handler inside the workspace handlers/ dir directly,
+    // bypassing import_from_folder so we can supply a deliberately broken
+    // manifest without import validation rejecting it.
+    let handlers_dir = tmp.path().join("handlers");
+    let src_dir = handlers_dir.join("broken-source");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    // Write a manifest that fails YAML parse / serde deserialization.
+    std::fs::write(src_dir.join("rowforge.yaml"), "this is not yaml: {[broken").unwrap();
+    std::fs::write(src_dir.join("handler.go"), "package main\n").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Fork should succeed — load failure is tolerated per design §3.3.
+    core.handler_fork("broken-source", "tolerated-fork")
+        .expect("fork should tolerate manifest load failure");
+
+    // Target directory must exist.
+    let target = handlers_dir.join("tolerated-fork");
+    assert!(target.exists(), "forked dir must be created");
+
+    // The malformed manifest must be carried verbatim (not rewritten).
+    let yaml_text = std::fs::read_to_string(target.join("rowforge.yaml")).unwrap();
+    assert_eq!(
+        yaml_text, "this is not yaml: {[broken",
+        "manifest must be left as-is when load fails; got: {:?}", yaml_text
+    );
+
+    // Other files must also be copied.
+    assert!(target.join("handler.go").exists(), "handler.go must be copied");
+}
