@@ -2943,3 +2943,152 @@ fn exec_list_size_bytes_none_when_dir_missing() {
         summary.size_bytes
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 11 T2 — attempt_failed_row_ids
+// ---------------------------------------------------------------------------
+
+/// Helper: create the attempt directory layout and write `outcomes.jsonl`.
+///
+/// Returns `(exec_id, attempt_id)`. The outcomes.jsonl is written in
+/// `BatchOutcome` format (`{"outcomes": [...]}`) matching the real on-disk
+/// layout documented in `crates/rowforge-studio-core/src/failed.rs`.
+fn seed_attempt_with_outcomes(
+    tmp: &tempfile::TempDir,
+    name: &str,
+    outcomes_content: &str,
+) -> (String, String) {
+    let (exec_id, attempt_id) = seed_exec_with_completed_attempt(tmp, name);
+
+    // Create the attempt directory under <workspace>/executions/<exec>/attempts/<attempt>/
+    let attempt_dir = tmp
+        .path()
+        .join("executions")
+        .join(&exec_id)
+        .join("attempts")
+        .join(&attempt_id);
+    std::fs::create_dir_all(&attempt_dir).unwrap();
+
+    // Write the caller-supplied outcomes.jsonl content.
+    std::fs::write(attempt_dir.join("outcomes.jsonl"), outcomes_content).unwrap();
+
+    (exec_id, attempt_id)
+}
+
+/// Empty outcomes.jsonl → `attempt_failed_row_ids` returns empty Vec.
+#[test]
+fn attempt_failed_row_ids_empty_outcomes_returns_empty() {
+    let tmp = empty_workspace();
+    let (exec_id, attempt_id) = seed_exec_with_completed_attempt(&tmp, "afri-empty");
+
+    // Create the attempt dir and an empty outcomes.jsonl.
+    let attempt_dir = tmp
+        .path()
+        .join("executions")
+        .join(&exec_id)
+        .join("attempts")
+        .join(&attempt_id);
+    std::fs::create_dir_all(&attempt_dir).unwrap();
+    std::fs::write(attempt_dir.join("outcomes.jsonl"), "").unwrap();
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let result = core.attempt_failed_row_ids(&exec_id, &attempt_id).unwrap();
+    assert!(result.is_empty(), "expected empty vec, got: {:?}", result);
+}
+
+/// Mixed statuses: only error and crash seq values are returned, sorted
+/// ascending. Success rows are excluded.
+#[test]
+fn attempt_failed_row_ids_mixed_statuses_returns_failed_and_crashed_sorted() {
+    let tmp = empty_workspace();
+
+    // BatchOutcome lines: each line is a JSON object with "outcomes" array.
+    // seq 1 → success (excluded), seq 2 → error (included), seq 3 → crash
+    // (included), seq 5 → error (included). Expected output: [2, 3, 5].
+    let outcomes = concat!(
+        "{\"first_seq\":1,\"seqs\":[1,2,3],\"outcomes\":[",
+        "{\"type\":\"success\",\"seq\":1,\"dur_ms\":10,\"data\":null},",
+        "{\"type\":\"error\",\"seq\":2,\"code\":\"bad\",\"message\":\"oops\",\"dur_ms\":5},",
+        "{\"type\":\"crash\",\"seq\":3,\"worker_id\":\"w1\",\"crash_at_seq\":3}",
+        "]}\n",
+        "{\"first_seq\":5,\"seqs\":[5],\"outcomes\":[",
+        "{\"type\":\"error\",\"seq\":5,\"code\":\"timeout\",\"message\":\"timed out\",\"dur_ms\":0}",
+        "]}\n"
+    );
+
+    let (exec_id, attempt_id) =
+        seed_attempt_with_outcomes(&tmp, "afri-mixed", outcomes);
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let result = core.attempt_failed_row_ids(&exec_id, &attempt_id).unwrap();
+    assert_eq!(result, vec![2u64, 3u64, 5u64],
+        "expected [2, 3, 5], got: {:?}", result);
+}
+
+/// Traversal IDs (`../etc`) must be rejected with `UiError::Io` before
+/// any filesystem access.
+#[test]
+fn attempt_failed_row_ids_rejects_traversal_ids() {
+    let tmp = empty_workspace();
+    let (exec_id, attempt_id) = seed_exec_with_completed_attempt(&tmp, "afri-traversal");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Bad exec_id — should be rejected.
+    let err = core
+        .attempt_failed_row_ids("../etc", &attempt_id)
+        .unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io for bad exec_id, got: {:?}", err
+    );
+
+    // Bad attempt_id — should also be rejected.
+    let err = core
+        .attempt_failed_row_ids(&exec_id, "../../etc/passwd")
+        .unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io for bad attempt_id, got: {:?}", err
+    );
+}
+
+/// Repeated seq values across multiple BatchOutcome lines are deduplicated;
+/// each seq appears at most once in the output.
+#[test]
+fn attempt_failed_row_ids_deduplicates_repeated_seqs() {
+    let tmp = empty_workspace();
+
+    // seq 2 appears in two separate BatchOutcome lines as "error" → deduplicated.
+    let outcomes = concat!(
+        "{\"first_seq\":2,\"seqs\":[2],\"outcomes\":[",
+        "{\"type\":\"error\",\"seq\":2,\"code\":\"e1\",\"message\":\"first\",\"dur_ms\":1}",
+        "]}\n",
+        "{\"first_seq\":2,\"seqs\":[2],\"outcomes\":[",
+        "{\"type\":\"error\",\"seq\":2,\"code\":\"e1\",\"message\":\"retry\",\"dur_ms\":1}",
+        "]}\n"
+    );
+
+    let (exec_id, attempt_id) =
+        seed_attempt_with_outcomes(&tmp, "afri-dedup", outcomes);
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let result = core.attempt_failed_row_ids(&exec_id, &attempt_id).unwrap();
+    assert_eq!(result, vec![2u64],
+        "seq 2 should appear exactly once, got: {:?}", result);
+}

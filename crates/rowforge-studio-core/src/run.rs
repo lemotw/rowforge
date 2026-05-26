@@ -88,6 +88,11 @@ pub struct RunOpts {
     /// `row_limit` to sample successive batches of fresh rows across
     /// repeated runs.
     pub skip_attempted: bool,
+    /// When `Some`, only the rows whose `seq` values appear in this list are
+    /// dispatched. Used by Plan 11's Re-run failed flow. Takes priority over
+    /// `skip_seqs` inside rowforge-core: if a seq is in `only_row_ids` it is
+    /// dispatched regardless of `skip_seqs`.
+    pub only_row_ids: Option<Vec<u64>>,
 }
 
 impl RunOpts {
@@ -99,6 +104,7 @@ impl RunOpts {
             dry_run: false,
             row_limit: None,
             skip_attempted: false,
+            only_row_ids: None,
         }
     }
 
@@ -119,6 +125,15 @@ impl RunOpts {
 
     pub fn with_skip_attempted(mut self, b: bool) -> Self {
         self.skip_attempted = b;
+        self
+    }
+
+    /// Restrict dispatch to specific row seq values. Pass `None` to clear.
+    ///
+    /// Used by Plan 11's Re-run failed flow: callers set this to the
+    /// `Vec<u64>` returned by `StudioCore::attempt_failed_row_ids`.
+    pub fn with_only_row_ids(mut self, ids: Option<Vec<u64>>) -> Self {
+        self.only_row_ids = ids;
         self
     }
 }
@@ -324,6 +339,10 @@ impl StudioCore {
         // the current attempt (intentional — snapshotted into RunRequest).
         let capture_raw_stdout = self.capture_raw_stdout;
 
+        // Plan 11: snapshot only_row_ids from RunOpts so the filter is
+        // captured into the spawned task rather than borrowed.
+        let only_row_ids = opts.only_row_ids.clone();
+
         tokio::spawn(async move {
             aggregator_for_task.set_phase(Phase::Starting);
 
@@ -337,6 +356,7 @@ impl StudioCore {
                 skip_seqs,
                 handler_log_tx_for_pipeline,
                 capture_raw_stdout,
+                only_row_ids,
             )
             .await;
 
@@ -666,6 +686,7 @@ async fn run_pipeline_in_process(
     skip_seqs: std::collections::HashSet<u64>,
     handler_log_tx: tokio::sync::broadcast::Sender<rowforge_core::handler_log::HandlerLogLine>,
     capture_raw_stdout: bool,
+    only_row_ids: Option<Vec<u64>>,
 ) -> Result<rowforge_core::run::RunReport, RunFailure> {
     let handler_canon = match std::fs::canonicalize(&opts.handler_dir) {
         Ok(p) => p,
@@ -767,7 +788,7 @@ async fn run_pipeline_in_process(
         input_format: None,
         fsync_outcomes: false,
         capture_raw_stdout,
-        only_row_ids: None,
+        only_row_ids,
     };
 
     aggregator.set_phase(Phase::Snapshotting);
