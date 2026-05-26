@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, CoreError>;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -230,6 +230,7 @@ impl ExecutionStore {
                 self.conn.execute_batch(MIGRATION_V1)?;
                 self.conn.execute_batch(MIGRATION_V2)?;
                 self.conn.execute_batch(MIGRATION_V3)?;
+                self.conn.execute_batch(MIGRATION_V4)?;
                 self.conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?1)",
                     params![SCHEMA_VERSION],
@@ -238,11 +239,18 @@ impl ExecutionStore {
             Some(1) => {
                 self.conn.execute_batch(MIGRATION_V2)?;
                 self.conn.execute_batch(MIGRATION_V3)?;
+                self.conn.execute_batch(MIGRATION_V4)?;
                 self.conn
                     .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
             }
             Some(2) => {
                 self.conn.execute_batch(MIGRATION_V3)?;
+                self.conn.execute_batch(MIGRATION_V4)?;
+                self.conn
+                    .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
+            }
+            Some(3) => {
+                self.conn.execute_batch(MIGRATION_V4)?;
                 self.conn
                     .execute("UPDATE schema_version SET version = ?1", params![SCHEMA_VERSION])?;
             }
@@ -777,6 +785,10 @@ const MIGRATION_V3: &str = "
 ALTER TABLE executions ADD COLUMN last_handler_dir TEXT;
 ";
 
+const MIGRATION_V4: &str = "
+ALTER TABLE attempts ADD COLUMN cancelled_reason TEXT;
+";
+
 fn row_to_execution(r: &rusqlite::Row<'_>, home: &Path) -> rusqlite::Result<Execution> {
     let id: String = r.get(0)?;
     let dir = home.join("executions").join(&id);
@@ -1221,9 +1233,9 @@ mod tests {
                 rusqlite::params![2_i64],
             ).unwrap();
         }
-        // Re-open via ExecutionStore — should migrate v2 → v3.
+        // Re-open via ExecutionStore — should migrate v2 → v3 → v4.
         let store = ExecutionStore::open(tmp.path()).unwrap();
-        assert_eq!(store.schema_version(), 3);
+        assert_eq!(store.schema_version(), SCHEMA_VERSION as u8);
 
         // Verify the new column exists by trying to SELECT it (zero rows is fine).
         let mut stmt = store
@@ -1329,5 +1341,42 @@ mod tests {
         // Setting on a nonexistent id errors.
         let err = store.set_last_handler_dir("nope", std::path::Path::new("/x"));
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn migration_v4_adds_cancelled_reason_column() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _store = ExecutionStore::open(tmp.path()).unwrap();
+        let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name='cancelled_reason'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_v4_upgrades_from_v3_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        // First create a v3 DB by manually setting version=3 after fresh open
+        // (then re-opening should trigger the V4 upgrade).
+        {
+            let _store = ExecutionStore::open(tmp.path()).unwrap();
+            let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+            conn.execute("UPDATE schema_version SET version = 3", []).unwrap();
+            conn.execute("ALTER TABLE attempts DROP COLUMN cancelled_reason", []).unwrap();
+        }
+        // Re-open should migrate v3 → v4.
+        let _store = ExecutionStore::open(tmp.path()).unwrap();
+        let conn = rusqlite::Connection::open(tmp.path().join("executions.db")).unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name='cancelled_reason'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+        let version: i64 = conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 4);
     }
 }
