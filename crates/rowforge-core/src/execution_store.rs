@@ -676,6 +676,33 @@ impl ExecutionStore {
         Ok(count > 0)
     }
 
+    /// Plan 13: cross-process active-run gate for "is this handler dir busy?"
+    ///
+    /// Returns true when ANY attempt joined through `handler_instances` to
+    /// the given `handler_dir` is in a non-terminal state. The smoke runner
+    /// uses this to refuse a smoke when an exec attempt is already running
+    /// against the same handler binary.
+    ///
+    /// `handler_dir` is compared as `source_snapshot_dir` text — the caller
+    /// must pass the exact canonical path used at handler-instance insert time
+    /// (i.e. `<workspace>/handlers/<name>`, no trailing slash).
+    pub fn has_active_attempt_for_handler_dir(
+        &self,
+        handler_dir: &Path,
+    ) -> Result<bool> {
+        let dir_str = handler_dir.to_string_lossy();
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*)
+               FROM attempts a
+               JOIN handler_instances hi ON a.handler_instance_id = hi.id
+              WHERE hi.source_snapshot_dir = ?1
+                AND a.state NOT IN ('completed', 'aborted')",
+            params![dir_str.as_ref()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     /// Hard-delete an execution and all its child rows in a single transaction.
     ///
     /// The schema has no `ON DELETE CASCADE` on the `attempts.execution_id` FK
@@ -1204,6 +1231,63 @@ mod tests {
             .prepare("SELECT last_handler_dir FROM executions WHERE 1=0")
             .unwrap();
         let _ = stmt.query([]).unwrap();
+    }
+
+    #[test]
+    fn has_active_attempt_for_handler_dir_matches_only_target_handler() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tempdir().unwrap();
+        let csv = write_csv(src.path(), "in.csv", 10);
+
+        let mut store = ExecutionStore::open(tmp.path()).unwrap();
+
+        // Two handler instances with different source_snapshot_dirs.
+        let hi_a = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "alpha".into(),
+                manifest_hash: "h1".into(),
+                source_snapshot_dir: tmp.path().join("handlers/alpha"),
+                binary_hash: None,
+            })
+            .unwrap();
+        let _hi_b = store
+            .register_handler_instance(NewHandlerInstance {
+                handler_id: "beta".into(),
+                manifest_hash: "h2".into(),
+                source_snapshot_dir: tmp.path().join("handlers/beta"),
+                binary_hash: None,
+            })
+            .unwrap();
+
+        // One running attempt against alpha; none for beta.
+        let exec = store
+            .create_execution(NewExecution {
+                name: None,
+                input_csv_id: "csv_test".into(),
+                input_csv_path: csv,
+                current_handler_instance_id: Some(hi_a.id.clone()),
+            })
+            .unwrap();
+        store
+            .create_attempt(NewAttempt {
+                execution_id: exec.id.clone(),
+                handler_instance_id: hi_a.id.clone(),
+                parent_attempt_id: None,
+                run_type: RunType {
+                    source: Source::Full,
+                    simulation: Simulation::Real,
+                },
+            })
+            .unwrap();
+
+        let alpha_dir = tmp.path().join("handlers/alpha");
+        let beta_dir = tmp.path().join("handlers/beta");
+        assert!(store
+            .has_active_attempt_for_handler_dir(&alpha_dir)
+            .unwrap());
+        assert!(!store
+            .has_active_attempt_for_handler_dir(&beta_dir)
+            .unwrap());
     }
 
     #[test]
