@@ -569,6 +569,14 @@ impl StudioCore {
             let mut s = session.status.lock().unwrap_or_else(|p| p.into_inner());
             *s = RunStatus::Cancelling;
         }
+        // Emit a phase_changed event so the React reducer transitions its
+        // local status to "cancelling" immediately. Without this, the UI
+        // only learns about the transition via the next Tick / snapshot poll
+        // (≤250 ms lag), which may miss the window before the run finalises
+        // and the handle is removed from the registry — causing the Cancel
+        // button to stay visible instead of showing the Cancelling banner +
+        // Force kill button.
+        session.aggregator.set_phase(Phase::Cancelling);
         match mode {
             CancelMode::Soft => session.cancel_token.cancel(),
             CancelMode::Hard => {

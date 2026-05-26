@@ -465,9 +465,9 @@ New entries insert at the top; the tail fades out at the bottom.
   be lost. This cannot be undone." User must type the first 4 chars
   of the exec name. High friction is the point.
 
-**Force-killed badge.** When `attempt.state === "cancelled"` AND
+**Force-killed badge.** When `attempt.state === "aborted"` AND
 `attempt.cancelled_reason === "hard_cancel"`, the state badge renders
-in red as "force-killed" instead of the default "cancelled" appearance.
+in red as "force-killed" instead of the default "aborted" appearance.
 Surfaces in both AttemptDetail header and ExecDetail AttemptsList.
 
 The CancelDialog flow (existing) already drives this state machine: a

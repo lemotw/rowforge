@@ -425,7 +425,7 @@ impl Worker {
     }
 
     /// Send shutdown, wait grace period, kill if still alive.
-    pub async fn shutdown(mut self, grace: Duration) -> Result<Option<i32>, CoreError> {
+    pub async fn shutdown(&mut self, grace: Duration) -> Result<Option<i32>, CoreError> {
         let _ = self.send_row(&Outbound::Shutdown).await;
         let _ = self.stdin.shutdown().await;
         match timeout(grace, self.child.wait()).await {

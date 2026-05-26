@@ -3532,6 +3532,112 @@ async fn handler_smoke_run_rejects_invalid_name() {
     assert!(matches!(err, UiError::InvalidHandlerName { .. }));
 }
 
+// Plan 14 PR16 — cancel_emits_phase_changed_cancelling
+// ---------------------------------------------------------------------------
+//
+// Verifies that StudioCore::cancel() both:
+//  1. Synchronously transitions session status to Cancelling, so that
+//     core.status() immediately returns Cancelling.
+//  2. Broadcasts a phase_changed { phase: "cancelling" } event through the
+//     aggregator so the React reducer can flip local status without waiting
+//     for the next Tick.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn cancel_emits_phase_changed_cancelling() {
+    use rowforge_studio_core::{CancelMode, OpenOpts, RunOpts, RunStatus, StartExecArgs, StudioCore};
+    use rowforge_studio_core::ProgressEvent;
+
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Stubborn handler — sleeps forever so we can observe the Cancelling state.
+    let hdir = tmp.path().join("handlers").join("stubborn");
+    std::fs::create_dir_all(&hdir).unwrap();
+    std::fs::write(
+        hdir.join("rowforge.yaml"),
+        r#"name: stubborn
+version: "1"
+entry:
+  cmd: ["python3", "handler.py"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        hdir.join("handler.py"),
+        r#"#!/usr/bin/env python3
+import sys, json, time
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        time.sleep(3600)
+"#,
+    )
+    .unwrap();
+
+    let core = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    let input = tmp.path().join("input.csv");
+    std::fs::write(&input, b"id\n1\n2\n3\n").unwrap();
+    let exec_id = core
+        .start_exec(StartExecArgs::new(&input, "cancel_phase_test"))
+        .unwrap();
+
+    let started = core
+        .start_run(&exec_id, RunOpts::new(hdir))
+        .expect("start_run should succeed");
+    let handle = started.handle;
+
+    // Subscribe BEFORE cancelling so we catch the phase_changed event.
+    let mut stream = core.subscribe(&handle).expect("subscribe");
+
+    // Let the worker start dispatching.
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // Issue soft cancel.
+    core.cancel(&handle, CancelMode::Soft).unwrap();
+
+    // 1. Status must be Cancelling synchronously (within this await point).
+    let status = core.status(&handle).unwrap_or(RunStatus::Cancelling);
+    assert_eq!(
+        status,
+        RunStatus::Cancelling,
+        "core.status() must return Cancelling immediately after cancel(Soft)"
+    );
+
+    // 2. A phase_changed { phase: Cancelling } event must arrive in the
+    // broadcast stream within 500 ms.
+    use rowforge_studio_core::Phase;
+    let found_phase_event = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        async {
+            loop {
+                match stream.rx.recv().await {
+                    Ok(ProgressEvent::PhaseChanged { phase: Phase::Cancelling, .. }) => {
+                        break true;
+                    }
+                    Ok(_) => continue,
+                    Err(_) => break false,
+                }
+            }
+        },
+    )
+    .await
+    .unwrap_or(false);
+
+    assert!(
+        found_phase_event,
+        "expected phase_changed {{ phase: cancelling }} event after cancel(Soft)"
+    );
+
+    // Clean up: hard cancel to unblock the stubborn worker.
+    let _ = core.cancel(&handle, CancelMode::Hard);
+}
+
 // Plan 14 T7 — hard_cancel_persists_cancelled_reason
 // ---------------------------------------------------------------------------
 

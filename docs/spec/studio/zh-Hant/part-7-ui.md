@@ -436,9 +436,9 @@ only」**，因為 `OutcomeSample` 90% token budget 給錯誤/崩潰（第 6 部
   be lost. This cannot be undone.」使用者必須輸入 exec 名稱前 4 字。
   高摩擦是設計目的。
 
-**強制 kill 徽章。** 當 `attempt.state === "cancelled"` 且
+**強制 kill 徽章。** 當 `attempt.state === "aborted"` 且
 `attempt.cancelled_reason === "hard_cancel"` 時，狀態徽章以紅色渲染為
-"force-killed"，而非預設的 "cancelled" 樣式。
+"force-killed"，而非預設的 "aborted" 樣式。
 同時呈現於 AttemptDetail 標頭與 ExecDetail AttemptsList。
 
 CancelDialog 流程（現有）已驅動此狀態機：軟取消在 10 秒內未完成時
