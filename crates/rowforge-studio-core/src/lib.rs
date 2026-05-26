@@ -20,6 +20,7 @@ pub mod run;
 pub mod run_handle;
 pub mod session;
 pub mod settings;
+pub mod smoke;
 pub mod workspace;
 
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
@@ -43,6 +44,7 @@ pub use run::{RunOpts, RunRollupTick, RunStartedHandle, RunStream};
 pub use run_handle::{CancelMode, RunHandle, RunStatus};
 pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
+pub use smoke::{SmokeOutcome, SmokeRunRequest, SmokeRunResult};
 pub use workspace::{OpenOpts, Workspace};
 // Re-export export types so the Tauri shell can import them from this crate
 // without needing a direct rowforge-core dependency.
