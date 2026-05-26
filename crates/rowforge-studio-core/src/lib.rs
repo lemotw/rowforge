@@ -607,6 +607,21 @@ impl StudioCore {
         Ok(())
     }
 
+    /// Plan 13: read up to `limit` rows from a fixtures path. Path may be
+    /// anywhere on disk; it is not constrained to the workspace.
+    ///
+    /// Errors:
+    /// - `InvalidArg` — path missing / unsupported extension / no rows found
+    /// - `Io`         — read failure on a recognized extension
+    pub fn handler_smoke_load_fixtures(
+        &self,
+        path: &std::path::Path,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, UiError> {
+        let clamped = limit.clamp(1, 100);
+        crate::smoke::load_fixtures(path, clamped)
+    }
+
     /// Return the Arc-wrapped session registry for this workspace.
     ///
     /// Used by the Tauri event bridge to spawn `forward_active_runs` with only
