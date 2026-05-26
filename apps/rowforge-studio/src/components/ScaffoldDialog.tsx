@@ -218,12 +218,15 @@ export function ScaffoldDialog({ open, onOpenChange }: Props) {
 
           {source === "folder" && (
             <Field label="Source folder" htmlFor="">
-              <div className="flex items-center gap-2">
+              <div className="space-y-2">
                 <Button onClick={pickFolder} variant="outline" size="sm">
                   {sourceFolder ? "Change…" : "Pick folder…"}
                 </Button>
                 {sourceFolder && (
-                  <code className="flex-1 truncate text-xs text-muted-foreground">
+                  <code
+                    className="block break-all rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-muted-foreground"
+                    title={sourceFolder}
+                  >
                     {sourceFolder}
                   </code>
                 )}
