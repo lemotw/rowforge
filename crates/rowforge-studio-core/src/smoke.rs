@@ -65,6 +65,7 @@ pub(crate) async fn run_smoke(
     rows: Vec<serde_json::Map<String, serde_json::Value>>,
     timeout_per_row_secs: u64,
 ) -> Result<SmokeRunResult, crate::UiError> {
+    let started = std::time::Instant::now();
     let (manifest, _) = rowforge_core::manifest::Manifest::load_from_dir(handler_dir)
         .map_err(|e| crate::UiError::Io(format!("manifest load: {e}")))?;
 
@@ -98,7 +99,6 @@ pub(crate) async fn run_smoke(
         .map(|m| m.keys().cloned().collect())
         .unwrap_or_default();
 
-    let started = std::time::Instant::now();
     let mut worker = rowforge_core::worker::Worker::spawn(
         0,
         handler_dir,
@@ -126,7 +126,10 @@ pub(crate) async fn run_smoke(
                 let mut guard = buf.lock().await;
                 guard.push_str(&s);
                 if guard.len() > 4096 {
-                    let cut = guard.len() - 4096;
+                    let mut cut = guard.len() - 4096;
+                    while cut > 0 && !guard.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
                     let _ = guard.drain(0..cut);
                 }
             }
