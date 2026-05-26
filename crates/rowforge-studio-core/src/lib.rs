@@ -20,6 +20,7 @@ pub mod run;
 pub mod run_handle;
 pub mod session;
 pub mod settings;
+pub mod smoke;
 pub mod workspace;
 
 use crate::cache::{Cache, ExecListKey, DEFAULT_TTL};
@@ -43,6 +44,7 @@ pub use run::{RunOpts, RunRollupTick, RunStartedHandle, RunStream};
 pub use run_handle::{CancelMode, RunHandle, RunStatus};
 pub use session::{BusyReason, Session, SessionRegistry};
 pub use settings::Settings;
+pub use smoke::{SmokeOutcome, SmokeRunRequest, SmokeRunResult};
 pub use workspace::{OpenOpts, Workspace};
 // Re-export export types so the Tauri shell can import them from this crate
 // without needing a direct rowforge-core dependency.
@@ -233,16 +235,23 @@ pub struct StudioCore {
     /// Sourced from `OpenOpts.preferred_editor` which the Tauri layer
     /// loads from Settings before calling `open()`. None → resolver
     /// falls through to $VISUAL / $EDITOR / probes.
-    preferred_editor: Option<String>,
+    preferred_editor: std::sync::Mutex<Option<String>>,
     /// Plan 9 T5: mirrors `Settings.handler_log_capture_raw_stdout`.
     /// Read once per attempt at start_run time; threaded into
     /// `RunRequest.capture_raw_stdout`. Updated by `set_handler_log_capture_raw_stdout`
     /// after each `workspace_settings_save` in the Tauri layer.
-    capture_raw_stdout: bool,
+    capture_raw_stdout: std::sync::atomic::AtomicBool,
     /// Plan 8 T6: in-memory build cache. Keys are handler names; values are
     /// the most recent BuildOutcome (success OR failure). Dies on Drop.
     /// Lock is held only briefly — never across the subprocess spawn.
     build_cache: std::sync::Mutex<std::collections::HashMap<String, rowforge_core::build::BuildOutcome>>,
+    /// Plan 13: clamped to 1..=100 at smoke-run time.
+    smoke_default_rows: std::sync::atomic::AtomicUsize,
+    /// Plan 13: 0 = no timeout.
+    smoke_timeout_per_row_secs: std::sync::atomic::AtomicU64,
+    /// Plan 13: serializes concurrent smoke runs across all handlers.
+    /// One smoke at a time per workspace process.
+    smoke_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Drop for StudioCore {
@@ -305,11 +314,15 @@ impl StudioCore {
             exec_list_cache: Cache::new(DEFAULT_TTL),
             sessions,
             // Plan 7 T15: sourced from Settings.preferred_editor via OpenOpts.
-            preferred_editor: opts.preferred_editor,
+            preferred_editor: std::sync::Mutex::new(opts.preferred_editor),
             // Plan 8 T6: empty build cache; populated by handler_build.
             build_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             // Plan 9 T5: sourced from Settings.handler_log_capture_raw_stdout via OpenOpts.
-            capture_raw_stdout: opts.handler_log_capture_raw_stdout,
+            capture_raw_stdout: std::sync::atomic::AtomicBool::new(opts.handler_log_capture_raw_stdout),
+            // Plan 13 T2: smoke test defaults, clamped to valid range.
+            smoke_default_rows: std::sync::atomic::AtomicUsize::new(opts.smoke_default_rows.clamp(1, 100)),
+            smoke_timeout_per_row_secs: std::sync::atomic::AtomicU64::new(opts.smoke_timeout_per_row_secs),
+            smoke_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -320,16 +333,16 @@ impl StudioCore {
     /// Plan 7 T15: update the preferred editor in-place after a settings_save
     /// so the next handler_open_editor call uses the new value without
     /// requiring a workspace re-open.
-    pub fn set_preferred_editor(&mut self, editor: Option<String>) {
-        self.preferred_editor = editor;
+    pub fn set_preferred_editor(&self, editor: Option<String>) {
+        *self.preferred_editor.lock().unwrap_or_else(|p| p.into_inner()) = editor;
     }
 
     /// Plan 9 T5: update the raw-stdout capture flag in-place after a
     /// settings_save so the next start_run call picks up the new value.
     /// Changes don't affect already-running attempts (intentional — the
     /// flag is snapshotted into `RunRequest` at attempt-start).
-    pub fn set_handler_log_capture_raw_stdout(&mut self, enabled: bool) {
-        self.capture_raw_stdout = enabled;
+    pub fn set_handler_log_capture_raw_stdout(&self, enabled: bool) {
+        self.capture_raw_stdout.store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Return the current value of the raw-stdout capture flag.
@@ -337,7 +350,26 @@ impl StudioCore {
     /// Used by tests and callers that need to verify the flag was applied
     /// without requiring a full run.
     pub fn capture_raw_stdout(&self) -> bool {
-        self.capture_raw_stdout
+        self.capture_raw_stdout.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Plan 13: default row count to show in the Smoke test UI (1..=100).
+    pub fn smoke_default_rows(&self) -> usize {
+        self.smoke_default_rows.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Plan 13: per-row timeout for smoke runs (seconds; 0 = no timeout).
+    pub fn smoke_timeout_per_row_secs(&self) -> u64 {
+        self.smoke_timeout_per_row_secs.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Plan 13: update smoke defaults in-place after a settings_save so the
+    /// next smoke run picks up the new values. Changes don't affect already-
+    /// running smoke runs (none possible; smoke is synchronous w.r.t. the IPC
+    /// caller, but the global smoke_lock serializes them anyway).
+    pub fn set_smoke_defaults(&self, rows: usize, timeout_secs: u64) {
+        self.smoke_default_rows.store(rows.clamp(1, 100), std::sync::atomic::Ordering::Relaxed);
+        self.smoke_timeout_per_row_secs.store(timeout_secs, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.
@@ -415,10 +447,11 @@ impl StudioCore {
     /// HandlerNotFound, EditorNotFound, InvalidArg (shell-parse failure),
     /// Io (spawn failure).
     pub fn handler_open_editor(&self, name: &str) -> Result<(), UiError> {
+        let editor = self.preferred_editor.lock().unwrap_or_else(|p| p.into_inner()).clone();
         crate::handler::open_editor(
             self.workspace.root.as_path(),
             name,
-            self.preferred_editor.as_deref(),
+            editor.as_deref(),
         )
     }
 
@@ -573,6 +606,139 @@ impl StudioCore {
             }
         }
         Ok(())
+    }
+
+    /// Plan 13: read up to `limit` rows from a fixtures path. Path may be
+    /// anywhere on disk; it is not constrained to the workspace.
+    ///
+    /// Errors:
+    /// - `InvalidArg` — path missing / unsupported extension / no rows found
+    /// - `Io`         — read failure on a recognized extension
+    pub fn handler_smoke_load_fixtures(
+        &self,
+        path: &std::path::Path,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, UiError> {
+        let clamped = limit.clamp(1, 100);
+        crate::smoke::load_fixtures(path, clamped)
+    }
+
+    /// Plan 13: run N≤100 rows through the handler binary and return outcomes
+    /// inline. Does NOT create an execution or persist outcomes. Forces row mode
+    /// (one row at a time) for protocol simplicity.
+    ///
+    /// Errors:
+    /// - `InvalidHandlerName` — `request.handler_name` fails the name regex
+    /// - `InvalidArg`         — empty rows, > 100 rows
+    /// - `HandlerNotFound`    — `<workspace>/handlers/<name>` missing
+    /// - `HandlerBusy`        — an active exec attempt is using this handler
+    /// - `BuildFailed` / `ToolchainMissing` / `NoBuildCommand` — Plan 8 gate
+    /// - `Io`                 — manifest load / worker spawn / stdio failure
+    pub async fn handler_smoke_run(
+        &self,
+        request: crate::smoke::SmokeRunRequest,
+    ) -> Result<crate::smoke::SmokeRunResult, UiError> {
+        if !crate::smoke::name_ok(&request.handler_name) {
+            return Err(UiError::InvalidHandlerName {
+                name: request.handler_name.clone(),
+            });
+        }
+        if request.rows.is_empty() {
+            return Err(UiError::InvalidArg(
+                "smoke needs at least 1 row".into(),
+            ));
+        }
+        if request.rows.len() > 100 {
+            return Err(UiError::InvalidArg(
+                "smoke limit is 100 rows".into(),
+            ));
+        }
+
+        let handler_dir = self
+            .workspace
+            .root
+            .as_path()
+            .join("handlers")
+            .join(&request.handler_name);
+        if !handler_dir.is_dir() {
+            return Err(UiError::HandlerNotFound {
+                name: request.handler_name.clone(),
+            });
+        }
+        // Canonicalize AFTER the is_dir() check so we have a real path.
+        // On macOS /tmp/… resolves to /private/tmp/…; the sqlite gate stores
+        // the canonical path (written by exec's canonicalize call in run.rs),
+        // so we must query with the same canonical form.
+        let handler_dir = handler_dir
+            .canonicalize()
+            .map_err(|e| UiError::Io(format!("canonicalize handler dir: {e}")))?;
+
+        {
+            let guard = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            let busy = guard
+                .has_active_attempt_for_handler_dir(&handler_dir)
+                .map_err(|e| UiError::Io(format!("active-run gate: {e}")))?;
+            if busy {
+                return Err(UiError::HandlerBusy {
+                    name: request.handler_name.clone(),
+                });
+            }
+        }
+
+        // Plan 13 review fix: build gate with caching — mirrors handler_build so
+        // the Last build section can surface stderr for smoke-triggered builds.
+        {
+            let (manifest, _) = rowforge_core::manifest::Manifest::load_from_dir(&handler_dir)
+                .map_err(|e| UiError::Io(format!("manifest load: {e}")))?;
+            if rowforge_core::build::needs_build(&handler_dir, &manifest) {
+                match rowforge_core::build::run_build(&handler_dir, &manifest) {
+                    Ok(outcome) => {
+                        self.build_cache
+                            .lock()
+                            .unwrap()
+                            .insert(request.handler_name.clone(), outcome);
+                    }
+                    Err(rowforge_core::build::BuildError::BuildFailed {
+                        exit_code,
+                        outcome,
+                        ..
+                    }) => {
+                        self.build_cache
+                            .lock()
+                            .unwrap()
+                            .insert(request.handler_name.clone(), outcome);
+                        return Err(UiError::BuildFailed {
+                            name: request.handler_name.clone(),
+                            exit_code,
+                        });
+                    }
+                    Err(rowforge_core::build::BuildError::ToolchainMissing { tool }) => {
+                        return Err(UiError::ToolchainMissing {
+                            name: request.handler_name.clone(),
+                            tool,
+                        });
+                    }
+                    Err(rowforge_core::build::BuildError::NoBuildCommand) => {
+                        return Err(UiError::NoBuildCommand {
+                            name: request.handler_name.clone(),
+                        });
+                    }
+                    Err(rowforge_core::build::BuildError::Io(e)) => {
+                        return Err(UiError::Io(e));
+                    }
+                }
+            }
+        }
+
+        let _lock = self.smoke_lock.clone().lock_owned().await;
+        let timeout_secs = self.smoke_timeout_per_row_secs();
+        crate::smoke::run_smoke(
+            &request.handler_name,
+            &handler_dir,
+            request.rows,
+            timeout_secs,
+        )
+        .await
     }
 
     /// Return the Arc-wrapped session registry for this workspace.

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ipc } from "./client";
-import type { BuildOutcome, ScaffoldArgs } from "./types";
+import type { BuildOutcome, ScaffoldArgs, SmokeRunRequest } from "./types";
 
 /** Plan 7: list all handlers under <workspace>/handlers/. */
 export const useHandlerList = () =>
@@ -111,3 +111,17 @@ export const useHandlerFork = () => {
     },
   });
 };
+
+/** Plan 13: run a smoke test against a handler with provided rows. */
+export const useHandlerSmokeRun = () =>
+  useMutation({
+    mutationFn: (request: SmokeRunRequest) =>
+      ipc.handler_smoke_run({ request }),
+  });
+
+/** Plan 13: load fixture rows from a CSV/JSONL file for smoke testing. */
+export const useHandlerSmokeLoadFixtures = () =>
+  useMutation({
+    mutationFn: (args: { path: string; limit: number }) =>
+      ipc.handler_smoke_load_fixtures(args),
+  });

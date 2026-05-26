@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { useWorkspace } from "@/ipc/queries";
+import { useSettings, useWorkspace } from "@/ipc/queries";
 import { AppShell } from "@/layout/AppShell";
 import {
   useHandlerShow,
@@ -22,11 +22,13 @@ import { DeleteHandlerDialog } from "@/components/DeleteHandlerDialog";
 import { ForkHandlerDialog } from "@/components/ForkHandlerDialog";
 import { RenameHandlerDialog } from "@/components/RenameHandlerDialog";
 import { LastBuildSection } from "@/components/LastBuildSection";
+import { SmokeSection } from "@/components/SmokeSection";
 
 export function HandlerDetailPage() {
   const { name = "" } = useParams<{ name: string }>();
   const qc = useQueryClient();
   const ws = useWorkspace();
+  const settings = useSettings();
   const { data, isLoading, isError, error } = useHandlerShow(name);
   const openEditor = useHandlerOpenEditor();
   const reveal = useHandlerReveal();
@@ -109,6 +111,10 @@ export function HandlerDetailPage() {
         />
         <ManifestSection detail={data} />
         <LastBuildSection last_build={data.last_build} pending={build.isPending} />
+        <SmokeSection
+          handlerName={data.summary.name}
+          defaultRows={settings.data?.smoke_default_rows ?? 5}
+        />
         <SourceFilesSection detail={data} />
       </div>
       <RenameHandlerDialog

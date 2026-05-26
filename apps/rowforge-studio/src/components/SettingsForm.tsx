@@ -144,6 +144,48 @@ export function SettingsForm() {
         </label>
       </Section>
 
+      <Section title="Smoke test">
+        <Field label="Default rows" htmlFor="smoke-default-rows">
+          <Input
+            id="smoke-default-rows"
+            type="number"
+            min={1}
+            max={100}
+            value={form.smoke_default_rows}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                smoke_default_rows: Math.max(
+                  1,
+                  Math.min(100, parseInt(e.target.value, 10) || 1),
+                ),
+              })
+            }
+          />
+        </Field>
+        <Field label="Per-row timeout (seconds)" htmlFor="smoke-timeout">
+          <Input
+            id="smoke-timeout"
+            type="number"
+            min={0}
+            value={form.smoke_timeout_per_row_secs}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                smoke_timeout_per_row_secs: Math.max(
+                  0,
+                  parseInt(e.target.value, 10) || 0,
+                ),
+              })
+            }
+          />
+        </Field>
+        <div className="text-xs text-muted-foreground">
+          Smoke test pre-fills "Rows to run" with this value (clamped 1–100).
+          Timeout of 0 disables the per-row timeout.
+        </div>
+      </Section>
+
       {save.isError && (
         <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
           Save failed: {uiErrorMessage(save.error)}

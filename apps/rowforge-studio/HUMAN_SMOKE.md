@@ -1124,3 +1124,121 @@ existing handler (e.g. `golang-apple-refund` from the examples).
   UI indication is shown.
 - Import requires `rowforge.yaml` in the source. Pure source folders
   without a manifest must use Scaffold + manual paste instead.
+
+---
+
+# Manual smoke check — Plan 13 (handler smoke test)
+
+## 1. Setup
+
+1. Open Studio in a fresh workspace at `/tmp/plan13-smoke-ws/`.
+2. Scaffold a `go_stdio` handler named `echo` with primary_field `id`.
+3. Click **Open in editor**; replace the row handler body so it echoes
+   `{"echoed": <id>}` on every input row. Save.
+4. Click **Build** — verify "Last build" shows success.
+
+## 2. Paste mode happy path
+
+5. Scroll to **Smoke test** section. The radio "Paste JSON" is selected.
+6. Paste two lines:
+   ```
+   {"id":"1"}
+   {"id":"2"}
+   ```
+7. Header below textarea shows "2 rows parsed".
+8. Click **Run smoke test**. The button switches to "Running…".
+9. After a moment, the outcomes table renders 2 rows:
+   - seq 1: status `success`, data column shows `{"echoed":"1"}`
+   - seq 2: status `success`, data column shows `{"echoed":"2"}`
+10. The counts strip shows `Outcomes (2) · ✓ 2 success · <ms> ms · exit 0`.
+
+## 3. Paste mode invalid JSON
+
+11. Replace line 2 with `not json`.
+12. Header flips to red error: "line 2: <some parser detail>".
+13. **Run smoke test** is disabled.
+
+## 4. Synthetic mode
+
+14. Click "One synthetic row" radio.
+15. Description text appears about dispatching `{ "row": 1 }`.
+16. Click Run; outcomes table renders 1 row, seq 1, status success.
+
+## 5. Fixtures mode — jsonl
+
+17. Create `/tmp/smoke-fx.jsonl`:
+    ```
+    {"id":"a"}
+    {"id":"b"}
+    {"id":"c"}
+    ```
+18. Click "Fixtures…" radio. Click "Pick file…", choose the file.
+19. Code block shows the path; preview shows "3 rows loaded — keys: id".
+20. Set "Rows to run" to 2.
+21. Click Run; outcomes table has 2 rows.
+
+## 6. Fixtures mode — csv
+
+22. Create `/tmp/smoke-fx.csv`:
+    ```
+    id,email
+    1,a@x.com
+    2,b@x.com
+    ```
+23. Click "Change…" and pick the csv.
+24. Preview shows "2 rows loaded — keys: id, email".
+25. Click Run; both rows succeed.
+
+## 7. Fixtures mode — directory
+
+26. Create `/tmp/smoke-fx-dir/` containing both files from steps 17 and 22.
+27. Click "Change…" and pick the directory.
+28. Loaded rows come from the jsonl (precedence: jsonl > csv).
+
+## 8. Fixtures mode — empty
+
+29. Create empty `/tmp/empty.jsonl`.
+30. Pick it. Red error appears: "no rows found in fixtures path".
+
+## 9. Row count cap
+
+31. Type `200` in the Rows-to-run input. It clamps to `100`.
+32. Type `0`. It clamps to `1`.
+
+## 10. Build failure surface
+
+33. Break the handler source (add `syntax error` line at the top). Save.
+34. Click Run smoke test (paste mode, single valid row).
+35. An error block shows the BuildFailed message with the handler name
+    and exit code. Outcomes table does not render.
+36. Fix the source. Smoke runs again successfully.
+
+## 11. Active-run gate (cross-process)
+
+37. In a terminal, start a long-running exec via CLI on the same handler:
+    `rowforge run --workspace /tmp/plan13-smoke-ws/ --handler echo` with
+    an input file large enough that the run takes >15 seconds.
+38. While the exec runs, open Studio, navigate to the handler.
+39. Try to smoke test. The Run button works, but the call fails with the
+    error message: `Handler "echo" has an active run. Cancel the run first.`
+40. Wait for the CLI run to finish. Smoke test now succeeds again.
+
+## 12. Stderr tail
+
+41. Modify the handler to `fmt.Fprintln(os.Stderr, "boot")` before reading
+    stdin. Rebuild.
+42. Run smoke; expand the "stderr tail" details block; "boot" line
+    appears.
+43. Modify the handler to write a >5 KiB stderr loop (e.g. 200 lines
+    each containing 50 chars). Rebuild and run smoke.
+44. Stderr tail still shows ~4096 bytes (the last portion only).
+
+## Known Plan 13 limitations
+
+- One smoke at a time per Studio process (a workspace-wide
+  `tokio::sync::Mutex` serializes calls).
+- Smoke outcomes are NOT persisted — they vanish on page reload.
+- Batch handlers receive rows one at a time during smoke (batch mode is
+  not exercised).
+- Hard cancel for a wedged smoke is not implemented (the soft cancel
+  shipped with exec runs does not extend to smoke; deferred to Plan 14).

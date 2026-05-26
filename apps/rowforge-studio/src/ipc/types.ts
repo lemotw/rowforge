@@ -48,6 +48,16 @@ export interface Settings {
    * Turn on to debug protocol issues; leave off for normal operation.
    */
   handler_log_capture_raw_stdout: boolean;
+  /**
+   * Plan 13: default row count pre-filled in the Smoke test section.
+   * Clamped to 1..=100 at smoke-run time. Default 5.
+   */
+  smoke_default_rows: number;
+  /**
+   * Plan 13: per-row timeout for smoke runs (seconds).
+   * 0 is treated as a 1-hour ceiling (effectively no timeout). Default 30.
+   */
+  smoke_timeout_per_row_secs: number;
 }
 
 // ===== Plan 10 exec delete =====
@@ -82,7 +92,8 @@ export type UiErrorKind =
   | "invalid_handler_name"
   | "build_failed"
   | "no_build_command"
-  | "execution_in_use";
+  | "execution_in_use"
+  | "handler_busy";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shapes (confirmed by ipc_contract tests):
@@ -125,7 +136,9 @@ export type UiError =
   | { kind: "build_failed"; message: { name: string; exit_code: number } | null }
   | { kind: "no_build_command"; message: { name: string } | null }
   // Plan 10: returned when trying to delete an execution that has an active run.
-  | { kind: "execution_in_use"; message: { exec_id: string } | null };
+  | { kind: "execution_in_use"; message: { exec_id: string } | null }
+  // Plan 13: returned when trying to smoke-run a handler that already has an active run.
+  | { kind: "handler_busy"; message: { name: string } | null };
 
 function isUiError(e: unknown): e is UiError {
   return !!e && typeof e === "object" && "kind" in e && "message" in e;
@@ -173,6 +186,8 @@ export function uiErrorMessage(e: unknown): string {
       return `Handler "${e.message?.name ?? "?"}" has no entry.build command in rowforge.yaml.`;
     case "execution_in_use":
       return `Execution "${e.message?.exec_id ?? "?"}" has an active run. Cancel the run first.`;
+    case "handler_busy":
+      return `Handler "${e.message?.name ?? "?"}" has an active run. Cancel the run first.`;
   }
 }
 
@@ -507,4 +522,29 @@ export interface HandlerLogLine {
   worker_id: number;
   stream: HandlerStream;
   line: string;
+}
+
+// ===== Plan 13 — handler smoke test =====
+
+export type SmokeOutcomeStatus = "success" | "error" | "crash";
+
+export interface SmokeOutcome {
+  seq: number;
+  status: SmokeOutcomeStatus;
+  code: string | null;
+  message: string | null;
+  dur_ms: number;
+  data: unknown | null;
+}
+
+export interface SmokeRunRequest {
+  handler_name: string;
+  rows: Record<string, unknown>[];
+}
+
+export interface SmokeRunResult {
+  outcomes: SmokeOutcome[];
+  stderr_tail: string;
+  exit_code: number | null;
+  elapsed_ms: number;
 }
