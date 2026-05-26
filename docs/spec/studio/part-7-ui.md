@@ -334,7 +334,7 @@ Symlink defense: three layers — (1) regex validate name, (2) canonicalize reso
 | 7 | Click the enabled **Re-run N rows** button → `RerunFailedDialog` opens | — |
 | 8 | Dialog title: "Re-run N failed rows?"; shows `exec.last_handler_dir` path; shows source attempt id | — |
 | 9 | Click **Cancel** → dialog closes, no mutation | — |
-| 10 | Click **Re-run** → mutation fires; dialog closes | `run_start(exec_id, last_handler_dir, onlyRowIds=[...seq values])` |
+| 10 | Click **Re-run** → mutation fires; dialog closes after the new attempt starts (mutation success) | `run_start(exec_id, last_handler_dir, onlyRowIds=[...seq values])` |
 | 11 | On success: Sonner toast; UI auto-navigates to the new attempt's **Live** tab | event `run_start` response |
 | 12 | New attempt's pipeline dispatches only the N failed seq values; other rows not re-processed | — |
 | 13 | After new attempt completes: re-run the same seq twice → exec rollup uses "last attempt wins" semantics; latest result per seq is authoritative | `exec_rollup` |

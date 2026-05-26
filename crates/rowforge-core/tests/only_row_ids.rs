@@ -6,12 +6,15 @@
 //  3. only_row_ids overrides skip_seqs: second run with only_row_ids=Some([1,2,3])
 //     + skip_seqs={0..=9} (simulating "all previously attempted") still dispatches
 //     the 3 listed rows (re-run intent overrides resume intent).
+//  4. Started event reports len(only_row_ids) not the full input row count
+//     (Plan 11 review fix — Live tab denominator regression).
 
 use rowforge_core::csv_io::FieldMap;
 use rowforge_core::pool::BatchOutcome;
-use rowforge_core::run::{execute, RunRequest};
+use rowforge_core::run::{execute, RunProgressEvent, RunRequest};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn test_handler_path() -> PathBuf {
@@ -222,5 +225,49 @@ async fn only_row_ids_overrides_skip_attempted() {
         vec![1u64, 2, 3],
         "outcomes.jsonl must contain exactly seqs [1,2,3]; got {:?}",
         seqs
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: Started event reports len(only_row_ids), not full input row count
+// ---------------------------------------------------------------------------
+
+/// Regression: Live tab denominator must reflect the filtered count.
+///
+/// A 10-row input with only_row_ids=[1,3,5] must emit `Started { total_rows:
+/// 3 }` — not `Started { total_rows: 10 }`. Without this fix, the Live tab
+/// shows "0 / 10" → "3 / 10" instead of "0 / 3" → "3 / 3".
+#[tokio::test]
+async fn only_row_ids_started_event_uses_filtered_count() {
+    // 10-row input; filter is [1, 3, 5] (3 rows).
+    let (handler_dir, input_dir) = make_handler_and_input(10);
+    let output_dir = tempfile::tempdir().expect("output tempdir");
+
+    // Capture the total_rows value reported by the Started event.
+    let started_total: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+    let started_total_cb = started_total.clone();
+
+    let on_progress: rowforge_core::run::ProgressCallback = Arc::new(move |ev| {
+        if let RunProgressEvent::Started { total_rows } = ev {
+            *started_total_cb.lock().unwrap() = Some(total_rows);
+        }
+    });
+
+    let req = RunRequest {
+        run_id: "t-started-denom".into(),
+        only_row_ids: Some(vec![1, 3, 5]),
+        on_progress: Some(on_progress),
+        ..base_req("t-started-denom", &handler_dir, &input_dir, &output_dir)
+    };
+
+    let report = execute(req).await.expect("execute should succeed");
+    assert_eq!(report.success_count, 3, "expected 3 successes; got {}", report.success_count);
+
+    let captured = *started_total.lock().unwrap();
+    assert_eq!(
+        captured,
+        Some(3u64),
+        "Started event must report total_rows=3 (filter length), not 10 (input length); got {:?}",
+        captured
     );
 }

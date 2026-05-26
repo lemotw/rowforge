@@ -1239,7 +1239,16 @@ fn export_require_complete_refuses_when_unresolved() {
 }
 
 /// Test 2: start_run enforces the per-execution concurrency limit of 1.
-/// A second start_run for the same exec_id must return UiError::RunBusy.
+/// A second start_run for the same exec_id must be rejected.
+///
+/// After the Plan 11 review blocker fix, the sqlite cross-process gate fires
+/// first (step 1a) because the first run's attempt is already written to sqlite
+/// as state='running'. This returns `UiError::ExecutionInUse`. The in-process
+/// registry gate (step 1b, `RunBusy`) is still kept as a second layer but
+/// fires only during the brief window between session-register and sqlite-commit.
+///
+/// The test accepts either error because the semantic is the same: the second
+/// run was correctly refused.
 ///
 /// Must run inside a tokio runtime because start_run spawns async tasks.
 #[tokio::test]
@@ -1257,14 +1266,16 @@ async fn start_run_enforces_per_exec_limit() {
         .expect("first start_run should succeed");
 
     // Second start_run for the same exec should be rejected.
+    // The sqlite gate (ExecutionInUse) or the in-process registry gate
+    // (RunBusy) will fire — either signals the run was correctly refused.
     let opts2 = RunOpts::new(handler);
     let err = core
         .start_run(&ExecutionId::new(exec_id), opts2)
-        .expect_err("second start_run must return RunBusy");
+        .expect_err("second start_run must be refused (ExecutionInUse or RunBusy)");
 
     assert!(
-        matches!(err, UiError::RunBusy { .. }),
-        "expected RunBusy, got: {:?}",
+        matches!(err, UiError::ExecutionInUse { .. } | UiError::RunBusy { .. }),
+        "expected ExecutionInUse or RunBusy, got: {:?}",
         err
     );
 }
@@ -1420,6 +1431,48 @@ async fn start_run_persists_last_handler_dir() {
         s.last_handler_dir,
         Some(canon),
         "last_handler_dir should be the canonicalized handler dir",
+    );
+}
+
+/// Cross-process BLOCKER regression: start_run must refuse via the sqlite gate
+/// even when the in-process SessionRegistry is empty.
+///
+/// Simulates the scenario where Studio already has a running attempt recorded
+/// in sqlite (state='running') and a separate CLI process opens a fresh
+/// StudioCore (empty in-process SessionRegistry) and tries to start a new run
+/// for the same exec. The sqlite check must catch this before the registry
+/// check fires.
+///
+/// Mirrors the pattern of `execution_delete_refuses_when_sqlite_has_running_attempt`
+/// (Plan 10); that test exists for deletion, this one covers run-start.
+#[tokio::test]
+async fn start_run_refuses_when_sqlite_has_running_attempt() {
+    let tmp = tempfile::TempDir::new().unwrap();
+
+    // Seed the workspace with an exec that already has a running attempt
+    // (state = 'running' in sqlite; never finished).
+    let (exec_id, _attempt_id) = seed_exec_with_running_attempt(&tmp, "exec-start-sqlite-gate");
+
+    // We need a valid handler dir for the call to start_run.
+    let handler = minimal_handler_dir(&tmp);
+
+    // Open a fresh StudioCore — empty in-process SessionRegistry, mimics CLI.
+    let core_b = StudioCore::open(
+        OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Attempt to start a new run. The sqlite gate must refuse because
+    // there is already a running attempt for this exec — even though
+    // core_b's SessionRegistry is empty.
+    let result = core_b.start_run(
+        &ExecutionId::new(exec_id.clone()),
+        RunOpts::new(handler),
+    );
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, UiError::ExecutionInUse { .. }),
+        "expected ExecutionInUse via sqlite gate, got: {:?}", err
     );
 }
 
@@ -3061,6 +3114,41 @@ fn attempt_failed_row_ids_rejects_traversal_ids() {
     assert!(
         matches!(err, rowforge_studio_core::UiError::Io(_)),
         "expected UiError::Io for bad attempt_id, got: {:?}", err
+    );
+}
+
+/// Absolute paths (`/etc/passwd`) must be rejected with `UiError::Io` before
+/// any filesystem access — the same validator that blocks `../` traversal also
+/// blocks absolute paths.
+///
+/// Regression: the traversal test covered `../` and `../../`, but absolute-path
+/// coverage was absent (Plan 11 review TEST GAP).
+#[test]
+fn attempt_failed_row_ids_rejects_absolute_ids() {
+    let tmp = empty_workspace();
+    let (exec_id, attempt_id) = seed_exec_with_completed_attempt(&tmp, "afri-abs-path");
+
+    let core = rowforge_studio_core::StudioCore::open(
+        rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
+    )
+    .unwrap();
+
+    // Absolute path in exec_id position.
+    let err = core
+        .attempt_failed_row_ids("/etc/passwd", &attempt_id)
+        .unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io for absolute exec_id, got: {:?}", err
+    );
+
+    // Absolute path in attempt_id position.
+    let err = core
+        .attempt_failed_row_ids(&exec_id, "/etc/passwd")
+        .unwrap_err();
+    assert!(
+        matches!(err, rowforge_studio_core::UiError::Io(_)),
+        "expected UiError::Io for absolute attempt_id, got: {:?}", err
     );
 }
 

@@ -180,7 +180,28 @@ impl StudioCore {
         execution_id: &ExecutionId,
         opts: RunOpts,
     ) -> Result<RunStartedHandle, UiError> {
-        // 1. Concurrency check (fast path, no store I/O).
+        // 1a. Cross-process active-attempt gate (sqlite is source of truth).
+        //
+        // A CLI process opens a fresh StudioCore with an empty in-process
+        // SessionRegistry; without this check it could start a new attempt
+        // while Studio already has a running attempt for the same exec —
+        // corrupting state. Plan 10 added the same gate to execution_delete;
+        // mirrored here for start_run.
+        {
+            let store = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            let sqlite_active = store
+                .has_active_attempt(execution_id.as_str())
+                .map_err(|e| UiError::Io(format!("active-attempt check: {}", e)))?;
+            if sqlite_active {
+                return Err(UiError::ExecutionInUse {
+                    exec_id: execution_id.as_str().to_string(),
+                });
+            }
+        }
+
+        // 1b. In-process concurrency check (catches the brief window between
+        //     attempt-start and the sqlite state being committed; fast path,
+        //     no additional store I/O beyond step 1a).
         let workspace_limit = self.sessions.workspace_limit();
         let per_exec_limit = self.sessions.per_exec_limit();
         self.sessions

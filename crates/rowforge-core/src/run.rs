@@ -208,9 +208,22 @@ pub async fn execute(req: RunRequest) -> anyhow::Result<RunReport> {
     };
 
     if let Some(cb) = req.on_progress.as_ref() {
-        cb(RunProgressEvent::Started {
-            total_rows: input_row_count,
-        });
+        // When only_row_ids is set, the dispatchable row count is the filter
+        // length, not the full input row count. For Plan 11 flows (failed-row
+        // re-run), every seq in the filter is known to exist in the input
+        // (sourced from the previous attempt's outcomes), so len(filter) ==
+        // actual dispatched count.
+        //
+        // Note: if a caller passes only_row_ids with seqs that don't exist
+        // in the input (manual API misuse), the actual dispatched count will
+        // be lower. len(filter) is then an upper bound. Plan 11 flows never
+        // hit this case.
+        let total_rows = if let Some(filter) = &req.only_row_ids {
+            filter.len() as u64
+        } else {
+            input_row_count
+        };
+        cb(RunProgressEvent::Started { total_rows });
     }
 
     // 5. Run the streaming pool.

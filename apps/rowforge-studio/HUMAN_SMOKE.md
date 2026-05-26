@@ -925,9 +925,9 @@ and a Re-run dialog on the Attempt Detail Failed rows tab.
    - The source attempt id is shown (the `attempt_id` of the current
      attempt).
 
-7. Click **Re-run** (confirm). The dialog closes immediately. A Sonner
-   toast confirms the mutation succeeded. Studio auto-navigates to the
-   new attempt's **Live** tab.
+7. Click **Re-run** (confirm). The dialog closes after the new attempt
+   starts (mutation success). A Sonner toast confirms the mutation
+   succeeded. Studio auto-navigates to the new attempt's **Live** tab.
 
 8. Watch the new attempt's Live tab. The progress counter shows only up
    to 5 rows dispatched — not the full 10. The run completes quickly.
