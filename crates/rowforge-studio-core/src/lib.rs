@@ -622,6 +622,72 @@ impl StudioCore {
         crate::smoke::load_fixtures(path, clamped)
     }
 
+    /// Plan 13: run N≤100 rows through the handler binary and return outcomes
+    /// inline. Does NOT create an execution or persist outcomes. Forces row mode
+    /// (one row at a time) for protocol simplicity.
+    ///
+    /// Errors:
+    /// - `InvalidHandlerName` — `request.handler_name` fails the name regex
+    /// - `InvalidArg`         — empty rows, > 100 rows
+    /// - `HandlerNotFound`    — `<workspace>/handlers/<name>` missing
+    /// - `HandlerBusy`        — an active exec attempt is using this handler
+    /// - `BuildFailed` / `ToolchainMissing` / `NoBuildCommand` — Plan 8 gate
+    /// - `Io`                 — manifest load / worker spawn / stdio failure
+    pub async fn handler_smoke_run(
+        &self,
+        request: crate::smoke::SmokeRunRequest,
+    ) -> Result<crate::smoke::SmokeRunResult, UiError> {
+        if !crate::smoke::name_ok(&request.handler_name) {
+            return Err(UiError::InvalidHandlerName {
+                name: request.handler_name.clone(),
+            });
+        }
+        if request.rows.is_empty() {
+            return Err(UiError::InvalidArg(
+                "smoke needs at least 1 row".into(),
+            ));
+        }
+        if request.rows.len() > 100 {
+            return Err(UiError::InvalidArg(
+                "smoke limit is 100 rows".into(),
+            ));
+        }
+
+        let handler_dir = self
+            .workspace
+            .root
+            .as_path()
+            .join("handlers")
+            .join(&request.handler_name);
+        if !handler_dir.is_dir() {
+            return Err(UiError::HandlerNotFound {
+                name: request.handler_name.clone(),
+            });
+        }
+
+        {
+            let guard = self.store.lock().unwrap_or_else(|p| p.into_inner());
+            let busy = guard
+                .has_active_attempt_for_handler_dir(&handler_dir)
+                .map_err(|e| UiError::Io(format!("active-run gate: {e}")))?;
+            if busy {
+                return Err(UiError::HandlerBusy {
+                    name: request.handler_name.clone(),
+                });
+            }
+        }
+
+        let _lock = self.smoke_lock.clone().lock_owned().await;
+        let timeout_secs = self.smoke_timeout_per_row_secs;
+        crate::smoke::run_smoke(
+            &request.handler_name,
+            &handler_dir,
+            request.rows,
+            timeout_secs,
+        )
+        .await
+    }
+
     /// Return the Arc-wrapped session registry for this workspace.
     ///
     /// Used by the Tauri event bridge to spawn `forward_active_runs` with only

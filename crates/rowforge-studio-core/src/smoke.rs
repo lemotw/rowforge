@@ -26,6 +26,19 @@ pub struct SmokeRunRequest {
     pub rows: Vec<serde_json::Map<String, serde_json::Value>>,
 }
 
+impl SmokeRunRequest {
+    /// Construct with required fields.
+    pub fn new(
+        handler_name: impl Into<String>,
+        rows: Vec<serde_json::Map<String, serde_json::Value>>,
+    ) -> Self {
+        Self {
+            handler_name: handler_name.into(),
+            rows,
+        }
+    }
+}
+
 /// Result returned by `StudioCore::handler_smoke_run`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -37,6 +50,217 @@ pub struct SmokeRunResult {
 }
 
 use std::path::Path;
+use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Plan 13 T6 — run_smoke + name_ok
+// ---------------------------------------------------------------------------
+
+/// Internal smoke runner. The `StudioCore::handler_smoke_run` wrapper owns
+/// the lock + sqlite gate and forwards to this function with the resolved
+/// handler dir.
+pub(crate) async fn run_smoke(
+    handler_name: &str,
+    handler_dir: &Path,
+    rows: Vec<serde_json::Map<String, serde_json::Value>>,
+    timeout_per_row_secs: u64,
+) -> Result<SmokeRunResult, crate::UiError> {
+    let (manifest, _) = rowforge_core::manifest::Manifest::load_from_dir(handler_dir)
+        .map_err(|e| crate::UiError::Io(format!("manifest load: {e}")))?;
+
+    if rowforge_core::build::needs_build(handler_dir, &manifest) {
+        match rowforge_core::build::run_build(handler_dir, &manifest) {
+            Ok(_) => {}
+            Err(rowforge_core::build::BuildError::BuildFailed { exit_code, .. }) => {
+                return Err(crate::UiError::BuildFailed {
+                    name: handler_name.to_string(),
+                    exit_code,
+                })
+            }
+            Err(rowforge_core::build::BuildError::ToolchainMissing { tool }) => {
+                return Err(crate::UiError::ToolchainMissing {
+                    name: handler_name.to_string(),
+                    tool,
+                })
+            }
+            Err(rowforge_core::build::BuildError::NoBuildCommand) => {
+                return Err(crate::UiError::NoBuildCommand {
+                    name: handler_name.to_string(),
+                })
+            }
+            Err(rowforge_core::build::BuildError::Io(e)) => return Err(crate::UiError::Io(e)),
+        }
+    }
+
+    // Derive `columns` from the first row's keys (best-effort).
+    let columns: Vec<String> = rows
+        .first()
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+
+    let started = std::time::Instant::now();
+    let mut worker = rowforge_core::worker::Worker::spawn(
+        0,
+        handler_dir,
+        &manifest,
+        "smoke",
+        &Default::default(),
+        &columns,
+    )
+    .await
+    .map_err(|e| crate::UiError::Io(format!("spawn worker: {e}")))?;
+
+    let stderr_handle = worker.take_stderr();
+    let stderr_tail = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    let stderr_task = if let Some(mut h) = stderr_handle {
+        let buf = stderr_tail.clone();
+        Some(tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut chunk = [0u8; 1024];
+            loop {
+                let n = match h.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                let s = String::from_utf8_lossy(&chunk[..n]).to_string();
+                let mut guard = buf.lock().await;
+                guard.push_str(&s);
+                if guard.len() > 4096 {
+                    let cut = guard.len() - 4096;
+                    let _ = guard.drain(0..cut);
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
+    let mut outcomes: Vec<SmokeOutcome> = Vec::with_capacity(rows.len());
+    let row_timeout = if timeout_per_row_secs == 0 {
+        Duration::from_secs(60 * 60)
+    } else {
+        Duration::from_secs(timeout_per_row_secs)
+    };
+
+    for (i, data) in rows.into_iter().enumerate() {
+        let seq = (i as u64) + 1;
+        let t0 = std::time::Instant::now();
+        let row_msg = rowforge_core::protocol::Outbound::Row {
+            seq,
+            data,
+            meta: rowforge_core::protocol::RowMeta {
+                dry_run: false,
+                row_index: seq,
+            },
+        };
+        if let Err(e) = worker.send_row(&row_msg).await {
+            outcomes.push(SmokeOutcome {
+                seq,
+                status: "crash".into(),
+                code: Some("HANDLER_IO".into()),
+                message: Some(format!("{e}")),
+                dur_ms: 0,
+                data: None,
+            });
+            break;
+        }
+        let recv_res = tokio::time::timeout(row_timeout, worker.recv()).await;
+        match recv_res {
+            Err(_) => {
+                outcomes.push(SmokeOutcome {
+                    seq,
+                    status: "crash".into(),
+                    code: Some("ROW_TIMEOUT".into()),
+                    message: Some(format!("row exceeded {row_timeout:?}")),
+                    dur_ms: t0.elapsed().as_millis() as u64,
+                    data: None,
+                });
+                break;
+            }
+            Ok(Err(e)) => {
+                outcomes.push(SmokeOutcome {
+                    seq,
+                    status: "crash".into(),
+                    code: Some("HANDLER_IO".into()),
+                    message: Some(format!("{e}")),
+                    dur_ms: t0.elapsed().as_millis() as u64,
+                    data: None,
+                });
+                break;
+            }
+            Ok(Ok(None)) => {
+                outcomes.push(SmokeOutcome {
+                    seq,
+                    status: "crash".into(),
+                    code: Some("HANDLER_EXIT".into()),
+                    message: Some("handler closed stdout".into()),
+                    dur_ms: t0.elapsed().as_millis() as u64,
+                    data: None,
+                });
+                break;
+            }
+            Ok(Ok(Some(msg))) => match msg {
+                rowforge_core::protocol::Inbound::Result { seq: rseq, data } => {
+                    outcomes.push(SmokeOutcome {
+                        seq: rseq,
+                        status: "success".into(),
+                        code: None,
+                        message: None,
+                        dur_ms: t0.elapsed().as_millis() as u64,
+                        data: Some(serde_json::Value::Object(data)),
+                    });
+                }
+                rowforge_core::protocol::Inbound::Error {
+                    seq: rseq,
+                    code,
+                    message,
+                    data,
+                } => {
+                    outcomes.push(SmokeOutcome {
+                        seq: rseq,
+                        status: "error".into(),
+                        code: Some(code),
+                        message: Some(message),
+                        dur_ms: t0.elapsed().as_millis() as u64,
+                        data: data.map(serde_json::Value::Object),
+                    });
+                }
+                other => {
+                    outcomes.push(SmokeOutcome {
+                        seq,
+                        status: "crash".into(),
+                        code: Some("PROTOCOL".into()),
+                        message: Some(format!("unexpected inbound: {other:?}")),
+                        dur_ms: t0.elapsed().as_millis() as u64,
+                        data: None,
+                    });
+                    break;
+                }
+            },
+        }
+    }
+
+    let exit_code = match worker.shutdown(Duration::from_secs(2)).await {
+        Ok(code) => code,
+        Err(_) => None,
+    };
+    if let Some(t) = stderr_task {
+        let _ = tokio::time::timeout(Duration::from_millis(250), t).await;
+    }
+    let stderr_string = stderr_tail.lock().await.clone();
+
+    Ok(SmokeRunResult {
+        outcomes,
+        stderr_tail: stderr_string,
+        exit_code,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+/// Returns true iff `name` is a valid handler name (`[a-z0-9][a-z0-9-]*`).
+pub(crate) fn name_ok(name: &str) -> bool {
+    crate::handler::validate_name(name)
+}
 
 /// Load up to `limit` rows from a fixtures path. Supports:
 ///

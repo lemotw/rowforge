@@ -3409,3 +3409,120 @@ fn studio_core_stores_smoke_settings_from_open_opts() {
     assert_eq!(core.smoke_default_rows(), 7);
     assert_eq!(core.smoke_timeout_per_row_secs(), 60);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 13 T6 — handler_smoke_run
+// ---------------------------------------------------------------------------
+
+fn write_test_echo_handler(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    let manifest = r#"name: echo
+version: "1"
+entry:
+  cmd: ["python3", "handler.py"]
+"#;
+    std::fs::write(dir.join("rowforge.yaml"), manifest).unwrap();
+    let py = r#"#!/usr/bin/env python3
+import sys, json
+for line in sys.stdin:
+    msg = json.loads(line)
+    t = msg.get("type")
+    if t == "init":
+        print(json.dumps({"type": "ready", "handler_version": "1.0"}), flush=True)
+    elif t == "row":
+        seq = msg["seq"]
+        print(json.dumps({"type": "result", "seq": seq, "data": {"echoed": msg["data"].get("id")}}), flush=True)
+    elif t == "shutdown":
+        break
+"#;
+    std::fs::write(dir.join("handler.py"), py).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_happy_path_returns_outcomes_per_row() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore};
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_test_echo_handler(&tmp.path().join("handlers").join("echo"));
+
+    let core = StudioCore::open(
+        OpenOpts::new()
+            .with_workspace(tmp.path().to_path_buf())
+            .with_smoke_default_rows(5)
+            .with_smoke_timeout_per_row_secs(5),
+    )
+    .unwrap();
+
+    let rows = vec![
+        serde_json::Map::from_iter([("id".into(), serde_json::json!("1"))]),
+        serde_json::Map::from_iter([("id".into(), serde_json::json!("2"))]),
+    ];
+    let result = core
+        .handler_smoke_run(SmokeRunRequest::new("echo", rows))
+        .await
+        .unwrap();
+
+    assert_eq!(result.outcomes.len(), 2);
+    assert_eq!(result.outcomes[0].seq, 1);
+    assert_eq!(result.outcomes[0].status, "success");
+    assert_eq!(result.outcomes[1].seq, 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_more_than_100_rows() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_test_echo_handler(&tmp.path().join("handlers").join("echo"));
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let rows: Vec<_> = (0..101)
+        .map(|i| serde_json::Map::from_iter([("id".into(), serde_json::json!(i))]))
+        .collect();
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("echo", rows))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::InvalidArg(_)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_empty_rows() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_test_echo_handler(&tmp.path().join("handlers").join("echo"));
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("echo", vec![]))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::InvalidArg(_)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_unknown_handler() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let rows = vec![serde_json::Map::from_iter([("id".into(), serde_json::json!("1"))])];
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("ghost", rows))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::HandlerNotFound { .. }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn handler_smoke_run_rejects_invalid_name() {
+    use rowforge_studio_core::{OpenOpts, SmokeRunRequest, StudioCore, UiError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let core = StudioCore::open(OpenOpts::new().with_workspace(tmp.path().to_path_buf())).unwrap();
+    let rows = vec![serde_json::Map::from_iter([("id".into(), serde_json::json!("1"))])];
+    let err = core
+        .handler_smoke_run(SmokeRunRequest::new("../etc", rows))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UiError::InvalidHandlerName { .. }));
+}

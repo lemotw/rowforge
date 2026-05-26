@@ -118,6 +118,10 @@ pub enum UiError {
     /// Execution has an active run; must cancel the run before deleting.
     #[error("execution '{exec_id}' has an active run; cancel it first")]
     ExecutionInUse { exec_id: String },
+
+    /// Handler has an active run; must finish or cancel it before smoke testing.
+    #[error("handler '{name}' has an active run; cancel it first")]
+    HandlerBusy { name: String },
 }
 
 impl From<std::io::Error> for UiError {
@@ -243,6 +247,14 @@ mod tests {
         let e = UiError::NoBuildCommand { name: "alpha".into() };
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["kind"], json!("no_build_command"));
+        assert_eq!(v["message"]["name"], json!("alpha"));
+    }
+
+    #[test]
+    fn handler_busy_carries_name() {
+        let e = UiError::HandlerBusy { name: "alpha".into() };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], json!("handler_busy"));
         assert_eq!(v["message"]["name"], json!("alpha"));
     }
 }
