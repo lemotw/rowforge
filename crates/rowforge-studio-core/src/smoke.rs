@@ -69,29 +69,10 @@ pub(crate) async fn run_smoke(
     let (manifest, _) = rowforge_core::manifest::Manifest::load_from_dir(handler_dir)
         .map_err(|e| crate::UiError::Io(format!("manifest load: {e}")))?;
 
-    if rowforge_core::build::needs_build(handler_dir, &manifest) {
-        match rowforge_core::build::run_build(handler_dir, &manifest) {
-            Ok(_) => {}
-            Err(rowforge_core::build::BuildError::BuildFailed { exit_code, .. }) => {
-                return Err(crate::UiError::BuildFailed {
-                    name: handler_name.to_string(),
-                    exit_code,
-                })
-            }
-            Err(rowforge_core::build::BuildError::ToolchainMissing { tool }) => {
-                return Err(crate::UiError::ToolchainMissing {
-                    name: handler_name.to_string(),
-                    tool,
-                })
-            }
-            Err(rowforge_core::build::BuildError::NoBuildCommand) => {
-                return Err(crate::UiError::NoBuildCommand {
-                    name: handler_name.to_string(),
-                })
-            }
-            Err(rowforge_core::build::BuildError::Io(e)) => return Err(crate::UiError::Io(e)),
-        }
-    }
+    // NOTE: the build gate (needs_build / run_build) was moved to
+    // StudioCore::handler_smoke_run so it can cache BuildOutcome for the
+    // Last build section. run_smoke still loads the manifest here because
+    // Worker::spawn needs it for the handler handshake.
 
     // Derive `columns` from the first row's keys (best-effort).
     let columns: Vec<String> = rows
@@ -139,6 +120,7 @@ pub(crate) async fn run_smoke(
     };
 
     let mut outcomes: Vec<SmokeOutcome> = Vec::with_capacity(rows.len());
+    // 0 is treated as a 1-hour ceiling (effectively no timeout).
     let row_timeout = if timeout_per_row_secs == 0 {
         Duration::from_secs(60 * 60)
     } else {

@@ -232,32 +232,33 @@ Outcomes are ephemeral (not persisted to `outcomes.jsonl`). stderr is
 captured as a 4 KiB tail and surfaced in a collapsible details panel.
 
 Per-row timeout: `smoke_timeout_per_row_secs` from `Settings` (default 30 s;
-0 means no timeout / capped at 1 hour). The smoke runner uses
+0 is treated as a 1-hour ceiling (effectively no timeout)). The smoke runner uses
 `rowforge_core::worker::Worker` directly in row mode with a single worker.
 
 API: see Part 5 §5.2 `handler_smoke_run` and `handler_smoke_load_fixtures`.
 
 ### 8.4.4 Concurrency
 
-| Limit | Default | Surfaced as |
-|---|---|---|
-| Build on the same handler | 1 | `HandlerBusy { reason: BuildInFlight }` |
-| Smoke test on the same handler | 1 | `HandlerBusy { reason: SmokeInFlight }` |
-| Build + smoke on same handler | mutually exclusive | smoke auto-builds; concurrent build refused |
-| Smoke tests across workspace | 2 | `HandlerBusy { reason: WorkspaceLimit }` |
-| Build/smoke during an exec run on same handler | refused | `HandlerBusy { reason: ExecRunInFlight }` |
+**Concurrency**: a single process-wide `tokio::sync::Mutex<()>` inside
+StudioCore serializes all smoke runs (one at a time per Studio process).
+Cross-process exec-run interference is detected via the sqlite gate
+`ExecutionStore::has_active_attempt_for_handler_dir`, which returns
+`HandlerBusy { name }` when an exec attempt is running against this
+handler in any process sharing the workspace.
+
+**No events**: smoke runs do not emit Tauri events. The runner returns
+its full result (outcomes + stderr tail + exit code + elapsed) in the
+IPC response.
+
+**HandlerBusy variant**: shape is `{ name: String }` (no reason field).
 
 ### 8.4.5 Interlock with exec-runs
 
-> **Deferred from Plan 8** — see design doc §10. Smoke test and
-> exec-run interlock will land in a later plan.
-
 While an exec run holds a handler in flight (Part 3), Studio refuses
-build / smoke on the same handler name to avoid rewriting the binary
-mid-run. Symmetrically, the Run launcher (Part 7 §7.3) refuses to
-start an exec run on a handler with an active build / smoke. The
-interlock lives in `SessionRegistry` (Part 5 §5.2 commentary) and is
-the source of truth for both directions.
+smoke runs on the same handler to avoid rewriting the binary mid-run.
+The interlock is the sqlite cross-process gate via
+`ExecutionStore::has_active_attempt_for_handler_dir`. Smoke returns
+`HandlerBusy { name }` when the gate fires.
 
 ### 8.4.6 Scaffold sources
 
@@ -533,17 +534,8 @@ Extending Part 5 §5.3:
 
 ```rust
 EditorNotFound,
-HandlerBusy { name: String, reason: HandlerBusyReason },
 HandlerScaffoldConflict { name: String },
 ToolchainMissing { name: String, tool: String },  // Plan 8 reworked payload
-SmokeRowsTooMany { limit: u32 },                   // > 100 in v1
-
-enum HandlerBusyReason {
-    BuildInFlight,
-    SmokeInFlight,
-    ExecRunInFlight,
-    WorkspaceLimit,
-}
 ```
 
 **Plan 8 variants:**

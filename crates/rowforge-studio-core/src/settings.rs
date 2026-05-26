@@ -41,7 +41,7 @@ pub struct Settings {
     /// Clamped to 1..=100 by handler_smoke_run.
     pub smoke_default_rows: usize,
     /// Plan 13: per-row timeout for smoke runs (seconds).
-    /// 0 means no timeout.
+    /// 0 is treated as a 1-hour ceiling (effectively no timeout).
     pub smoke_timeout_per_row_secs: u64,
 }
 

@@ -65,17 +65,30 @@ export function SmokeSection({ handlerName, defaultRows }: Props) {
     effectiveRows.length > 0 &&
     parsedPaste.error == null &&
     !smoke.isPending &&
-    !loadFixtures.isPending;
+    !loadFixtures.isPending &&
+    !loadFixtures.isError;
 
-  const pickFixture = async () => {
+  const pickFixtureFile = async () => {
+    setLoadedRows(null);
+    loadFixtures.reset();
     const path = await dialogOpen({ directory: false, multiple: false });
     if (typeof path !== "string") return;
     setFixturePath(path);
     loadFixtures.mutate(
       { path, limit: 100 },
-      {
-        onSuccess: (rows) => setLoadedRows(rows),
-      },
+      { onSuccess: (rows) => setLoadedRows(rows) },
+    );
+  };
+
+  const pickFixtureDir = async () => {
+    setLoadedRows(null);
+    loadFixtures.reset();
+    const path = await dialogOpen({ directory: true, multiple: false });
+    if (typeof path !== "string") return;
+    setFixturePath(path);
+    loadFixtures.mutate(
+      { path, limit: 100 },
+      { onSuccess: (rows) => setLoadedRows(rows) },
     );
   };
 
@@ -134,9 +147,14 @@ export function SmokeSection({ handlerName, defaultRows }: Props) {
 
         {source === "fixtures" && (
           <div className="space-y-2">
-            <Button onClick={pickFixture} variant="outline" size="sm">
-              {fixturePath ? "Change…" : "Pick file…"}
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={pickFixtureFile} variant="outline" size="sm">
+                Pick file…
+              </Button>
+              <Button onClick={pickFixtureDir} variant="outline" size="sm">
+                Pick folder…
+              </Button>
+            </div>
             {fixturePath && (
               <code
                 className="block break-all rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-muted-foreground"

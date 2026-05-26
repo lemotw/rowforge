@@ -665,6 +665,13 @@ impl StudioCore {
                 name: request.handler_name.clone(),
             });
         }
+        // Canonicalize AFTER the is_dir() check so we have a real path.
+        // On macOS /tmp/… resolves to /private/tmp/…; the sqlite gate stores
+        // the canonical path (written by exec's canonicalize call in run.rs),
+        // so we must query with the same canonical form.
+        let handler_dir = handler_dir
+            .canonicalize()
+            .map_err(|e| UiError::Io(format!("canonicalize handler dir: {e}")))?;
 
         {
             let guard = self.store.lock().unwrap_or_else(|p| p.into_inner());
@@ -675,6 +682,51 @@ impl StudioCore {
                 return Err(UiError::HandlerBusy {
                     name: request.handler_name.clone(),
                 });
+            }
+        }
+
+        // Plan 13 review fix: build gate with caching — mirrors handler_build so
+        // the Last build section can surface stderr for smoke-triggered builds.
+        {
+            let (manifest, _) = rowforge_core::manifest::Manifest::load_from_dir(&handler_dir)
+                .map_err(|e| UiError::Io(format!("manifest load: {e}")))?;
+            if rowforge_core::build::needs_build(&handler_dir, &manifest) {
+                match rowforge_core::build::run_build(&handler_dir, &manifest) {
+                    Ok(outcome) => {
+                        self.build_cache
+                            .lock()
+                            .unwrap()
+                            .insert(request.handler_name.clone(), outcome);
+                    }
+                    Err(rowforge_core::build::BuildError::BuildFailed {
+                        exit_code,
+                        outcome,
+                        ..
+                    }) => {
+                        self.build_cache
+                            .lock()
+                            .unwrap()
+                            .insert(request.handler_name.clone(), outcome);
+                        return Err(UiError::BuildFailed {
+                            name: request.handler_name.clone(),
+                            exit_code,
+                        });
+                    }
+                    Err(rowforge_core::build::BuildError::ToolchainMissing { tool }) => {
+                        return Err(UiError::ToolchainMissing {
+                            name: request.handler_name.clone(),
+                            tool,
+                        });
+                    }
+                    Err(rowforge_core::build::BuildError::NoBuildCommand) => {
+                        return Err(UiError::NoBuildCommand {
+                            name: request.handler_name.clone(),
+                        });
+                    }
+                    Err(rowforge_core::build::BuildError::Io(e)) => {
+                        return Err(UiError::Io(e));
+                    }
+                }
             }
         }
 

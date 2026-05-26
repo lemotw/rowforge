@@ -217,31 +217,31 @@ Studio 在每個 handler 詳情頁上顯示 Smoke test section，讓使用者貼
 結果為短暫資料（不寫入 `outcomes.jsonl`）。stderr 擷取後 4 KiB 並在可摺疊
 的 details 面板中顯示。
 
-每列逾時：使用 `Settings.smoke_timeout_per_row_secs`（預設 30 秒；0 表示不
-逾時，內部上限 1 小時）。Smoke runner 直接使用 `rowforge_core::worker::Worker`
+每列逾時：使用 `Settings.smoke_timeout_per_row_secs`（預設 30 秒；0 視為
+1 小時上限（實際上無逾時））。Smoke runner 直接使用 `rowforge_core::worker::Worker`
 以單 worker 逐列模式運行。
 
 API：見第 5 部分 §5.2 `handler_smoke_run` 與 `handler_smoke_load_fixtures`。
 
 ### 8.4.4 並發
 
-| 限制 | 預設 | 顯現為 |
-|---|---|---|
-| 同 handler 的 build | 1 | `HandlerBusy { reason: BuildInFlight }` |
-| 同 handler 的 smoke | 1 | `HandlerBusy { reason: SmokeInFlight }` |
-| 同 handler 的 build + smoke | 互斥 | smoke 自動 build;並發 build 拒絕 |
-| Workspace 內 smoke 總數 | 2 | `HandlerBusy { reason: WorkspaceLimit }` |
-| 同 handler 有 exec run 在跑時的 build/smoke | 拒絕 | `HandlerBusy { reason: ExecRunInFlight }` |
+**並發**：StudioCore 內部一個 process-wide `tokio::sync::Mutex<()>` 將所有
+smoke run 序列化（每個 Studio 進程同時只跑一個）。跨進程的 exec-run 干擾透過
+sqlite gate `ExecutionStore::has_active_attempt_for_handler_dir` 偵測，若此
+handler 在任何共用 workspace 的進程中有 exec attempt 在跑，則回傳
+`HandlerBusy { name }`。
+
+**無 events**：smoke run 不發送 Tauri events。runner 在 IPC 回應中直接回傳
+完整結果（outcomes + stderr tail + exit code + elapsed）。
+
+**HandlerBusy 變體**：形狀為 `{ name: String }`（無 reason 欄位）。
 
 ### 8.4.5 與 exec-run 的互鎖
 
-> **延後自 Plan 8** — 見設計文件 §10。Smoke test 與 exec-run 互鎖
-> 將在後續 Plan 落地。
-
-exec run 持有 handler 期間(第 3 部分),Studio 拒絕對同 handler 名做
-build / smoke,避免中途重寫 binary。對稱地,Run launcher(Part 7 §7.3)
-拒絕在有 build / smoke 進行中的 handler 上啟動 exec run。互鎖住在
-`SessionRegistry`(第 5 部分 §5.2 註解),為雙向真相來源。
+exec run 持有 handler 期間（第 3 部分），Studio 拒絕對同 handler 的 smoke run
+以避免中途重寫 binary。互鎖透過 sqlite 跨進程 gate
+`ExecutionStore::has_active_attempt_for_handler_dir` 實現。Gate 觸發時 smoke
+回傳 `HandlerBusy { name }`。
 
 ### 8.4.6 Scaffold 來源
 
@@ -499,17 +499,8 @@ handler_smoke_load_fixtures(path, limit)      -> Vec<Map>        // Plan 13；sy
 
 ```rust
 EditorNotFound,
-HandlerBusy { name: String, reason: HandlerBusyReason },
 HandlerScaffoldConflict { name: String },
 ToolchainMissing { name: String, tool: String },  // Plan 8 重整 payload
-SmokeRowsTooMany { limit: u32 },                   // v1 > 100
-
-enum HandlerBusyReason {
-    BuildInFlight,
-    SmokeInFlight,
-    ExecRunInFlight,
-    WorkspaceLimit,
-}
 ```
 
 **Plan 8 變體：**

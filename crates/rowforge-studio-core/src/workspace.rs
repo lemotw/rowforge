@@ -27,7 +27,8 @@ pub struct OpenOpts {
     pub handler_log_capture_raw_stdout: bool,
     /// Plan 13: clamped to 1..=100 at smoke-run time.
     pub smoke_default_rows: usize,
-    /// Plan 13: 0 = no timeout.
+    /// Plan 13: per-row timeout for smoke runs (seconds).
+    /// 0 is treated as a 1-hour ceiling (effectively no timeout).
     pub smoke_timeout_per_row_secs: u64,
 }
 

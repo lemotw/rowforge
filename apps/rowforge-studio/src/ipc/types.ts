@@ -54,8 +54,8 @@ export interface Settings {
    */
   smoke_default_rows: number;
   /**
-   * Plan 13: per-row timeout for smoke runs (seconds). 0 means no timeout.
-   * Default 30.
+   * Plan 13: per-row timeout for smoke runs (seconds).
+   * 0 is treated as a 1-hour ceiling (effectively no timeout). Default 30.
    */
   smoke_timeout_per_row_secs: number;
 }
@@ -92,7 +92,8 @@ export type UiErrorKind =
   | "invalid_handler_name"
   | "build_failed"
   | "no_build_command"
-  | "execution_in_use";
+  | "execution_in_use"
+  | "handler_busy";
 
 // Adjacently-tagged serde: #[serde(tag = "kind", content = "message")].
 // JSON shapes (confirmed by ipc_contract tests):

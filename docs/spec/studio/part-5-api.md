@@ -545,7 +545,7 @@ struct Settings {
     /// Default number of rows to dispatch in a smoke run (default 5, clamped 1..=100).
     smoke_default_rows: usize,
 
-    /// Per-row timeout in seconds for smoke runs (default 30; 0 = no timeout / 1 hour).
+    /// Per-row timeout in seconds for smoke runs (default 30; 0 is treated as a 1-hour ceiling (effectively no timeout)).
     smoke_timeout_per_row_secs: u64,
 }
 ```

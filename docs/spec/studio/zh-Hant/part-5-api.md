@@ -521,7 +521,7 @@ struct Settings {
     /// smoke run 的預設派發列數（預設 5，夾緊 1..=100）。
     smoke_default_rows: usize,
 
-    /// smoke run 的每列逾時秒數（預設 30；0 = 不逾時 / 1 小時上限）。
+    /// smoke run 的每列逾時秒數（預設 30；0 視為 1 小時上限（實際上無逾時））。
     smoke_timeout_per_row_secs: u64,
 }
 ```
