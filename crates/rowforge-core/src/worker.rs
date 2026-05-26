@@ -71,6 +71,11 @@ pub struct Worker {
     /// that point. `pool_streaming` calls `flush_pre_ready_lines` immediately
     /// after attaching the sink so these lines appear in handler_log.log.
     pub pre_ready_log_lines: Vec<String>,
+    /// Unix process group id of the child. Set on Unix; `None` on Windows.
+    /// Used by `Worker::hard_kill` to send SIGKILL to the entire process
+    /// group (child + grandchildren). On Unix, equal to `child.id()` after
+    /// `setsid()` in `pre_exec`.
+    pub(crate) pgid: Option<i32>,
 }
 
 impl Worker {
@@ -98,7 +103,29 @@ impl Worker {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Plan 14: spawn the worker into its own POSIX process group so a
+        // hard cancel can SIGKILL the child AND any grandchildren via killpg.
+        // Set BEFORE spawn(). Tokio's Command re-exports
+        // std::os::unix::process::CommandExt::pre_exec on Unix targets.
+        #[cfg(unix)]
+        // SAFETY: setsid(2) is async-signal-safe and has no preconditions that
+        // could be violated by running it in a fork child between fork and exec.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+
         let mut child = command.spawn().map_err(CoreError::Io)?;
+
+        #[cfg(unix)]
+        let pgid: Option<i32> = child.id().map(|p| p as i32);
+        #[cfg(not(unix))]
+        let pgid: Option<i32> = None;
 
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout_raw = child.stdout.take().expect("piped stdout");
@@ -113,6 +140,7 @@ impl Worker {
             handler_version: String::new(),
             log_sink: None,
             pre_ready_log_lines: Vec::new(),
+            pgid,
         };
 
         // send init
