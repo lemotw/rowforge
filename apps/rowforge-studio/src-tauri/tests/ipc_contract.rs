@@ -379,3 +379,19 @@ fn plan11_run_start_args_round_trip_only_row_ids() {
     // Verify run_start is still publicly exported (symbol check).
     let _ = rowforge_studio_lib::commands::run_start;
 }
+
+// ---------------------------------------------------------------------------
+// Plan 12 T2 — handler_import_from_folder + handler_fork commands
+// ---------------------------------------------------------------------------
+
+/// Compile-time symbol check: handler_import_from_folder is registered.
+#[test]
+fn plan12_handler_import_from_folder_command_registered() {
+    let _ = rowforge_studio_lib::commands::handler_import_from_folder;
+}
+
+/// Compile-time symbol check: handler_fork is registered.
+#[test]
+fn plan12_handler_fork_command_registered() {
+    let _ = rowforge_studio_lib::commands::handler_fork;
+}
