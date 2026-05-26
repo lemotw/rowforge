@@ -78,6 +78,14 @@ impl StudioCore {
     pub fn export(&self, e: &ExecutionId, opts: ExportOpts)
         -> Result<ExportReport, UiError>;
 
+    // Plan 11 — re-run failed rows
+    pub fn attempt_failed_row_ids(&self, exec_id: &ExecutionId, attempt_id: &AttemptId)
+        -> Result<Vec<u64>, UiError>;
+    // Reads outcomes.jsonl for the given attempt; collects seq values from
+    // BatchOutcome envelopes where the nested outcome type is "error" or "crash".
+    // Returns a deduped, ascending-sorted Vec<u64>. The seq field is the
+    // row identifier (u64) used throughout the pipeline (on-disk field name: seq).
+
     // Execution deletion (Plan 10; see Part 3 §3.10)
     pub fn execution_delete(&self, exec_id: &str) -> Result<(), UiError>;
     pub fn execution_delete_bulk(&self, exec_ids: Vec<String>)
@@ -104,6 +112,7 @@ struct RunOpts {
     config_overrides: BTreeMap<String, JsonValue>,
     mapping: Option<FieldMapping>,
     sync_data: bool,
+    only_row_ids: Option<Vec<u64>>,  // Plan 11: when Some, dispatch only these seqs
 }
 enum HandlerSource {
     Dir(PathBuf),
@@ -289,10 +298,18 @@ exec_export(id, opts)                 -> ExportReport
 attempt_show(execution_id, attempt_id)            -> AttemptDetail
 attempt_failed_page(query)                        -> FailedRowPage
 attempt_row_history(execution_id, seq)            -> RowHistory
+attempt_failed_row_ids(execution_id, attempt_id)  -> Vec<u64>
+    // Plan 11. Reads outcomes.jsonl; returns deduped ascending seq values
+    // where BatchOutcome outcome type is "error" or "crash". The outcome
+    // type field is named "type" (not "status"). Returns [] if the attempt
+    // has no failures. Returns NotFound if the attempt does not exist.
 
 run_start(execution_id, handler_dir,
           row_limit?, workers?,
-          dry_run?, skip_attempted?)   -> RunStartedHandle
+          dry_run?, skip_attempted?,
+          only_row_ids?)               -> RunStartedHandle
+    // only_row_ids (Option<Vec<u64>>, Plan 11): when provided, the pipeline
+    // dispatches only the listed seq values, bypassing skip_seqs for those rows.
 run_cancel(handle, mode)              -> ()
 run_status(handle)                    -> RunStatus
 run_active()                          -> Vec<RunHandle>
@@ -376,6 +393,13 @@ Notes on the run lifecycle commands (Plan 5):
   `RunHandle` if a session exists in the registry. Used so a user
   who navigates into an in-flight attempt without `?run=` in the URL
   can see a "Watch live" affordance.
+- `only_row_ids` (Plan 11, `Option<Vec<u64>>`) — when provided, the
+  pipeline reader dispatches only the rows whose `seq` values are in
+  the list, overriding any `skip_seqs` filter. The TypeScript binding
+  uses `onlyRowIds` (camelCased automatically by Tauri). The
+  `seq` identifier is the same u64 used in `outcomes.jsonl` envelopes
+  (on-disk JSON field name: `seq`). Supplied by `useRunStart` when
+  called from the Re-run failed dialog.
 
 Events (one-way, core → UI):
 

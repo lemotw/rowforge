@@ -297,6 +297,36 @@ pull 的資料分流），對**視覺**為建議（元件庫、密度、具體 p
 - `useExecutionDeleteBulk` — 批量刪除 mutation hook；任何成功刪除後使 `exec_list` 失效；暴露 `bulkFailures` 狀態。
 - `formatBytes` helper — 住在 `apps/rowforge-studio/src/lib/format.ts`；由 dialog 與 ExecList 大小欄共用。
 
+### Flow M — 重新執行失敗的 row（Plan 11）
+
+| # | 步驟 | Command |
+|---|---|---|
+| 1 | 導向已完成且有失敗的 attempt 的 Attempt Detail | `attempt_show` |
+| 2 | 點選 **Failed rows** tab；頂端顯示 N 筆失敗 row | `attempt_failed_page` |
+| 3 | Tab header 出現 **Re-run N rows** 按鈕 | `attempt_failed_row_ids`（掛載時呼叫） |
+| 4 | 當 N = 0 時，按鈕**停用**，tooltip 為「No failed rows to re-run」 | — |
+| 5 | 當 `hasActiveRun` 為 true（目前 attempt 非 terminal）時，按鈕**停用**，tooltip 為「Cancel active run first」 | — |
+| 6 | 當 `exec.last_handler_dir` 不存在時，按鈕**停用**，tooltip 為「Source attempt has no handler reference」 | — |
+| 7 | 點選已啟用的 **Re-run N rows** 按鈕 → 開啟 `RerunFailedDialog` | — |
+| 8 | Dialog 標題：「Re-run N failed rows?」；顯示 `exec.last_handler_dir` 路徑；顯示來源 attempt id | — |
+| 9 | 點 **Cancel** → dialog 關閉，無 mutation | — |
+| 10 | 點 **Re-run** → 送出 mutation；dialog 關閉 | `run_start(exec_id, last_handler_dir, onlyRowIds=[...seq 值])` |
+| 11 | 成功後：Sonner toast；UI 自動導向新 attempt 的 **Live** tab | event `run_start` response |
+| 12 | 新 attempt 的 pipeline 僅派發 N 個失敗的 seq 值；其他 row 不重新處理 | — |
+| 13 | 新 attempt 完成後：同一 seq 嘗試兩次 → exec rollup 採「最後一次 attempt 勝出」語意；最新的每 seq 結果為準 | `exec_rollup` |
+
+`hasActiveRun` 由目前 attempt 的狀態是否為非 terminal 推導（見第 3 部分
+§3.3）。這是近似值：若同一 exec 上的*另一個* attempt 正在執行，後端仍會
+拒絕並回傳 `UiError::RunBusy`，UI 以 toast 呈現。
+
+**元件結構：**
+- `RerunFailedDialog` — shadcn `Dialog`；顯示 row 數量、`last_handler_dir`
+  路徑、來源 attempt id；Cancel + Re-run 按鈕。
+- `useAttemptFailedRowIds(execId, attemptId)` — React Query hook；呼叫
+  `attempt_failed_row_ids`；按 attempt 快取。
+- `useRunStart` — 現有 hook，以 `onlyRowIds?: number[]` 參數擴充（Plan 11）。
+- `AttemptFailedTab` — Failed rows tab；新增 Re-run 按鈕，含以上三種停用狀態。
+
 ## 7.5 顏色與狀態映射
 
 此節為 v1 規範。
