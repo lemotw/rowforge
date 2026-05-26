@@ -317,6 +317,7 @@ impl StudioCore {
                 crate::session::HANDLER_LOG_CHANNEL_CAP,
             );
         let handler_log_tx_for_pipeline = handler_log_tx.clone();
+        let hard_cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let session = Arc::new(Session {
             handle: handle.clone(),
             execution_id: execution_id.as_str().to_string(),
@@ -327,6 +328,7 @@ impl StudioCore {
             status: Mutex::new(RunStatus::Starting),
             started_at: Instant::now(),
             handler_log_tx,
+            hard_cancel: hard_cancel_flag.clone(),
         });
         self.sessions.register(session.clone());
 
@@ -378,6 +380,7 @@ impl StudioCore {
                 handler_log_tx_for_pipeline,
                 capture_raw_stdout,
                 only_row_ids,
+                hard_cancel_flag,
             )
             .await;
 
@@ -537,8 +540,9 @@ impl StudioCore {
     /// `CancelMode::Soft` — fires the cancellation token; the pool stops
     /// dispatching new rows and waits for in-flight workers to complete.
     ///
-    /// `CancelMode::Hard` — same as Soft for now. A future plan can add
-    /// SIGKILL plumbing once rowforge-core exposes a kill handle.
+    /// `CancelMode::Hard` — sets `hard_cancel` flag THEN fires the token;
+    /// the worker loop SIGKILLs each worker's process group (and grand-
+    /// children) on Unix. Falls back to soft cancel on non-Unix.
     ///
     /// Returns `UiError::UnknownHandle` if the handle is not in the registry.
     pub fn cancel(&self, h: &RunHandle, mode: CancelMode) -> Result<(), UiError> {
@@ -553,16 +557,13 @@ impl StudioCore {
         match mode {
             CancelMode::Soft => session.cancel_token.cancel(),
             CancelMode::Hard => {
-                // Hard cancel: fire the token immediately. rowforge-core does
-                // not currently expose a SIGKILL handle, so Hard == Soft for
-                // now. When pool_streaming gains process-kill plumbing, wire
-                // it here.
+                // Plan 14: set hard_cancel FIRST, then fire the token. The worker
+                // loop observes the cancel token, then checks hard_cancel.load()
+                // and branches to killpg() instead of graceful shutdown.
+                session
+                    .hard_cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 session.cancel_token.cancel();
-                tracing::warn!(
-                    handle = %h,
-                    "Hard cancel requested; rowforge-core has no kill handle yet — \
-                     falling back to soft cancel (token fire)"
-                );
             }
         }
         Ok(())
@@ -708,6 +709,7 @@ async fn run_pipeline_in_process(
     handler_log_tx: tokio::sync::broadcast::Sender<rowforge_core::handler_log::HandlerLogLine>,
     capture_raw_stdout: bool,
     only_row_ids: Option<Vec<u64>>,
+    hard_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<rowforge_core::run::RunReport, RunFailure> {
     let handler_canon = match std::fs::canonicalize(&opts.handler_dir) {
         Ok(p) => p,
@@ -810,7 +812,7 @@ async fn run_pipeline_in_process(
         fsync_outcomes: false,
         capture_raw_stdout,
         only_row_ids,
-        hard_cancel: None,
+        hard_cancel: Some(hard_cancel),
     };
 
     aggregator.set_phase(Phase::Snapshotting);

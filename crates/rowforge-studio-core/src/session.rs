@@ -35,6 +35,10 @@ pub struct Session {
     /// oldest lines are dropped under backpressure. Subscribers call
     /// `handler_log_tx.subscribe()` via `SessionRegistry::handler_log_subscribe`.
     pub handler_log_tx: broadcast::Sender<HandlerLogLine>,
+    /// Plan 14: paired with `cancel_token`. When set true BEFORE
+    /// `cancel_token.cancel()` fires, the run aborts via SIGKILL to each
+    /// worker's process group. When unset, cancel is graceful (soft).
+    pub hard_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub struct SessionRegistry {
@@ -183,6 +187,7 @@ impl SessionRegistry {
             status: std::sync::Mutex::new(crate::run_handle::RunStatus::Running),
             started_at: Instant::now(),
             handler_log_tx,
+            hard_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
         let handle = session.handle.clone();
         self.register(session);
@@ -271,6 +276,7 @@ mod tests {
             status: Mutex::new(RunStatus::Running),
             started_at: Instant::now(),
             handler_log_tx,
+            hard_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
@@ -289,6 +295,7 @@ mod tests {
             status: Mutex::new(RunStatus::Running),
             started_at: Instant::now(),
             handler_log_tx,
+            hard_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
