@@ -613,6 +613,40 @@ pub fn rename(workspace_root: &Path, old: &str, new: &str) -> Result<(), crate::
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Plan 12 T1 — copy_dir_recursive helper
+// ---------------------------------------------------------------------------
+
+/// Recursively copy all files from `src` into `dst`.
+///
+/// Creates `dst` (and any intermediate parents) if it doesn't exist.
+/// Symlinks are not followed (`follow_links(false)`). Non-regular entries
+/// (e.g. named pipes, devices) are logged at WARN and skipped.
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in walkdir::WalkDir::new(src)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let rel = path.strip_prefix(src).expect("walkdir invariant");
+        let target = dst.join(rel);
+        let ft = entry.file_type();
+        if ft.is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else if ft.is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(path, &target)?;
+        } else {
+            tracing::warn!(path = ?path, "copy_dir_recursive: skipping non-regular entry");
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
