@@ -51,6 +51,8 @@ pub fn run() {
             commands::attempt_failed_row_ids,   // Plan 11
             commands::handler_import_from_folder, // Plan 12
             commands::handler_fork,               // Plan 12
+            commands::handler_smoke_run,           // Plan 13
+            commands::handler_smoke_load_fixtures, // Plan 13
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

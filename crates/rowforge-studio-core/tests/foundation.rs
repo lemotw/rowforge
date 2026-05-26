@@ -2177,7 +2177,7 @@ fn studio_core_set_preferred_editor_updates_live_field() {
         "name: h1\nversion: 0.1.0\nentry:\n  cmd: [\"./h1\"]\n",
     ).unwrap();
 
-    let mut core = rowforge_studio_core::StudioCore::open(
+    let core = rowforge_studio_core::StudioCore::open(
         rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().into()),
     ).unwrap();
 
@@ -2517,7 +2517,7 @@ fn handler_log_tail_rejects_empty_id() {
 #[test]
 fn studio_core_capture_raw_stdout_reflects_set_value() {
     let tmp = empty_workspace();
-    let mut core = rowforge_studio_core::StudioCore::open(
+    let core = rowforge_studio_core::StudioCore::open(
         rowforge_studio_core::OpenOpts::new().with_workspace(tmp.path().to_path_buf()),
     )
     .unwrap();

@@ -358,7 +358,7 @@ impl StudioCore {
         // Plan 9 T5: snapshot Settings.handler_log_capture_raw_stdout at
         // attempt-start. Changes to the setting after this point do NOT affect
         // the current attempt (intentional — snapshotted into RunRequest).
-        let capture_raw_stdout = self.capture_raw_stdout;
+        let capture_raw_stdout = self.capture_raw_stdout();
 
         // Plan 11: snapshot only_row_ids from RunOpts so the filter is
         // captured into the spawned task rather than borrowed.

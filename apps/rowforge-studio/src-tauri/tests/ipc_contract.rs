@@ -395,3 +395,19 @@ fn plan12_handler_import_from_folder_command_registered() {
 fn plan12_handler_fork_command_registered() {
     let _ = rowforge_studio_lib::commands::handler_fork;
 }
+
+// ---------------------------------------------------------------------------
+// Plan 13 T7 — handler_smoke_run + handler_smoke_load_fixtures commands
+// ---------------------------------------------------------------------------
+
+/// Compile-time symbol check: handler_smoke_run is registered.
+#[test]
+fn plan13_handler_smoke_run_command_registered() {
+    let _ = rowforge_studio_lib::commands::handler_smoke_run;
+}
+
+/// Compile-time symbol check: handler_smoke_load_fixtures is registered.
+#[test]
+fn plan13_handler_smoke_load_fixtures_command_registered() {
+    let _ = rowforge_studio_lib::commands::handler_smoke_load_fixtures;
+}

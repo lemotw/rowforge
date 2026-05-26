@@ -235,20 +235,20 @@ pub struct StudioCore {
     /// Sourced from `OpenOpts.preferred_editor` which the Tauri layer
     /// loads from Settings before calling `open()`. None → resolver
     /// falls through to $VISUAL / $EDITOR / probes.
-    preferred_editor: Option<String>,
+    preferred_editor: std::sync::Mutex<Option<String>>,
     /// Plan 9 T5: mirrors `Settings.handler_log_capture_raw_stdout`.
     /// Read once per attempt at start_run time; threaded into
     /// `RunRequest.capture_raw_stdout`. Updated by `set_handler_log_capture_raw_stdout`
     /// after each `workspace_settings_save` in the Tauri layer.
-    capture_raw_stdout: bool,
+    capture_raw_stdout: std::sync::atomic::AtomicBool,
     /// Plan 8 T6: in-memory build cache. Keys are handler names; values are
     /// the most recent BuildOutcome (success OR failure). Dies on Drop.
     /// Lock is held only briefly — never across the subprocess spawn.
     build_cache: std::sync::Mutex<std::collections::HashMap<String, rowforge_core::build::BuildOutcome>>,
     /// Plan 13: clamped to 1..=100 at smoke-run time.
-    smoke_default_rows: usize,
+    smoke_default_rows: std::sync::atomic::AtomicUsize,
     /// Plan 13: 0 = no timeout.
-    smoke_timeout_per_row_secs: u64,
+    smoke_timeout_per_row_secs: std::sync::atomic::AtomicU64,
     /// Plan 13: serializes concurrent smoke runs across all handlers.
     /// One smoke at a time per workspace process.
     smoke_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
@@ -314,14 +314,14 @@ impl StudioCore {
             exec_list_cache: Cache::new(DEFAULT_TTL),
             sessions,
             // Plan 7 T15: sourced from Settings.preferred_editor via OpenOpts.
-            preferred_editor: opts.preferred_editor,
+            preferred_editor: std::sync::Mutex::new(opts.preferred_editor),
             // Plan 8 T6: empty build cache; populated by handler_build.
             build_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             // Plan 9 T5: sourced from Settings.handler_log_capture_raw_stdout via OpenOpts.
-            capture_raw_stdout: opts.handler_log_capture_raw_stdout,
+            capture_raw_stdout: std::sync::atomic::AtomicBool::new(opts.handler_log_capture_raw_stdout),
             // Plan 13 T2: smoke test defaults, clamped to valid range.
-            smoke_default_rows: opts.smoke_default_rows.clamp(1, 100),
-            smoke_timeout_per_row_secs: opts.smoke_timeout_per_row_secs,
+            smoke_default_rows: std::sync::atomic::AtomicUsize::new(opts.smoke_default_rows.clamp(1, 100)),
+            smoke_timeout_per_row_secs: std::sync::atomic::AtomicU64::new(opts.smoke_timeout_per_row_secs),
             smoke_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -333,16 +333,16 @@ impl StudioCore {
     /// Plan 7 T15: update the preferred editor in-place after a settings_save
     /// so the next handler_open_editor call uses the new value without
     /// requiring a workspace re-open.
-    pub fn set_preferred_editor(&mut self, editor: Option<String>) {
-        self.preferred_editor = editor;
+    pub fn set_preferred_editor(&self, editor: Option<String>) {
+        *self.preferred_editor.lock().unwrap_or_else(|p| p.into_inner()) = editor;
     }
 
     /// Plan 9 T5: update the raw-stdout capture flag in-place after a
     /// settings_save so the next start_run call picks up the new value.
     /// Changes don't affect already-running attempts (intentional — the
     /// flag is snapshotted into `RunRequest` at attempt-start).
-    pub fn set_handler_log_capture_raw_stdout(&mut self, enabled: bool) {
-        self.capture_raw_stdout = enabled;
+    pub fn set_handler_log_capture_raw_stdout(&self, enabled: bool) {
+        self.capture_raw_stdout.store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Return the current value of the raw-stdout capture flag.
@@ -350,26 +350,26 @@ impl StudioCore {
     /// Used by tests and callers that need to verify the flag was applied
     /// without requiring a full run.
     pub fn capture_raw_stdout(&self) -> bool {
-        self.capture_raw_stdout
+        self.capture_raw_stdout.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Plan 13: default row count to show in the Smoke test UI (1..=100).
     pub fn smoke_default_rows(&self) -> usize {
-        self.smoke_default_rows
+        self.smoke_default_rows.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Plan 13: per-row timeout for smoke runs (seconds; 0 = no timeout).
     pub fn smoke_timeout_per_row_secs(&self) -> u64 {
-        self.smoke_timeout_per_row_secs
+        self.smoke_timeout_per_row_secs.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Plan 13: update smoke defaults in-place after a settings_save so the
     /// next smoke run picks up the new values. Changes don't affect already-
     /// running smoke runs (none possible; smoke is synchronous w.r.t. the IPC
     /// caller, but the global smoke_lock serializes them anyway).
-    pub fn set_smoke_defaults(&mut self, rows: usize, timeout_secs: u64) {
-        self.smoke_default_rows = rows.clamp(1, 100);
-        self.smoke_timeout_per_row_secs = timeout_secs;
+    pub fn set_smoke_defaults(&self, rows: usize, timeout_secs: u64) {
+        self.smoke_default_rows.store(rows.clamp(1, 100), std::sync::atomic::Ordering::Relaxed);
+        self.smoke_timeout_per_row_secs.store(timeout_secs, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Plan 7 T3: list all handlers under `<workspace>/handlers/`.
@@ -447,10 +447,11 @@ impl StudioCore {
     /// HandlerNotFound, EditorNotFound, InvalidArg (shell-parse failure),
     /// Io (spawn failure).
     pub fn handler_open_editor(&self, name: &str) -> Result<(), UiError> {
+        let editor = self.preferred_editor.lock().unwrap_or_else(|p| p.into_inner()).clone();
         crate::handler::open_editor(
             self.workspace.root.as_path(),
             name,
-            self.preferred_editor.as_deref(),
+            editor.as_deref(),
         )
     }
 
@@ -678,7 +679,7 @@ impl StudioCore {
         }
 
         let _lock = self.smoke_lock.clone().lock_owned().await;
-        let timeout_secs = self.smoke_timeout_per_row_secs;
+        let timeout_secs = self.smoke_timeout_per_row_secs();
         crate::smoke::run_smoke(
             &request.handler_name,
             &handler_dir,
