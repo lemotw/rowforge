@@ -87,7 +87,7 @@ struct HandlerDetail {
     manifest_errors: Vec<ManifestError>,
     manifest_warnings: Vec<ManifestWarning>,
     source_files: Vec<SourceFileSummary>,  // top-level only
-    last_build: Option<BuildOutcome>,       // in-memory; see §8.4.7
+    last_build: Option<BuildOutcome>,       // in-memory; see §8.4.8
     has_fixtures_dir: bool,                 // anchor for v1.1 (§8.9 Q1)
 }
 
@@ -258,13 +258,18 @@ start an exec run on a handler with an active build / smoke. The
 interlock lives in `SessionRegistry` (Part 5 §5.2 commentary) and is
 the source of truth for both directions.
 
-### 8.4.6 Scaffold templates
+### 8.4.6 Scaffold sources
+
+The "New Handler" wizard (`ScaffoldDialog`) offers four sources. The first
+three are templates baked into the Studio binary; the fourth (added in
+Plan 12) imports an existing local folder.
+
+#### Templates
 
 v1 ships only templates that match the existing example handlers
 (`examples/handlers/`):
 
-- `GoStdio` — single-row stdio handler. Mirrors
-  `golang-apple-refund`.
+- `GoStdio` — single-row stdio handler. Mirrors `golang-apple-refund`.
 - `GoBatch` — batch handler. Mirrors `golang-billing-channel`.
 - `Empty` — bare `manifest.json` + empty source dir.
 
@@ -275,7 +280,84 @@ Templates are baked into the Studio binary in v1. Future template
 sources (registry, URL) are not designed and not anchored — that
 deserves its own brainstorm.
 
-### 8.4.7 Cleanup at shutdown
+#### Import from folder (Plan 12)
+
+The fourth radio option — **"Import from folder…"** — lets a user pick any
+local directory that already contains a `rowforge.yaml` and copy it
+verbatim into `<workspace>/handlers/<name>/`.
+
+- The source folder **must** contain `rowforge.yaml`; the backend rejects
+  folders without it via `UiError::InvalidArg`. Pure-source folders
+  without a manifest should go through Scaffold + manual paste instead.
+- Copy semantics: **no filter** — `.git/`, `node_modules/`, build
+  outputs, and any other files all come along. This matches
+  `copy_dir_recursive`'s behavior (§8.5.1).
+- Symlinks in the source are **skipped** (not preserved, not followed); a
+  `tracing::warn` is emitted for each skipped entry.
+- When the import succeeds, Studio emits `handlers:list` and navigates to
+  the new handler's detail page.
+- UI: selecting "Import from folder…" hides the `primary_field` input and
+  shows a "Pick folder…" button that opens Tauri's native OS file dialog.
+  The name field remains visible and required.
+
+### 8.4.7 Handler fork (Plan 12)
+
+Fork duplicates an existing workspace handler under a new name. It uses
+the same `copy_dir_recursive` helper as import (§8.5.1) so the copy
+semantics are identical — no filter, symlinks skipped with warning.
+
+After copying, the fork rewrites the manifest's `name:` field via a
+**serde round-trip** (load YAML → update `manifest.name` → serialize back
+to disk). This is best-effort:
+
+- If the manifest fails to load, the rewrite is skipped with a
+  `tracing::warn` and the fork still succeeds (the caller gets a handler
+  directory that is otherwise a faithful copy).
+- **YAML comments are not preserved.** The serde round-trip drops all
+  `# comment` lines.
+- **Key ordering may change.** serde_yaml serializes keys in struct
+  declaration order, not the original file order.
+
+These are documented limitations, not bugs. Users who care about a
+hand-formatted `rowforge.yaml` should edit the fork's manifest manually
+after forking.
+
+**UI:** A **Fork…** button appears in the `HandlerDetailPage` header,
+between **Rename…** and **Delete…**. Clicking it opens `ForkHandlerDialog`,
+which pre-fills the name field with `<source_name>-fork`. On success, Studio
+navigates to `/handlers/<new_name>`.
+
+**`StudioCore` addition (Plan 12):**
+
+```rust
+impl StudioCore {
+    pub fn handler_import_from_folder(
+        &self,
+        source_path: &Path,
+        name: &str,
+    ) -> Result<(), UiError>;
+
+    pub fn handler_fork(
+        &self,
+        source_name: &str,
+        new_name: &str,
+    ) -> Result<(), UiError>;
+}
+```
+
+**`copy_dir_recursive` helper (Plan 12):**
+
+```rust
+// rowforge-studio-core::handler (pub(crate))
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), UiError>;
+```
+
+Walks `src` with `walkdir`. Creates `dst` and all intermediate
+directories. Copies regular files only; skips non-regular entries
+(symlinks, sockets, devices) with `tracing::warn`. No filter — every
+regular file is copied regardless of name.
+
+### 8.4.8 Cleanup at shutdown
 
 On Studio quit (Part 3 §3.6):
 
@@ -291,18 +373,24 @@ On Studio quit (Part 3 §3.6):
 >
 > - `crates/rowforge-studio-core/src/handler.rs` — module home
 >   (`handler_list`, `handler_show`, `handler_open_editor`, `handler_reveal`,
->   `handler_scaffold`, `handler_delete`, `handler_rename`, `resolve_editor`)
+>   `handler_scaffold`, `handler_delete`, `handler_rename`, `resolve_editor`,
+>   `copy_dir_recursive` [Plan 12], `handler_import_from_folder` [Plan 12],
+>   `handler_fork` [Plan 12])
 > - `crates/rowforge-studio-core/src/handler_templates/` — embedded scaffold
 >   templates (GoStdio, GoBatch, Empty)
 > - `crates/rowforge-studio-core/src/error.rs` — `UiError` variants incl.
 >   Plan 7 additions
 > - `apps/rowforge-studio/src-tauri/src/commands.rs` — Tauri command shells
->   for all 7 new commands
+>   for all 7 Plan 7 commands + `handler_import_from_folder` + `handler_fork`
+>   [Plan 12]
 > - `apps/rowforge-studio/src/ipc/types.ts` — TypeScript mirrors
-> - `apps/rowforge-studio/src/ipc/use-handlers.ts` — TanStack Query hooks
+> - `apps/rowforge-studio/src/ipc/use-handlers.ts` — TanStack Query hooks;
+>   `useHandlerImportFromFolder` + `useHandlerFork` added in Plan 12
 > - `apps/rowforge-studio/src/pages/HandlersPage.tsx`
 > - `apps/rowforge-studio/src/pages/HandlerDetailPage.tsx`
-> - `apps/rowforge-studio/src/components/ScaffoldDialog.tsx`
+> - `apps/rowforge-studio/src/components/ScaffoldDialog.tsx` — gains 4th
+>   radio "Import from folder…" in Plan 12
+> - `apps/rowforge-studio/src/components/ForkHandlerDialog.tsx` — Plan 12
 > - `apps/rowforge-studio/src/components/RenameHandlerDialog.tsx`
 > - `apps/rowforge-studio/src/components/DeleteHandlerDialog.tsx`
 
@@ -333,12 +421,19 @@ impl StudioCore {
     pub fn handler_scaffold(&self, args: ScaffoldArgs) -> Result<String, UiError>;
     pub fn handler_delete(&self, name: &str) -> Result<(), UiError>;
     pub fn handler_rename(&self, old: &str, new: &str) -> Result<(), UiError>;
+
+    // Plan 12 — import and fork (see §8.4.6–§8.4.7)
+    // Full signatures documented in §8.4.7; repeated here for completeness.
+    pub fn handler_import_from_folder(&self, source_path: &Path, name: &str)
+        -> Result<(), UiError>;
+    pub fn handler_fork(&self, source_name: &str, new_name: &str)
+        -> Result<(), UiError>;
 }
 ```
 
 `StudioCore.build_cache: Mutex<HashMap<String, BuildOutcome>>` — in-memory
 per-session store; `handler_show` injects the cached outcome into
-`HandlerDetail.last_build`. Lost on Studio restart (§8.4.7).
+`HandlerDetail.last_build`. Lost on Studio restart (§8.4.8).
 
 `BuildHandle` and `SmokeTestHandle` are opaque IDs analogous to
 `RunHandle` (Part 5 §5.2). Two separate handle types so the type
@@ -392,6 +487,8 @@ channel.
 > `handler_reveal`, `handler_scaffold`, `handler_delete`, `handler_rename`.
 >
 > **Plan 8 adds:** `handler_build`.
+>
+> **Plan 12 adds:** `handler_import_from_folder`, `handler_fork`.
 
 ```
 handler_list()                              -> Vec<HandlerSummary>
@@ -405,6 +502,8 @@ handler_cancel_smoke(handle, mode)          -> ()               // deferred
 handler_scaffold(args)                      -> String
 handler_delete(name)                        -> ()
 handler_rename(old, new)                    -> ()
+handler_import_from_folder(source_path, name) -> ()            // Plan 12; emits handlers:list
+handler_fork(source_name, new_name)           -> ()            // Plan 12; emits handlers:list
 ```
 
 `handler_build` side effect: emits `handlers:list` event after build
@@ -414,6 +513,11 @@ new binary mtime.
 `handler_build` is declared `async` in Tauri but currently blocks the
 async runtime during the build (no `spawn_blocking`). Known limitation;
 typical builds complete in seconds. Refactor flagged for a later plan.
+
+`handler_import_from_folder` and `handler_fork` both emit `handlers:list`
+on success (coarse refresh hint, same pattern as scaffold/delete/rename).
+No new `UiError` variants are introduced — they reuse `InvalidArg`,
+`HandlerExists`, `HandlerNotFound`, and `InvalidHandlerName` (Part 5 §5.3).
 
 ### 8.5.4 New `UiError` variants
 
@@ -602,6 +706,8 @@ ASCII; same caveat as Part 7 §7.13.
 | 8.3 model | Part 2 §2.1 cost classes; §2.4 projection contract |
 | 8.4 runtime | Part 3 §3.5 cancel pattern (shorter threshold); §3.6 cleanup; §3.4 concurrency |
 | 8.4.5 interlock | Part 5 §5.2 SessionRegistry |
+| 8.4.6 scaffold sources | Part 5 §5.5 `handler_import_from_folder` (Plan 12) |
+| 8.4.7 handler fork | Part 5 §5.5 `handler_fork` (Plan 12); Part 5 §5.3 error variants |
 | 8.5 API | Part 5 §5.2, §5.3 errors, §5.5 commands, §5.7 stability |
 | 8.5.2 events | Part 6 §6.1 taxonomy; §6.2 (notes why smoke test does not coalesce) |
 | 8.6 UI | Part 7 §7.3 IA; §7.7 boundary states; §7.13 wireframe convention |
@@ -621,6 +727,12 @@ Extending Part 7 §7.10:
 5. **No persistence of `BuildOutcome` / `SmokeTestReport` across
    restarts.** v1 in-memory; UI must not display stale "last build"
    after a Studio relaunch.
+6. **No import without rowforge.yaml in source.** Pure-source folders
+   must go through Scaffold + manual paste (§8.4.6).
+7. **No implicit YAML comment preservation on fork.** The serde
+   round-trip limitation (§8.4.7) must not be hidden from the user —
+   if the UI ever surfaces a "manifest preview" for a fork, it must
+   render the post-round-trip content, not the original.
 
 ## 8.9 Open questions
 
